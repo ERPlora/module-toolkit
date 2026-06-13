@@ -3,9 +3,10 @@
 // (literales y comentarios) y el barrido inline/migraciones.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { lintSql, validateSql, collectModuleSql, BRIDGE_FUNCTIONS, PORTABLE_TYPES } from '../src/validate-sql.mjs';
 
 const errors = (sql) => lintSql(sql).filter((f) => f.level === 'error');
@@ -30,6 +31,24 @@ test('set portable expone las constantes del shim (espejo de BRIDGE_FUNCTIONS de
     'erp_timefmt',
   ]);
   assert.deepEqual(PORTABLE_TYPES, ['TEXT', 'INTEGER', 'REAL', 'BLOB']);
+});
+
+// Sync REAL cross-lenguaje: lee el `BRIDGE_FUNCTIONS` del shim Rust (hub/crates/db/src/lib.rs) y
+// exige que sea idéntico al del validador. El mirror de arriba compara contra un literal; este
+// test compara contra el FICHERO Rust, así que atrapa el desync que el mirror no ve (p.ej. el
+// validador declara una erp_* que el shim no sabe traducir → rompería en runtime, ADR-0007).
+test('BRIDGE_FUNCTIONS del validador == las del shim Rust (lee crates/db/src/lib.rs)', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const rustPath = join(here, '..', '..', 'hub', 'crates', 'db', 'src', 'lib.rs');
+  const src = readFileSync(rustPath, 'utf8');
+  const block = /pub const BRIDGE_FUNCTIONS:\s*&\[&str\]\s*=\s*&\[([\s\S]*?)\];/.exec(src);
+  assert.ok(block, 'no se encontró `pub const BRIDGE_FUNCTIONS` en el shim Rust');
+  const rustList = [...block[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(
+    rustList,
+    BRIDGE_FUNCTIONS,
+    'shim Rust y validador desincronizados: re-sincroniza BRIDGE_FUNCTIONS en ambos sitios',
+  );
 });
 
 // ── regla: placeholders posicionales `?` ─────────────────────────────────────────────────
