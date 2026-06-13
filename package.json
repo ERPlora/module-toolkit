@@ -8,6 +8,7 @@
     "erplora": "bin/erplora.mjs"
   },
   "scripts": {
+    "test": "node --test",
     "smoke": "node bin/erplora.mjs build ../modules-workspace/modules/inventory && node bin/erplora.mjs build ../modules-workspace/modules/sales"
   },
   "dependencies": {
