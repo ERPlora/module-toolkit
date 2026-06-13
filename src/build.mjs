@@ -14,6 +14,7 @@ import { readFileSync, mkdirSync, readdirSync, existsSync, statSync } from 'node
 import { resolve, join, extname } from 'node:path';
 import { assertCspSafe } from './validate.mjs';
 import { erploraResolvePlugin } from './resolve-plugin.mjs';
+import { generateIcons } from './icons.mjs';
 
 // Flags clásicos de decoradores para los `@state()/@property()` de Lit (igual que Vite).
 const TSCONFIG_RAW = {
@@ -53,6 +54,13 @@ export async function build(moduleDir) {
   const code = readFileSync(outfile, 'utf8');
   assertCspSafe(code, `${id} bundle`);
   console.log(`✓ build ${id}: ${outfile} (${(code.length / 1024).toFixed(1)} KB, CSP-safe)`);
+
+  // Sidecar de iconos (ADR option-b): hornea el SVG de los nombres Iconify del manifest →
+  // dist/icons.json, que viaja en el module.zip y consume el shell del Hub. Ver icons.mjs.
+  const icons = generateIcons(dir, manifest);
+  console.log(`✓ icons ${id}: dist/icons.json (${icons.count} iconos)${
+    icons.missing.length ? ` ⚠ sin resolver en ion:: ${icons.missing.join(', ')}` : ''}`);
+
   return outfile;
 }
 
