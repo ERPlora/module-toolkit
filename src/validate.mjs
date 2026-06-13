@@ -1,7 +1,9 @@
-// `erplora validate <dir>`: valida el manifest (espejo de schemas/module.schema.json) y,
-// si hay bundle, que sea CSP-safe. Sin dependencias externas.
+// `erplora validate <dir>`: valida el manifest (espejo de schemas/module.schema.json),
+// el SQL portable "ERPlora SQL" (ADR-0007) y, si hay bundle, que sea CSP-safe.
+// Sin dependencias externas.
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { validateSql } from './validate-sql.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -59,8 +61,15 @@ export async function validate(moduleDir) {
 
   if (errs.length) throw new Error('manifest inválido:\n  - ' + errs.join('\n  - '));
 
+  // ADR-0007 punto 3: rechazar SQL no portable (queries/commands/migraciones de ambos
+  // dialectos). Lanza si hay errores; imprime warnings (heurística de dinero).
+  const { warnings } = validateSql(dir, manifest);
+
   const bundle = join(dir, 'dist', `${manifest.id}.esm.js`);
   if (existsSync(bundle)) assertCspSafe(readFileSync(bundle, 'utf8'), `${manifest.id} bundle`);
 
-  console.log(`✓ validate ${manifest.id}: manifest OK${existsSync(bundle) ? ' + bundle CSP-safe' : ''}`);
+  const sqlNote = warnings.length ? ` (${warnings.length} warning(s) SQL)` : '';
+  console.log(
+    `✓ validate ${manifest.id}: manifest OK + SQL portable${sqlNote}${existsSync(bundle) ? ' + bundle CSP-safe' : ''}`,
+  );
 }
