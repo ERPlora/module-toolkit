@@ -13,8 +13,22 @@ const warnings = (sql) => lintSql(sql).filter((f) => f.level === 'warning');
 const kinds = (sql) => lintSql(sql).map((f) => f.kind);
 
 // ── el set portable está sincronizado con lo que documentamos del shim ───────────────────
-test('set portable expone las constantes del shim', () => {
-  assert.deepEqual(BRIDGE_FUNCTIONS, ['erp_now', 'erp_lpad', 'erp_pad']);
+// REGLA VINCULANTE: este array DEBE ser idéntico a `BRIDGE_FUNCTIONS` del shim del runtime
+// (hub/crates/db/src/lib.rs). Si este test falla tras tocar uno de los dos, re-sincroniza ambos.
+test('set portable expone las constantes del shim (espejo de BRIDGE_FUNCTIONS del runtime)', () => {
+  assert.deepEqual(BRIDGE_FUNCTIONS, [
+    'erp_now',
+    'erp_lpad',
+    'erp_pad',
+    'erp_dt',
+    'erp_date',
+    'erp_dateadd',
+    'erp_month_start',
+    'erp_dow_mon0',
+    'erp_extract',
+    'erp_datediff_days',
+    'erp_timefmt',
+  ]);
   assert.deepEqual(PORTABLE_TYPES, ['TEXT', 'INTEGER', 'REAL', 'BLOB']);
 });
 
@@ -89,6 +103,16 @@ test('FALLA: erp_foo desconocido', () => {
   const e = errors('SELECT erp_foo(:x)');
   assert.ok(e.length >= 1);
   assert.match(e[0].kind, /función-puente desconocida `erp_foo/);
+});
+test('PASA: funciones-puente de fecha/hora (en el set)', () => {
+  const sql = [
+    "SELECT erp_dt(:x), erp_date(:x), erp_month_start(:now),",
+    "       erp_dateadd(:now, 5, 'minutes'), erp_dow_mon0(:date),",
+    "       erp_extract('hour', :dt), erp_datediff_days(:a, :b),",
+    "       erp_timefmt(8, 5)",
+    'FROM t WHERE hub_id = :hub_id',
+  ].join('\n');
+  assert.equal(errors(sql).length, 0);
 });
 
 // ── regla: dinero como REAL (WARNING por defecto) ────────────────────────────────────────

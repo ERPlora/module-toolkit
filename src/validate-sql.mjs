@@ -20,16 +20,34 @@ import { join, isAbsolute } from 'node:path';
 // SET PORTABLE — debe mantenerse SINCRONIZADO con el shim del runtime
 // (hub/crates/db/src/lib.rs: `BRIDGE_FUNCTIONS` y `normalize_ddl_type`).
 //
-// TODO (columna del HUMANO): el ADR-0007 enumera estos sets solo con EJEMPLOS ("p.ej.
-// erp_now()/erp_lpad()") y NO los cierra del todo. Aquí se replica EXACTAMENTE lo que el
-// shim soporta HOY. Ampliar/cerrar este set definitivo es decisión del humano y, cuando se
-// decida, hay que cambiarlo a la vez en DOS sitios: este fichero y `BRIDGE_FUNCTIONS` del
-// runtime. Idealmente un único punto de verdad en el futuro (p.ej. un JSON compartido).
+// REGLA VINCULANTE: este set DEBE coincidir EXACTAMENTE con `BRIDGE_FUNCTIONS` del shim del
+// runtime (`hub/crates/db/src/lib.rs`). Si se añade/quita una función-puente, hay que cambiarla
+// a la vez en LOS DOS sitios o el validador y el runtime se desincronizan (el validador
+// aceptaría algo que el runtime no sabe reescribir, o al revés). Idealmente un único punto de
+// verdad en el futuro (p.ej. un JSON compartido).
 // ─────────────────────────────────────────────────────────────────────────────────────────
 
 /** Funciones-puente `erp_*` que el shim del runtime sabe reescribir. Set CERRADO:
- *  cualquier `erp_*` fuera de aquí es un error de validación. Espejo de `BRIDGE_FUNCTIONS`. */
-export const BRIDGE_FUNCTIONS = ['erp_now', 'erp_lpad', 'erp_pad'];
+ *  cualquier `erp_*` fuera de aquí es un error de validación. Espejo EXACTO de
+ *  `BRIDGE_FUNCTIONS` del shim (hub/crates/db/src/lib.rs):
+ *   - string/número: erp_now, erp_pad, erp_lpad
+ *   - fecha/hora (fechas TEXT ISO-8601): erp_dt (normaliza a datetime comparable),
+ *     erp_date (parte fecha), erp_dateadd (suma intervalo), erp_month_start (inicio de mes),
+ *     erp_dow_mon0 (día de semana 0=lunes…6=domingo), erp_extract (extrae hour/minute/…),
+ *     erp_datediff_days (diferencia fraccionaria en días), erp_timefmt (formatea HH:MM). */
+export const BRIDGE_FUNCTIONS = [
+  'erp_now',
+  'erp_lpad',
+  'erp_pad',
+  'erp_dt',
+  'erp_date',
+  'erp_dateadd',
+  'erp_month_start',
+  'erp_dow_mon0',
+  'erp_extract',
+  'erp_datediff_days',
+  'erp_timefmt',
+];
 
 /** Tipos del subconjunto portable admitidos en DDL (`CREATE TABLE`). Espejo de las claves
  *  de `normalize_ddl_type` del shim. Todo lo demás en posición de tipo es no portable. */
