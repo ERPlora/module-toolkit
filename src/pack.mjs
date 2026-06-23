@@ -11,7 +11,10 @@ import { execFileSync } from 'node:child_process';
 
 // Lo que entra en el module.zip (resto se ignora: node_modules, .git, src TS, fixtures, etc.).
 // El contrato: manifest + artefacto UI + SQL por dialecto + WASM opcional.
-const INCLUDE = ['module.json', 'dist', 'migrations', 'queries', 'commands', 'schemas'];
+// `locales` (ADR-0055): traducciones del módulo (`name`/`navigation` los lee el runtime del
+// paquete; el bloque `ui` lo inlinea el bundler del WC en `dist`, pero se incluyen igualmente
+// para que el runtime resuelva nombres/labels también en prod).
+const INCLUDE = ['module.json', 'dist', 'migrations', 'queries', 'commands', 'schemas', 'locales'];
 
 function sha256(buf) {
   return createHash('sha256').update(buf).digest('hex');
