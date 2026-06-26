@@ -139,7 +139,7 @@ function genModule(id) {
   console.log(`Generando módulo '${id}' en ${relative(process.cwd(), dir)}`);
 
   const entity = 'items';
-  const comp = `erp-${id.replace(/_/g, '-')}-${entity}`;
+  const comp = `erpl-${id.replace(/_/g, '-')}-${entity}`;
 
   put(join(dir, 'module.json'), JSON.stringify(moduleManifest(id, entity, comp), null, 2) + '\n');
   put(join(dir, 'migrations', 'sqlite', '001_init.sql'), initMigration(id, entity));
@@ -179,7 +179,7 @@ function genView(id, view) {
   if (!view || !/^[a-z][a-z0-9_]*$/.test(view)) throw new Error('uso: erplora g view <module_id> <view_name>');
   const dir = join(modulesRoot(), id);
   if (!existsSync(join(dir, 'module.json'))) throw new Error(`no existe el módulo '${id}' (genera primero: erplora g module ${id})`);
-  const comp = `erp-${id.replace(/_/g, '-')}-${view.replace(/_/g, '-')}`;
+  const comp = `erpl-${id.replace(/_/g, '-')}-${view.replace(/_/g, '-')}`;
   console.log(`Generando vista '${comp}' en módulo '${id}'`);
   put(join(dir, 'ui', 'components', comp, `${comp}.ts`), viewComponent(id, view, comp));
   put(join(dir, 'fixtures', `${id}.${view}.list.json`), fixtureRows(view));
