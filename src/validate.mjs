@@ -5,6 +5,61 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { validateSql } from './validate-sql.mjs';
 
+// Capabilities CONOCIDAS (ADR-0079, enum cerrado — espejo de schemas/module.schema.json).
+// Añadir una = tocar el runtime (el host media el primitivo peligroso), así que el set es fijo.
+const KNOWN_CAPABILITIES = ['network', 'certificate', 'printer', 'notify'];
+const NOTIFY_CHANNELS = ['email', 'sms', 'whatsapp'];
+
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const isStringArray = (v) => Array.isArray(v) && v.every((x) => typeof x === 'string');
+
+// Validación ligera del bloque `capabilities` (permisos que el módulo solicita al host).
+// Ausente o `{}` = el módulo no pide permisos (válido). Devuelve lista de errores accionables.
+export function validateCapabilities(capabilities) {
+  const errs = [];
+  if (capabilities === undefined) return errs; // bloque opcional
+  if (!isObject(capabilities)) {
+    errs.push('capabilities debe ser un objeto');
+    return errs;
+  }
+  for (const [name, cfg] of Object.entries(capabilities)) {
+    if (!KNOWN_CAPABILITIES.includes(name)) {
+      errs.push(`capability desconocida: ${name} (conocidas: ${KNOWN_CAPABILITIES.join(', ')})`);
+      continue;
+    }
+    if (!isObject(cfg)) {
+      errs.push(`capabilities.${name} debe ser un objeto`);
+      continue;
+    }
+    if (name === 'network') {
+      if (cfg.allow !== undefined && !isStringArray(cfg.allow)) {
+        errs.push('capabilities.network.allow debe ser un array de strings');
+      }
+      if (cfg.secrets !== undefined && !isStringArray(cfg.secrets)) {
+        errs.push('capabilities.network.secrets debe ser un array de strings');
+      }
+    } else if (name === 'notify') {
+      if (cfg.channels !== undefined) {
+        if (!isStringArray(cfg.channels)) {
+          errs.push('capabilities.notify.channels debe ser un array de strings');
+        } else {
+          for (const ch of cfg.channels) {
+            if (!NOTIFY_CHANNELS.includes(ch)) {
+              errs.push(`capabilities.notify.channels: canal inválido: ${ch} (válidos: ${NOTIFY_CHANNELS.join(', ')})`);
+            }
+          }
+        }
+      }
+    } else if (name === 'certificate') {
+      if (cfg.purpose !== undefined && typeof cfg.purpose !== 'string') {
+        errs.push('capabilities.certificate.purpose debe ser un string');
+      }
+    }
+    // `printer` no lleva campos hoy: cualquier objeto vale.
+  }
+  return errs;
+}
+
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
   const hits = [];
@@ -58,6 +113,9 @@ export async function validate(moduleDir) {
       if (t.interval !== undefined && !['month', 'year'].includes(t.interval)) errs.push(`billing.tiers[${t.slug}].interval inválido: ${t.interval}`);
     }
   }
+
+  // ADR-0079: bloque `capabilities` (permisos que el módulo solicita al host).
+  errs.push(...validateCapabilities(manifest.capabilities));
 
   if (errs.length) throw new Error('manifest inválido:\n  - ' + errs.join('\n  - '));
 
