@@ -4,6 +4,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { validateSql } from './validate-sql.mjs';
+import { checkMigrations } from './validate-migrations.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -64,6 +65,14 @@ export async function validate(moduleDir) {
   // ADR-0007 punto 3: rechazar SQL no portable (queries/commands/migraciones de ambos
   // dialectos). Lanza si hay errores; imprime warnings (heurística de dinero).
   const { warnings } = validateSql(dir, manifest);
+
+  // Paridad manifest↔disco de migraciones (bug 2026-07-05, hubs Cloud sin migrar): todo
+  // `.sql` de `migrations/<dialecto>/` debe estar referenciado, y toda referencia existir.
+  const parity = checkMigrations(dir, manifest);
+  for (const w of parity.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (parity.errors.length) {
+    throw new Error('migraciones inconsistentes:\n  - ' + parity.errors.join('\n  - '));
+  }
 
   const bundle = join(dir, 'dist', `${manifest.id}.esm.js`);
   if (existsSync(bundle)) assertCspSafe(readFileSync(bundle, 'utf8'), `${manifest.id} bundle`);

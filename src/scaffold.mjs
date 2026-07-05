@@ -142,7 +142,10 @@ function genModule(id) {
   const comp = `erp-${id.replace(/_/g, '-')}-${entity}`;
 
   put(join(dir, 'module.json'), JSON.stringify(moduleManifest(id, entity, comp), null, 2) + '\n');
-  put(join(dir, 'migrations', 'sqlite', '001_init.sql'), initMigration(id, entity));
+  // AMBOS dialectos desde el nacimiento (bug 2026-07-05: solo-sqlite dejaba los hubs Cloud
+  // sin esquema). El SQL inicial es el subconjunto portable ERPlora SQL: mismo contenido.
+  put(join(dir, 'migrations', 'sqlite', '001_init.sql'), initMigration(id, entity, 'SQLite'));
+  put(join(dir, 'migrations', 'postgres', '001_init.sql'), initMigration(id, entity, 'Postgres'));
   put(join(dir, 'queries', `${entity}_list.sql`), listQuery(id, entity));
   put(join(dir, 'queries', `${entity}_get.sql`), getQuery(id, entity));
   put(join(dir, 'commands', `${entity}_create.sql`), createCommand(id, entity));
@@ -221,7 +224,10 @@ function moduleManifest(id, entity, comp) {
       employee: [`${id}.view_item`],
     },
     navigation: [{ id: entity, label: cap(entity), icon: 'list', component: comp }],
-    migrations: { sqlite: ['migrations/sqlite/001_init.sql'] },
+    migrations: {
+      sqlite: ['migrations/sqlite/001_init.sql'],
+      postgres: ['migrations/postgres/001_init.sql'],
+    },
     queries: {
       [`${id}.${entity}.list`]: {
         permission: `${id}.view_item`,
@@ -255,8 +261,8 @@ function moduleManifest(id, entity, comp) {
   };
 }
 
-function initMigration(id, entity) {
-  return `-- ${id}: esquema inicial (SQLite). El runtime añade hub_id + is_deleted/deleted_at +
+function initMigration(id, entity, dialect) {
+  return `-- ${id}: esquema inicial (${dialect}). El runtime añade hub_id + is_deleted/deleted_at +
 -- created_by/updated_by/created_at/updated_at por contrato; aquí solo el dominio.
 CREATE TABLE IF NOT EXISTS ${id}_${entity} (
   id          TEXT PRIMARY KEY,
