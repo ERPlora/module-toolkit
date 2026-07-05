@@ -51,7 +51,7 @@ Bundle **auto-contenido** (lit + outfitkit dentro), **sin import-map, sin extern
 
 ## Workspace local (lo que existe hoy)
 
-Los 25 módulos POS viven en **`ERPlora/modules-workspace/`** (creado con `startproject`, cada
+Los 27 módulos POS viven en **`ERPlora/modules-workspace/`** (creado con `startproject`, cada
 módulo su propio repo git en `modules/<id>/`). Para trabajar:
 
 ```sh
