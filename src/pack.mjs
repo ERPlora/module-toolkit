@@ -10,11 +10,29 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 // Lo que entra en el module.zip (resto se ignora: node_modules, .git, src TS, fixtures, etc.).
-// El contrato: manifest + artefacto UI + SQL por dialecto + WASM opcional.
+// El contrato: manifest + artefacto UI + SQL por dialecto + WASM opcional + documentación.
 // `locales` (ADR-0055): traducciones del módulo (`name`/`navigation` los lee el runtime del
 // paquete; el bloque `ui` lo inlinea el bundler del WC en `dist`, pero se incluyen igualmente
 // para que el runtime resuelva nombres/labels también en prod).
-const INCLUDE = ['module.json', 'dist', 'migrations', 'queries', 'commands', 'schemas', 'locales'];
+// `README.md`/`CHANGELOG.md` (ADR-0106): el SaaS los extrae del ZIP en cada sync y los guarda en
+// `Module.readme`/`Module.changelog` para pintar la ficha de `/marketplace/<slug>/` desde la BD.
+// Si no viajan aquí, la ficha se queda sin documentación — el ZIP es la fuente de verdad.
+export const INCLUDE = [
+  'module.json',
+  'README.md',
+  'CHANGELOG.md',
+  'dist',
+  'migrations',
+  'queries',
+  'commands',
+  'schemas',
+  'locales',
+];
+
+/** Rutas de `INCLUDE` presentes en `dir`, en el orden declarado. Es lo que acaba dentro del zip. */
+export function packedPaths(dir) {
+  return INCLUDE.filter((p) => existsSync(join(dir, p)));
+}
 
 function sha256(buf) {
   return createHash('sha256').update(buf).digest('hex');
@@ -29,7 +47,7 @@ export async function pack(moduleDir) {
   await validate(dir);
   await build(dir); // asegura dist/<id>.esm.js fresco
 
-  const present = INCLUDE.filter((p) => existsSync(join(dir, p)));
+  const present = packedPaths(dir);
   const outDir = join(dir, 'build');
   const zipPath = join(outDir, `${id}-v${version}.zip`);
   execFileSync('mkdir', ['-p', outDir]);
