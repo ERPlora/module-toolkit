@@ -65,7 +65,8 @@ export async function build(moduleDir) {
 }
 
 // Resuelve el/los entry(s) del WC. Prioridad: `src/*.js` (legacy) → `ui/components/**/*.ts` (Lit).
-function resolveEntry(dir) {
+// Exportada para fijar en un test QUÉ entra en el artefacto publicado (test/build-entry.test.mjs).
+export function resolveEntry(dir) {
   const srcDir = join(dir, 'src');
   if (existsSync(srcDir)) {
     const f = readdirSync(srcDir).find((n) => n.endsWith('.js'));
@@ -91,7 +92,9 @@ function collectTs(p) {
     if (name === 'node_modules' || name === 'dist' || name.startsWith('.')) continue;
     const full = join(p, name);
     if (statSync(full).isDirectory()) out.push(...collectTs(full));
-    else if (extname(full) === '.ts' && !name.endsWith('.d.ts')) out.push(full);
+    // Fuera del artefacto publicado: los tests (TDD) viven junto al componente, pero arrastran
+    // vitest —y con él un `new Function()`— que la CSP estricta del Hub bloquea.
+    else if (extname(full) === '.ts' && !name.endsWith('.d.ts') && !/\.(test|spec)\.ts$/.test(name)) out.push(full);
   }
   return out;
 }
