@@ -5,7 +5,8 @@
 //   erplora g view|command|query <id> <name>   genera piezas dentro de un módulo
 //   erplora dev <dir>          preview con transport mock, CSP-safe
 //   erplora build <dir>        compila el WC a dist/<id>.esm.js
-//   erplora validate <dir>     valida manifest + CSP del bundle
+//   erplora validate <dir>     valida manifest + CSP del bundle + contratos (ADR-0127)
+//   erplora contracts <dir>    (re)genera .erplora/contracts.json
 //   erplora pack|sign|publish  empaquetado/firma/publicación al marketplace (§7.4)
 import { build } from '../src/build.mjs';
 import { validate } from '../src/validate.mjs';
@@ -35,7 +36,8 @@ const usage = () => {
   g command|query <id> <nombre>  añade un command/query SQL a un módulo
   dev <dir>                      preview del módulo con datos mock (CSP-safe)
   build <dir>                    compila el WebComponent → dist/<id>.esm.js
-  validate <dir>                 valida el manifest + CSP del bundle
+  validate <dir>                 valida el manifest + CSP del bundle + contratos (ADR-0127)
+  contracts <dir>                (re)genera .erplora/contracts.json (superficie consumida)
   pack <dir>                     module.zip + manifest.lock + SHA256
   sign <dir>                     (re)calcula SHA256 del zip
   publish <dir>                  guía de publicación al marketplace (no automatizado)`);
@@ -72,6 +74,18 @@ try {
       need(rest[0], 'falta la ruta del módulo');
       await validate(target(rest[0]));
       break;
+    case 'contracts': {
+      need(rest[0], 'falta la ruta del módulo');
+      const dir = target(rest[0]);
+      const { readFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const { writeContractsFile } = await import('../src/contracts.mjs');
+      const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
+      const c = writeContractsFile(dir, manifest);
+      const n = Object.values(c.consumes).reduce((a, l) => a + l.length, 0);
+      console.log(`✓ contracts ${manifest.id}: .erplora/contracts.json (${n} contratos consumidos)`);
+      break;
+    }
     case 'pack':
       need(rest[0], 'falta la ruta del módulo');
       await pack(target(rest[0]));

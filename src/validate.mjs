@@ -6,6 +6,7 @@ import { resolve, join } from 'node:path';
 import { validateSql } from './validate-sql.mjs';
 import { checkMigrations } from './validate-migrations.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
+import { checkContracts } from './contracts.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -94,11 +95,20 @@ export async function validate(moduleDir) {
     throw new Error('dinero con decimales en los schemas:\n  - ' + schemaErrs.join('\n  - '));
   }
 
+  // ADR-0127: los contratos consumidos (queries/commands/eventos/slots que la UI usa de otros
+  // módulos) se verifican en BUILD contra los manifests del workspace. Antes, un renombrado en el
+  // proveedor lo descubría un cajero al abrir el TPV.
+  const contracts = checkContracts(dir, manifest);
+  for (const d of contracts.deferred) console.warn(`⚠ ${manifest.id}: ${d}`);
+  if (contracts.errors.length) {
+    throw new Error('contratos de interoperabilidad rotos (ADR-0127):\n  - ' + contracts.errors.join('\n  - '));
+  }
+
   const bundle = join(dir, 'dist', `${manifest.id}.esm.js`);
   if (existsSync(bundle)) assertCspSafe(readFileSync(bundle, 'utf8'), `${manifest.id} bundle`);
 
   const sqlNote = warnings.length ? ` (${warnings.length} warning(s) SQL)` : '';
   console.log(
-    `✓ validate ${manifest.id}: manifest OK + SQL portable${sqlNote}${existsSync(bundle) ? ' + bundle CSP-safe' : ''}`,
+    `✓ validate ${manifest.id}: manifest OK + SQL portable${sqlNote} + contratos OK${existsSync(bundle) ? ' + bundle CSP-safe' : ''}`,
   );
 }
