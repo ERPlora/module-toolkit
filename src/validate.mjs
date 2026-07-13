@@ -5,6 +5,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { validateSql } from './validate-sql.mjs';
 import { checkMigrations } from './validate-migrations.mjs';
+import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -72,6 +73,25 @@ export async function validate(moduleDir) {
   for (const w of parity.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (parity.errors.length) {
     throw new Error('migraciones inconsistentes:\n  - ' + parity.errors.join('\n  - '));
+  }
+
+  // ADR-0007 en la PUERTA DE ENTRADA: un importe declarado `number` en el schema de un comando deja
+  // pasar `2.20` (euros) donde el contrato exige `220` (céntimos), y el bind lo manda a una columna
+  // INTEGER → 2 céntimos, en silencio. La BD ya lo rechazaba (NUMERIC), el payload no.
+  const schemaErrs = [];
+  for (const rel of collectSchemaFiles(dir, manifest)) {
+    const abs = join(dir, rel);
+    if (!existsSync(abs)) continue;
+    let schema;
+    try {
+      schema = JSON.parse(readFileSync(abs, 'utf8'));
+    } catch (e) {
+      throw new Error(`schema ilegible ${rel}: ${e.message}`);
+    }
+    for (const f of lintSchema(schema, rel)) schemaErrs.push(`${f.file}: ${f.detail}`);
+  }
+  if (schemaErrs.length) {
+    throw new Error('dinero con decimales en los schemas:\n  - ' + schemaErrs.join('\n  - '));
   }
 
   const bundle = join(dir, 'dist', `${manifest.id}.esm.js`);

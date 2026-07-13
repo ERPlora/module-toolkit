@@ -28,8 +28,17 @@ import { join, isAbsolute } from 'node:path';
 // ─────────────────────────────────────────────────────────────────────────────────────────
 
 /** Funciones-puente `erp_*` que el shim del runtime sabe reescribir. Set CERRADO:
- *  cualquier `erp_*` fuera de aquí es un error de validación. Espejo de `BRIDGE_FUNCTIONS`. */
-export const BRIDGE_FUNCTIONS = ['erp_now', 'erp_lpad', 'erp_pad'];
+ *  cualquier `erp_*` fuera de aquí es un error de validación. Espejo de `BRIDGE_FUNCTIONS`
+ *  (`hub/crates/db/src/lib.rs`).
+ *
+ *  Este espejo se había quedado en 3 de las 11 que el shim implementa de verdad, así que el
+ *  validador rechazaba SQL PORTABLE: `erplora validate modules/sales` fallaba con «función-puente
+ *  desconocida `erp_date`». Y como el SQL se valida ANTES que los schemas, ningún módulo que usara
+ *  una función de fecha llegaba siquiera a que le revisaran el dinero. */
+export const BRIDGE_FUNCTIONS = [
+  'erp_now', 'erp_lpad', 'erp_pad', 'erp_dt', 'erp_date', 'erp_dateadd',
+  'erp_month_start', 'erp_dow_mon0', 'erp_extract', 'erp_datediff_days', 'erp_timefmt',
+];
 
 /** Tipos del subconjunto portable admitidos en DDL (`CREATE TABLE`). Espejo de las claves
  *  de `normalize_ddl_type` del shim. Todo lo demás en posición de tipo es no portable. */
