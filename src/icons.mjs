@@ -63,6 +63,9 @@ function uiSources(dir, out = []) {
  *                                                       sabe cuál se usará en runtime)
  *   <ok-inline-feedback icon="checkmark-circle">      → checkmark-circle  (se lo pasa a OutfitKit,
  *                                                       que acaba pintando un ion-icon con él)
+ *   { id: 'detail', label: …, icon: 'eye-outline' }   → eye-outline  (acción de fila de
+ *                                                       ok-data-table: NO vive en un tag)
+ *   .cardIcon=${() => 'cube-outline'}                 → cube-outline  (cabecera de la tarjeta)
  *
  * Un nombre que solo existe en runtime (`name=${this.icon}`) no es horneable: se queda para que lo
  * resuelva el registro del shell.
@@ -81,6 +84,17 @@ function widgetIconNames(dir) {
         for (const quoted of m[0].match(/['"][a-z][a-z0-9-]*['"]/g) ?? []) names.add(quoted.slice(1, -1));
       }
     }
+
+    // FUERA DE LOS TAGS. Un icono de `ok-data-table` no se escribe en el markup: viaja por una
+    // PROP de datos (así es como los ok-* reciben lo tipado, ver docs/CONVENTIONS.md de OutfitKit).
+    //   · acciones de fila / menú / acción primaria → `{ id, label, icon: 'eye-outline' }`, en un
+    //     array de TypeScript que luego se enlaza con `.actions=${this.actions}`.
+    //   · cabecera de la tarjeta (vista grid)       → `.cardIcon=${() => 'cube-outline'}`, una
+    //     función (el `${…}` puede llevar `}` dentro, así que no se puede escanear como atributo).
+    // Escaneadas ANTES solo si caían dentro de un tag — es decir, casi nunca. Resultado: el icono
+    // salía VACÍO en el Hub offline, sin error (ADR-0122/0133).
+    for (const m of source.matchAll(/\bicon:\s*['"]([a-z][a-z0-9-]*)['"]/g)) names.add(m[1]);
+    for (const m of source.matchAll(/\bcardIcon=\$\{[^;]*?['"]([a-z][a-z0-9-]*)['"]/g)) names.add(m[1]);
   }
   return names;
 }

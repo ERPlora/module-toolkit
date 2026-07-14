@@ -95,6 +95,37 @@ test('reporta el icono que no existe en el set en vez de tragárselo', () => {
   }
 });
 
+test('hornea los iconos de las ACCIONES DE FILA (que NO viven en un tag, sino en un array TS)', () => {
+  // Bug 2026-07-14 (ADR-0133): el escaneo solo miraba TAGS (`<ion-icon name=…>`, `<ok-* icon=…>`).
+  // Pero el icono de una acción de fila de `ok-data-table` se declara en un ARRAY de TypeScript —
+  // `{ id: 'detail', label: …, icon: 'eye-outline' }`— que se enlaza con `.actions=${this.actions}`.
+  // Nadie lo horneaba. Sobrevivían de casualidad los que OutfitKit trae en su propio bundle
+  // (`create-outline`, `trash-outline`); el resto salía VACÍO en el Hub offline, sin error:
+  // `eye-outline` (el «ver ficha» de inventory) lleva así desde que se escribió.
+  // Con ADR-0133 TODA acción de fila es solo-icono → sin esto, medio TPV sale con botones en blanco.
+  const dir = mod(`
+    private get actions(): DataTableAction[] {
+      return [
+        { id: 'detail', label: t('ui.actionDetail'), icon: 'eye-outline' },
+        { id: 'delete', label: t('ui.actionDelete'), icon: 'trash-outline', color: 'danger' },
+      ];
+    }
+    render() {
+      return html\`<ok-data-table .actions=\${this.actions} .cardIcon=\${() => 'cube-outline'}></ok-data-table>\`;
+    }`);
+  try {
+    generateIcons(dir, {});
+    const icons = iconsOf(dir);
+
+    assert.match(icons['eye-outline'] ?? '', /^<svg/, 'el icono de una acción de fila tiene que viajar');
+    assert.match(icons['trash-outline'] ?? '', /^<svg/);
+    // `cardIcon` (la cabecera de la tarjeta en la vista grid) también acaba en un ion-icon.
+    assert.match(icons['cube-outline'] ?? '', /^<svg/, 'el icono de la tarjeta tiene que viajar');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('un módulo sin Web Component sigue funcionando (solo los del manifest)', () => {
   const dir = mod(undefined);
   try {
