@@ -7,6 +7,7 @@ import { validateSql } from './validate-sql.mjs';
 import { checkMigrations } from './validate-migrations.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 import { checkContracts } from './contracts.mjs';
+import { checkPgCompat } from './validate-pg.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -67,6 +68,14 @@ export async function validate(moduleDir) {
   // ADR-0007 punto 3: rechazar SQL no portable (queries/commands/migraciones de ambos
   // dialectos). Lanza si hay errores; imprime warnings (heurística de dinero).
   const { warnings } = validateSql(dir, manifest);
+
+  // Compatibilidad Postgres (auditoría pm#16, 2026-07-17): la familia que mató 4 P0 en
+  // Hub Cloud — SQLite tolera lo que PG rechaza (multi-statement en un prepared statement,
+  // boolean→INTEGER sin CASE WHEN, ON CONFLICT sin cualificar) y la suite local no lo ve.
+  const pg = checkPgCompat(dir, manifest);
+  if (pg.length) {
+    throw new Error('incompatibilidades Postgres (pm#16):\n  - ' + pg.map((f) => f.message).join('\n  - '));
+  }
 
   // Paridad manifest↔disco de migraciones (bug 2026-07-05, hubs Cloud sin migrar): todo
   // `.sql` de `migrations/<dialecto>/` debe estar referenciado, y toda referencia existir.
