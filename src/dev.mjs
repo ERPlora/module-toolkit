@@ -181,6 +181,35 @@ globalThis.erplora = {
     listeners.get(event).push(cb);
     return () => { const a = listeners.get(event); const i = a.indexOf(cb); if (i >= 0) a.splice(i, 1); };
   },
+  // ── Superficie del ErploraClient real que los WC consumen (paridad con el SDK) ──
+  // Sin esto, cualquier componente que use i18n o dinero muere en render dentro del
+  // preview (t is not a function) y la página queda vacía con el error solo en consola.
+  locale: 'es',
+  currency: 'EUR',
+  /** i18n del módulo (ADR-0055): idioma activo con fallback a en → clave pelada. */
+  t(catalog, key, params) {
+    const path = key.split('.');
+    const dig = (o) => path.reduce((a, k) => (a && typeof a === 'object' ? a[k] : undefined), o);
+    let v = dig((catalog || {})[this.locale]) ?? dig((catalog || {}).en) ?? key;
+    if (params && typeof v === 'string') for (const [k, val] of Object.entries(params)) v = v.replaceAll('{' + k + '}', String(val));
+    return v;
+  },
+  /** Dinero (ADR-0007/0123): formatMoney recibe CÉNTIMOS y divide; formatAmount unidades. */
+  formatMoney(cents, opts) {
+    const cur = (opts && opts.currency) || this.currency;
+    return new Intl.NumberFormat((opts && opts.locale) || 'es-ES', { style: 'currency', currency: cur }).format((Number(cents) || 0) / 100);
+  },
+  formatAmount(units, opts) {
+    const cur = (opts && opts.currency) || this.currency;
+    return new Intl.NumberFormat((opts && opts.locale) || 'es-ES', { style: 'currency', currency: cur }).format(Number(units) || 0);
+  },
+  /** TODAS las filas (ADR-0124): el preview no pagina fixtures. */
+  async queryAll(name, params) {
+    const r = rowsFor(name);
+    return Array.isArray(r) ? applyList(r, params || {}, name) : [];
+  },
+  /** Slots cross-módulo (ADR-0043): el preview no compone módulos → vacío. */
+  async loadSlot() { return []; },
 };
 
 // ── Shell (layout CSS robusto + componentes Ionic) ────────────────────────────────────────────
