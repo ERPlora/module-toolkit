@@ -28,12 +28,19 @@ const IONIC = [
 
 const TSCONFIG_RAW = { compilerOptions: { experimentalDecorators: true, useDefineForClassFields: false } };
 
-function collectTs(p, out = []) {
+export function collectTs(p, out = []) {
   for (const name of readdirSync(p)) {
     if (name === 'node_modules' || name === 'dist' || name.startsWith('.')) continue;
     const full = join(p, name);
     if (statSync(full).isDirectory()) collectTs(full, out);
-    else if (extname(full) === '.ts' && !name.endsWith('.d.ts')) out.push(full);
+    // Solo producción: los tests colocados junto al componente (TDD) arrastran vitest al
+    // harness y matan el preview en blanco — mismo bug que resolveEntry (build.mjs, 07-13).
+    else if (
+      extname(full) === '.ts' &&
+      !name.endsWith('.d.ts') &&
+      !name.endsWith('.test.ts') &&
+      !name.endsWith('.spec.ts')
+    ) out.push(full);
   }
   return out;
 }
