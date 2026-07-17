@@ -108,6 +108,13 @@ export function generateIcons(dir, manifest) {
   const names = new Set();
   if (manifest.icon) names.add(manifest.icon);
   for (const nav of manifest.navigation ?? []) if (nav.icon) names.add(nav.icon);
+  // Iconos de las CARDS DE WIDGET del dashboard (ADR-0054): el icono de cabecera (`widgets[].icon`)
+  // y el de dentro del ok-* (`widgets[].options.icon`) los pinta el SHELL, no el WC → hay que
+  // hornearlos aquí o salen vacíos en el Hub offline (mismo patrón que las acciones de fila).
+  for (const w of Object.values(manifest.widgets ?? {})) {
+    if (w?.icon) names.add(w.icon);
+    if (w?.options?.icon) names.add(w.options.icon);
+  }
   for (const name of widgetIconNames(dir)) names.add(name);
 
   const map = {};

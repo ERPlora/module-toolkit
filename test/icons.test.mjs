@@ -126,6 +126,28 @@ test('hornea los iconos de las ACCIONES DE FILA (que NO viven en un tag, sino en
   }
 });
 
+test('hornea los iconos de las CARDS DE WIDGET del dashboard (widgets[].icon + options.icon)', () => {
+  // Bug 2026-07-17: `generateIcons` escaneaba manifest.icon + navigation + el WC, pero NO el bloque
+  // `widgets` del manifest, cuyo icono de CABECERA lo pinta el SHELL (createCard), no el WC. Los
+  // que no coincidían con un icono del WC salían vacíos en el Hub offline (airplane-outline,
+  // bar-chart-outline, cash-outline, …). El módulo debe traerlos horneados como el resto.
+  const dir = mod(undefined);
+  try {
+    generateIcons(dir, {
+      widgets: {
+        'x.headcount': { icon: 'people-outline', options: { icon: 'trending-up-outline' } },
+        'x.chart': { icon: 'bar-chart-outline' },
+      },
+    });
+    const icons = iconsOf(dir);
+    assert.match(icons['people-outline'] ?? '', /^<svg/, 'el icono de cabecera del widget tiene que viajar');
+    assert.match(icons['bar-chart-outline'] ?? '', /^<svg/);
+    assert.match(icons['trending-up-outline'] ?? '', /^<svg/, 'el icono de options del widget también');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('un módulo sin Web Component sigue funcionando (solo los del manifest)', () => {
   const dir = mod(undefined);
   try {
