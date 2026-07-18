@@ -24,7 +24,7 @@ una **SDK sellada** (sin ver el resto del Hub).
 
 | Pieza | Cómo está hoy | Problema |
 |-------|---------------|----------|
-| `guest-sdk` (Rust, Tier 2) | Módulos lo referencian por **path de fichero**: 18 con `path="../../../../hub/crates/guest-sdk"`, 5 con `path="../../../crates/guest-sdk"` (copia stale) | Obliga a tener el **repo del Hub** al lado; no es un paquete sellado |
+| `guest-sdk` (Rust, Tier 2) | Módulos lo referencian por **path de fichero**: los 23 que lo declaran apuntan hoy a `path="../../../../hub/crates/guest-sdk"` (ninguno usa ya la copia stale) | Obliga a tener el **repo del Hub** al lado; no es un paquete sellado |
 | `@erplora/module-sdk` (JS) | `private: true`, `version 0.0.0`, **sin publicar**; toolkit lo usa con `file:../hub/packages/module-sdk` | Path al repo del Hub |
 | `@erplora/module-types`, `@erplora/outfitkit` | También `file:../hub/packages/...` / `file:../outfitkit` | Path a repos hermanos |
 | `module-toolkit` (CLI) | No publicado como paquete instalable global | Un tercero no puede `npm i -g` sin los repos |

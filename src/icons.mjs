@@ -11,15 +11,30 @@
 // iconos usa un módulo de TERCEROS, así que el icono salía VACÍO (offline: ion-icon intenta bajar
 // el SVG por red y falla en silencio).
 //
-// Solo `ion:` por ahora (es el set que usa el shell y todos los módulos POS). Para soportar otros
-// sets (lucide/mdi/tabler…) basta añadir su `@iconify-json/<set>` y enrutar por prefijo `set:name`.
+// `ion:` es el set POR DEFECTO (el del shell y el de todos los módulos POS): un nombre sin prefijo
+// se busca ahí. Para lo que Ionicons no cubre hay sets EXTRA con prefijo — `ms-table-restaurant`
+// (Material Symbols) para una MESA, que Ionicons no tiene y acabó pintándose con
+// `restaurant-outline`, el mismo tenedor y cuchillo que «enviar a cocina»: dos acciones, un dibujo.
+// Añadir un set = una línea en `SETS` + su `@iconify-json/<set>` en package.json.
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { getIconData, iconToSVG, iconToHTML, replaceIDs } from '@iconify/utils';
 
 const require = createRequire(import.meta.url);
+
+/** Set por defecto: un nombre sin prefijo (`cart-outline`) se busca aquí. */
 const ionSet = require('@iconify-json/ion/icons.json');
+
+/**
+ * Sets EXTRA, por prefijo. El prefijo lleva GUION y no dos puntos (`ms-table-restaurant`, no
+ * `material-symbols:table-restaurant`) porque el nombre acaba en un `<ion-icon name="…">`, y
+ * ionicons lo valida con «only allow alpha characters and dash»: con un `:` su `getName` devuelve
+ * null y el icono se queda VACÍO, sin ningún error.
+ */
+const SETS = {
+  'ms-': require('@iconify-json/material-symbols/icons.json'),
+};
 
 // Alias estilo lucide que aún arrastran algunos manifests → nombre `ion:` canónico. Red de
 // seguridad; los module.json se están migrando a nombres `ion:` directos.
@@ -30,9 +45,18 @@ const ALIASES = {
   'shopping-cart': 'cart-outline',
 };
 
-/** Nombre Iconify `ion:` → SVG inline (`<svg …>…</svg>`), o `null` si no existe en el set. */
+/**
+ * Nombre Iconify → SVG inline (`<svg …>…</svg>`), o `null` si no existe.
+ *
+ * Sin prefijo se resuelve contra `ion:` (`cart-outline`); con prefijo, contra ese set
+ * (`material-symbols:table-restaurant-outline`). Un set desconocido devuelve `null` y el nombre
+ * acaba en `missing`, que es lo que el build reporta — nunca un icono vacío en silencio.
+ */
 function svgFor(name) {
-  const data = getIconData(ionSet, ALIASES[name] ?? name);
+  const prefix = Object.keys(SETS).find((p) => name.startsWith(p));
+  const set = prefix ? SETS[prefix] : ionSet;
+  const icon = prefix ? name.slice(prefix.length) : (ALIASES[name] ?? name);
+  const data = getIconData(set, icon);
   if (!data) return null;
   const { attributes, body } = iconToSVG(data);
   return iconToHTML(replaceIDs(body), attributes);

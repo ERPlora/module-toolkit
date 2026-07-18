@@ -158,3 +158,39 @@ test('un módulo sin Web Component sigue funcionando (solo los del manifest)', (
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// 2026-07-18 — Ionicons NO tiene icono de MESA. El botón «asignar mesa» del TPV acabó usando
+// `restaurant-outline` (tenedor y cuchillo), el mismo que «enviar a cocina»: dos acciones distintas
+// con el mismo dibujo. La salida es otro set de Iconify, y el prefijo va con GUION (`ms-`), no con
+// dos puntos: `ion-icon` valida el nombre con «only allow alpha characters and dash» (getName en
+// ionicons/utils.js) y con un `:` devuelve null → el icono sale VACÍO, sin ningún error.
+test('hornea iconos de OTROS sets de Iconify por prefijo (`ms-` = material-symbols)', () => {
+  const dir = mod(`
+    render() {
+      return html\`
+        <ion-icon name="ms-table-restaurant-outline"></ion-icon>
+        <ion-icon name="cart-outline"></ion-icon>\`;
+    }`);
+  const res = generateIcons(dir, { icon: 'cube-outline' });
+  const icons = iconsOf(dir);
+  assert.equal(res.missing.length, 0, `no debe faltar ninguno: ${res.missing}`);
+  assert.ok(icons['ms-table-restaurant-outline']?.startsWith('<svg'), 'el set externo se hornea');
+  assert.ok(icons['cart-outline']?.startsWith('<svg'), 'el set `ion:` por defecto sigue funcionando');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('el nombre horneado es VÁLIDO para ion-icon (sin `:`, que lo deja vacío)', () => {
+  const dir = mod(`<ion-icon name="ms-table-restaurant"></ion-icon>`);
+  generateIcons(dir, {});
+  for (const name of Object.keys(iconsOf(dir))) {
+    assert.match(name, /^[a-z0-9-]+$/, `\`${name}\` no lo aceptaría ion-icon`);
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('un icono que no existe en su set se reporta, no se traga', () => {
+  const dir = mod(`<ion-icon name="ms-no-existe-esto"></ion-icon>`);
+  const res = generateIcons(dir, {});
+  assert.deepEqual(res.missing, ['ms-no-existe-esto']);
+  rmSync(dir, { recursive: true, force: true });
+});
