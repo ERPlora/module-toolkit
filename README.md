@@ -25,7 +25,7 @@ aporta las dependencias y la configuración de build.
 | `erplora g view\|command\|query <id> <n>` | ✅ | Añade piezas dentro de un módulo existente. |
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
 | `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe). |
-| `erplora validate <id\|dir>` | ✅ | Valida el manifest (contrato §2.4) + CSP del bundle. |
+| `erplora validate <id\|dir>` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle. |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
 | `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
 | `erplora publish <id\|dir>` | 📋 guía | Imprime el flujo de publicación al marketplace (no automatizado: auth + confirmación). |
@@ -68,7 +68,7 @@ El Hub consume los `dist/` de aquí: `hub/apps/web/sync-modules.mjs` apunta a
 ## Pendiente / deuda conocida
 
 - **Firma criptográfica** (`sign`): hoy solo SHA256; la firma con clave del marketplace está
-  pendiente (decisión humano, §7.4). El Hub re-verifica SHA256 al instalar (§2.2).
+  pendiente (decisión humano, §7.4). El Hub re-verifica SHA256 al instalar (`architecture/hub/module-system.md` §5).
 - **`publish`**: deliberadamente NO automatizado (acción autenticada contra Cloud + S3 inmutable).
   Imprime el flujo; subir+registrar requiere confirmación y credenciales.
 - **`hub/packages/module-cli`** queda **deprecado** (ver su `DEPRECATED.md`). Borrarlo (y limpiar
