@@ -44,6 +44,15 @@ test('reconoce los nombres de dinero del dominio', () => {
     assert.equal(isMoneyField(n), true, `${n} es dinero`);
   }
 });
+test('hourly_rate ES dinero aunque contenga «rate» (falso negativo del guardarraíl)', () => {
+  // `staff_member.hourly_rate` es INTEGER de céntimos/hora (y el runtime lo lista en
+  // MONEY_COLUMNS de money_backfill.rs). La regex NOT_MONEY lo vetaba por contener `rate`
+  // y MONEY_NAMES ni lo nombraba → se coló como "number" en 3 schemas de staff sin que el
+  // build fallara. Una TARIFA por unidad de tiempo es un importe, no un porcentaje.
+  for (const n of ['hourly_rate', 'daily_rate', 'wage', 'hourly_wage']) {
+    assert.equal(isMoneyField(n), true, `${n} es dinero (importe por unidad de tiempo)`);
+  }
+});
 test('NO confunde tasas, cantidades ni identificadores con dinero', () => {
   // El bug de ERPlora fue exactamente este: meter en el mismo saco lo que es dinero (céntimos
   // enteros) y lo que NO lo es (una tasa % lleva decimales; una cantidad puede ser 1,5 kg).
