@@ -294,6 +294,27 @@ test('detecta reads inexistentes (declarados en el manifest, no en el TS)', () =
   assert.match(errs[0], /alpha\.items\.export/);
 });
 
+test('una read PARAMETRIZADA ({query, params}, ReadDef::Parameterized del runtime) valida en verde', () => {
+  // El runtime acepta reads en dos formas (manifest.rs, enum untagged): "q.name" y
+  // { query, params }. El validador petaba con TypeError en la segunda (read.split).
+  const errs = validateBeta(null, (m) => {
+    m.commands['beta.things.create'].reads = [
+      { query: 'alpha.items.list', params: { id: 'payload.thing_id' } },
+    ];
+  });
+  assert.deepEqual(errs, []);
+});
+
+test('una read parametrizada con query INEXISTENTE es el mismo error que la forma string', () => {
+  const errs = validateBeta(null, (m) => {
+    m.commands['beta.things.create'].reads = [
+      { query: 'alpha.items.export', params: { id: 'payload.thing_id' } },
+    ];
+  });
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /alpha\.items\.export/);
+});
+
 test('detecta eventos desconocidos (listen y on) — APLAZADOS en fase 1, no error', () => {
   // Muchos eventos reales se emiten DINÁMICAMENTE desde el handler WASM (`sale.completed`,
   // `kitchen.order.fired`) y hoy NO son declarables sin provocar doble emisión (el runtime emite
