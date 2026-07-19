@@ -26,8 +26,17 @@ const MONEY_NAMES =
 /** Nombres que NO son dinero aunque se le parezcan: tasas, cantidades e identificadores. */
 const NOT_MONEY = /(rate|percent|pct|ratio|quantity|qty|stock|count|units|_id$|_date$|_at$|horizon)/;
 
+/**
+ * DINERO aunque las regex generales digan lo contrario: una TARIFA por unidad de tiempo
+ * (`hourly_rate`, céntimos/hora — así lo lista `money_backfill.rs::MONEY_COLUMNS`) es un
+ * importe, no un porcentaje. `NOT_MONEY` la vetaba por contener `rate` y por ese falso
+ * negativo `staff` declaró `hourly_rate: "number"` en 3 schemas sin que el build fallara.
+ */
+const MONEY_OVERRIDES = /(^|_)(hourly_rate|daily_rate|wage)($|_)/;
+
 /** ¿El nombre de esta propiedad designa un importe de dinero? */
 export function isMoneyField(name) {
+  if (MONEY_OVERRIDES.test(name)) return true;
   return MONEY_NAMES.test(name) && !NOT_MONEY.test(name);
 }
 
