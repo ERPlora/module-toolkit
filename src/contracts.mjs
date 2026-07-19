@@ -267,11 +267,18 @@ export function crossValidateFull(manifest, contracts, universe) {
   // que estas queries devuelvan; una read con typo se omitía EN SILENCIO en runtime.
   for (const [cmdName, cmd] of Object.entries(manifest.commands ?? {})) {
     for (const read of cmd.reads ?? []) {
-      const owner = read.split('.')[0];
+      // El runtime acepta DOS formas (manifest.rs, `ReadDef` untagged): "q.name" y
+      // { query, params } — la parametrizada filtra por campos del payload.
+      const name = typeof read === 'string' ? read : read?.query;
+      if (typeof name !== 'string' || !name) {
+        errors.push(`reads de \`${cmdName}\`: entrada malformada (se espera "query" o { query, params }): ${JSON.stringify(read)}`);
+        continue;
+      }
+      const owner = name.split('.')[0];
       if (missingDeps.has(owner)) continue; // aplazado
       const surface = owner === me ? universe.get(me) : universe.get(owner);
-      if (!surface || !surface.queries.has(read)) {
-        errors.push(`reads de \`${cmdName}\`: la query \`${read}\` no existe${surface ? ` en \`${owner}\`` : ''}`);
+      if (!surface || !surface.queries.has(name)) {
+        errors.push(`reads de \`${cmdName}\`: la query \`${name}\` no existe${surface ? ` en \`${owner}\`` : ''}`);
       }
     }
   }
