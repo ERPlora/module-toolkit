@@ -170,24 +170,22 @@ test('reporta la línea correcta', () => {
   assert.equal(e[0].line, 3);
 });
 
-// ── validateSql lanza ante errores y recoge migraciones de ambos dialectos ───────────────
-test('collectModuleSql reúne migraciones (ambos dialectos), queries y commands', () => {
+// ── validateSql lanza ante errores y recoge migraciones postgres (dialecto único, ADR-0154) ─
+test('collectModuleSql reúne migraciones (postgres), queries y commands', () => {
   const dir = mkdtempSync(join(tmpdir(), 'erp-mod-'));
   try {
-    mkdirSync(join(dir, 'migrations', 'sqlite'), { recursive: true });
     mkdirSync(join(dir, 'migrations', 'postgres'), { recursive: true });
     mkdirSync(join(dir, 'queries'), { recursive: true });
-    writeFileSync(join(dir, 'migrations', 'sqlite', '001.sql'), 'CREATE TABLE t (id TEXT)');
     writeFileSync(join(dir, 'migrations', 'postgres', '001.sql'), 'CREATE TABLE t (id TEXT)');
     writeFileSync(join(dir, 'queries', 'q.sql'), 'SELECT id FROM t WHERE hub_id = :hub_id');
     const manifest = {
       id: 'demo',
-      migrations: { sqlite: ['migrations/sqlite/001.sql'], postgres: ['migrations/postgres/001.sql'] },
+      migrations: { postgres: ['migrations/postgres/001.sql'] },
       queries: { 'demo.q': { sql: 'queries/q.sql' } },
       commands: { 'demo.inline': { sql: 'INSERT INTO t (id) VALUES (:id)' } },
     };
     const entries = collectModuleSql(dir, manifest);
-    assert.equal(entries.length, 4);
+    assert.equal(entries.length, 3);
     // El inline se etiqueta module.json#...
     assert.ok(entries.some((e) => e.source === 'module.json#commands.demo.inline'));
     // Y valida sin errores.

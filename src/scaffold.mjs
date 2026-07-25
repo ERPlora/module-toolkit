@@ -142,9 +142,7 @@ function genModule(id) {
   const comp = `erp-${id.replace(/_/g, '-')}-${entity}`;
 
   put(join(dir, 'module.json'), JSON.stringify(moduleManifest(id, entity, comp), null, 2) + '\n');
-  // AMBOS dialectos desde el nacimiento (bug 2026-07-05: solo-sqlite dejaba los hubs Cloud
-  // sin esquema). El SQL inicial es el subconjunto portable ERPlora SQL: mismo contenido.
-  put(join(dir, 'migrations', 'sqlite', '001_init.sql'), initMigration(id, entity, 'SQLite'));
+  // Dialecto único Postgres (ADR-0154): SQLite quedó deprecado, ya no se genera.
   put(join(dir, 'migrations', 'postgres', '001_init.sql'), initMigration(id, entity, 'Postgres'));
   put(join(dir, 'queries', `${entity}_list.sql`), listQuery(id, entity));
   put(join(dir, 'queries', `${entity}_get.sql`), getQuery(id, entity));
@@ -225,7 +223,6 @@ function moduleManifest(id, entity, comp) {
     },
     navigation: [{ id: entity, label: cap(entity), icon: 'list', component: comp }],
     migrations: {
-      sqlite: ['migrations/sqlite/001_init.sql'],
       postgres: ['migrations/postgres/001_init.sql'],
     },
     queries: {
