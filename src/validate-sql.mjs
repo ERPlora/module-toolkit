@@ -416,9 +416,10 @@ function collectSqlEntries(value, dir, label) {
 export function collectModuleSql(dir, manifest) {
   const entries = [];
 
-  // Migraciones: { sqlite: [...], postgres: [...] } — ambos dialectos.
+  // Migraciones: { postgres: [...] } — dialecto único (ADR-0154). SQLite quedó deprecado;
+  // sus ficheros (si aún existen en transición) no se lintan.
   const migs = manifest.migrations || {};
-  for (const dialect of ['sqlite', 'postgres']) {
+  for (const dialect of ['postgres']) {
     for (const rel of migs[dialect] || []) {
       const sql = readSqlFile(dir, rel);
       if (sql != null) entries.push({ sql, source: rel });
