@@ -7,7 +7,7 @@
 // la heurística de dinero que es WARNING configurable (ver `MONEY_RULE`).
 //
 // Escanea TODO el SQL de un módulo:
-//   - migraciones de AMBOS dialectos (module.json `migrations.{sqlite,postgres}` → .sql),
+//   - migraciones (module.json `migrations.postgres` → .sql),
 //   - queries/commands (`sql` puede ser string inline o ruta .sql, o array de ellas).
 //
 // Reporta: fichero (o "module.json#<clave>" para SQL inline) + módulo + línea + construcción
