@@ -1,20 +1,24 @@
-// Guardarraíles de compatibilidad Postgres (auditoría pm#16, 2026-07-17).
+// Guardarraíles de compatibilidad Postgres (auditoría pm#16; actualizados tras ADR-0154 + hub#210).
 //
-// La familia que mató 4 P0 en Hub Cloud (QA sectorial 07-16): SQLite tolera lo que
-// Postgres rechaza, y como los módulos solo se ejercitaban en SQLite, la suite local
-// nunca lo vio. Tres reglas léxicas (misma filosofía que validate-sql.mjs: sin parser
-// AST, enmascarando literales y comentarios):
+// La familia que mató 4 P0 en Hub Cloud (QA sectorial 07-16): construcciones que un motor tolera
+// y Postgres rechaza. Escáner LÉXICO (sin parser AST; misma filosofía que validate-sql.mjs),
+// enmascarando literales y comentarios. Cuatro reglas, cada una con `level`:
 //
-//   1) `multi-statement`        — un fichero de `sql[]` de command/query se ejecuta como
-//      UN prepared statement; PG rechaza multi-statement («cannot insert multiple
-//      commands»). Las migraciones van por otro camino y quedan exentas. (inventory#20)
-//   2) `boolean-bind`           — un bind declarado `"type": "boolean"` en el schema no
-//      puede ir crudo al SQL: las columnas de flags son INTEGER 0/1 por contrato (§2.5)
-//      y PG no castea boolean→bigint. Debe envolverse:
-//      `CASE WHEN :x THEN 1 WHEN NOT :x THEN 0 END`. (verifactu#13)
-//   3) `onconflict-unqualified` — en `ON CONFLICT … DO UPDATE SET`, la auto-referencia a
-//      la columna va CUALIFICADA (`tabla.col` o `excluded.col`); sin cualificar es
-//      ambigua en PG (error de parseo). (appointments#19)
+//   1) `multi-statement`        ERROR   — un fichero de `sql[]` de command/query se ejecuta como
+//      UN prepared statement; PG rechaza multi-statement («cannot insert multiple commands»).
+//      Las migraciones van por otro camino y quedan exentas. (inventory#28)
+//   2) `onconflict-unqualified` ERROR   — en `ON CONFLICT … DO UPDATE SET`, la auto-referencia a
+//      la columna va CUALIFICADA (`tabla.col` o `excluded.col`); sin cualificar es ambigua en PG
+//      (error de parseo). (appointments#19)
+//   3) `boolean-case-obsolete`  WARNING — `CASE WHEN :param THEN …` / `WHEN NOT :param`. Antes se
+//      RECOMENDABA envolver los flags así; desde ADR-0154 el runtime coerciona `Json::Bool`→
+//      INTEGER 0/1 en un punto central (hub#210), así que el bind llega como bigint 0/1 y
+//      `CASE WHEN <bigint>` ROMPE en PG («argument of WHEN must be type boolean»). Pasa el param
+//      DIRECTO (`SET flag = :param`). La regla vieja `boolean-bind` (que pedía justo este CASE
+//      WHEN) queda DEROGADA — su patrón recomendado ya no compila. (pm#16 cerrada por obsoleta)
+//   4) `null-untyped`           WARNING — `:param IS NULL`: PG no puede inferir el tipo del bind en
+//      ese contexto; si el valor llega NULL da «could not determine data type of parameter»
+//      (42P08). Castea el bind: `:param::text IS NULL` (o el tipo real de la columna). (tables#20)
 import { readFileSync, existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 
@@ -29,21 +33,6 @@ function mask(sql) {
 /** Sentencias top-level de un SQL ya enmascarado (ignora ';' finales vacíos). */
 function statementCount(masked) {
   return masked.split(';').map((p) => p.trim()).filter(Boolean).length;
-}
-
-/** Nombres de props `boolean` (incluye uniones ["boolean","null"]) de un JSON Schema. */
-function boolProps(schema) {
-  const out = new Set();
-  (function walk(node, name) {
-    if (!node || typeof node !== 'object') return;
-    const t = node.type;
-    if (t === 'boolean' || (Array.isArray(t) && t.includes('boolean'))) {
-      if (name) out.add(name);
-    }
-    for (const [k, v] of Object.entries(node.properties ?? {})) walk(v, k);
-    if (node.items) walk(node.items, name);
-  })(schema);
-  return [...out];
 }
 
 function readRel(dir, rel) {
@@ -68,8 +57,8 @@ function sqlEntries(dir, value, label) {
 }
 
 /**
- * Chequea las tres reglas PG sobre queries+commands del módulo.
- * Devuelve [{rule, message}].
+ * Chequea las reglas PG sobre queries+commands del módulo (las migraciones van por otro camino).
+ * Devuelve [{rule, level, message}] con `level` ∈ {'error','warning'}.
  */
 export function checkPgCompat(dir, manifest) {
   const findings = [];
@@ -79,49 +68,20 @@ export function checkPgCompat(dir, manifest) {
       if (!def) continue;
       const entries = sqlEntries(dir, def.sql, `${coll}.${name}`);
 
-      // Regla 2 solo aplica a SQL directo (un handler WASM convierte en el guest).
-      const isWasm = !!def.handler;
-      let props = [];
-      if (!isWasm && def.schema) {
-        try {
-          props = boolProps(JSON.parse(readRel(dir, def.schema) ?? 'null'));
-        } catch {
-          props = []; // schema ilegible: lo reporta validate-schemas, no esta capa
-        }
-      }
-
       for (const { sql, source } of entries) {
         const m = mask(sql);
 
-        // 1) multi-statement
+        // 1) multi-statement — ERROR
         const n = statementCount(m);
         if (n > 1) {
           findings.push({
             rule: 'multi-statement',
+            level: 'error',
             message: `${source} — ${n} sentencias en un fichero de \`sql[]\`: PG lo ejecuta como UN prepared statement y lo rechaza («cannot insert multiple commands»). Trocea en un fichero por sentencia (mismo command = misma transacción).`,
           });
         }
 
-        // 2) boolean-bind crudo
-        for (const p of props) {
-          const re = new RegExp(`(?<![\\w]):${p}(?![\\w])`, 'g');
-          let bad = false;
-          for (const hit of m.matchAll(re)) {
-            const before = m.slice(Math.max(0, hit.index - 24), hit.index);
-            // Se admite dentro del patrón CASE WHEN :p … / WHEN NOT :p …
-            if (/(?:WHEN|NOT)\s*$/i.test(before)) continue;
-            bad = true;
-            break;
-          }
-          if (bad) {
-            findings.push({
-              rule: 'boolean-bind',
-              message: `${source} — el bind \`:${p}\` es \`boolean\` en el schema y va CRUDO al SQL: PG no castea boolean→bigint (las columnas de flags son INTEGER 0/1, §2.5). Envuélvelo: CASE WHEN :${p} THEN 1 WHEN NOT :${p} THEN 0 END.`,
-            });
-          }
-        }
-
-        // 3) ON CONFLICT … DO UPDATE SET col = …col… sin cualificar
+        // 2) ON CONFLICT … DO UPDATE SET col = …col… sin cualificar — ERROR
         for (const oc of m.matchAll(/ON\s+CONFLICT[\s\S]{0,120}?DO\s+UPDATE\s+SET\s+([\s\S]*?)(?:WHERE|;|$)/gi)) {
           const body = oc[1];
           for (const asg of body.matchAll(/(\w+)\s*=\s*([^,]+)/g)) {
@@ -130,10 +90,39 @@ export function checkPgCompat(dir, manifest) {
             if (selfRef.test(rhs)) {
               findings.push({
                 rule: 'onconflict-unqualified',
+                level: 'error',
                 message: `${source} — \`${col} = ${rhs.trim().slice(0, 40)}\`: auto-referencia SIN CUALIFICAR en DO UPDATE — ambigua en PG (error de parseo). Usa \`<tabla>.${col}\` o \`excluded.${col}\`.`,
               });
             }
           }
+        }
+
+        // 3) `CASE WHEN :param THEN` / `WHEN NOT :param` — patrón OBSOLETO (WARNING).
+        //    El param va como boolean-condición cruda dentro de un WHEN. Post ADR-0154 el runtime
+        //    coerciona bool→0/1, así que el bind es un bigint y `CASE WHEN <bigint>` rompe en PG.
+        const seenCase = new Set();
+        for (const hit of m.matchAll(/\bWHEN\s+(?:NOT\s+)?:(\w+)\b(?=\s*(?:THEN|WHEN|AND|OR|END|\)|$))/gi)) {
+          const p = hit[1];
+          if (seenCase.has(p)) continue;
+          seenCase.add(p);
+          findings.push({
+            rule: 'boolean-case-obsolete',
+            level: 'warning',
+            message: `${source} — \`WHEN … :${p}\`: patrón OBSOLETO. Desde ADR-0154 el runtime coerciona bool→0/1 en un punto central (hub#210); el bind llega como bigint y \`CASE WHEN :${p}\` rompe en PG («argument of WHEN must be type boolean»). Pasa el param DIRECTO (\`= :${p}\`), sin envolver en CASE WHEN.`,
+          });
+        }
+
+        // 4) `:param IS [NOT] NULL` — bind sin tipo inferible (WARNING; posible 42P08).
+        const seenNull = new Set();
+        for (const hit of m.matchAll(/:(\w+)\s+IS\s+(?:NOT\s+)?NULL\b/gi)) {
+          const p = hit[1];
+          if (seenNull.has(p)) continue;
+          seenNull.add(p);
+          findings.push({
+            rule: 'null-untyped',
+            level: 'warning',
+            message: `${source} — \`:${p} IS NULL\`: PG no infiere el tipo del bind en ese contexto; si el valor llega NULL da 42P08 («could not determine data type of parameter»). Castea el bind: \`:${p}::text IS NULL\` (o el tipo real de la columna).`,
+          });
         }
       }
     }

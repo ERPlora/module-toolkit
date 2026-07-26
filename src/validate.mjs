@@ -69,12 +69,17 @@ export async function validate(moduleDir) {
   // dialectos). Lanza si hay errores; imprime warnings (heurística de dinero).
   const { warnings } = validateSql(dir, manifest);
 
-  // Compatibilidad Postgres (auditoría pm#16, 2026-07-17): la familia que mató 4 P0 en
-  // Hub Cloud — SQLite tolera lo que PG rechaza (multi-statement en un prepared statement,
-  // boolean→INTEGER sin CASE WHEN, ON CONFLICT sin cualificar) y la suite local no lo ve.
+  // Compatibilidad Postgres (auditoría pm#16; actualizada tras ADR-0154 + hub#210): la familia
+  // que mató 4 P0 en Hub Cloud. ERRORES que rompen en PG (multi-statement en un prepared
+  // statement, ON CONFLICT sin cualificar) bloquean; WARNINGS de patrón (CASE WHEN sobre bool ya
+  // obsoleto por la coerción central, `:param IS NULL` sin tipo → posible 42P08) solo avisan.
   const pg = checkPgCompat(dir, manifest);
-  if (pg.length) {
-    throw new Error('incompatibilidades Postgres (pm#16):\n  - ' + pg.map((f) => f.message).join('\n  - '));
+  for (const w of pg.filter((f) => f.level === 'warning')) {
+    console.warn(`⚠ ${manifest.id}: [${w.rule}] ${w.message}`);
+  }
+  const pgErrors = pg.filter((f) => f.level === 'error');
+  if (pgErrors.length) {
+    throw new Error('incompatibilidades Postgres (pm#16):\n  - ' + pgErrors.map((f) => f.message).join('\n  - '));
   }
 
   // Paridad manifest↔disco de migraciones (bug 2026-07-05, hubs Cloud sin migrar): todo
