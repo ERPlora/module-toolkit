@@ -1,0 +1,24 @@
+name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 6 * * *'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Esta guardia solo usa módulos built-in de Node; no necesita instalar las dependencias
+      # file: del toolkit ni disponer de los repos hermanos.
+      - run: node --test test/validate-sql.test.mjs
+      # El check remoto corre tras integrar en main y a diario. En un PR coordinado puede llevar
+      # el snapshot de la rama hub todavía no fusionada sin crear una dependencia entre checkouts.
+      - if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
+        run: node scripts/sync-sql-contract.mjs --check

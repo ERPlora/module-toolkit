@@ -9,6 +9,8 @@
   },
   "scripts": {
     "test": "node --test",
+    "sync:sql-contract": "node scripts/sync-sql-contract.mjs",
+    "check:sql-contract": "node scripts/sync-sql-contract.mjs --check",
     "smoke": "node bin/erplora.mjs build ../modules-workspace/modules/inventory && node bin/erplora.mjs build ../modules-workspace/modules/sales"
   },
   "dependencies": {

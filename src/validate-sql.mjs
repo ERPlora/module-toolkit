@@ -17,14 +17,14 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
-// SET PORTABLE — debe mantenerse SINCRONIZADO con el shim del runtime
-// (hub/crates/db/src/lib.rs: `BRIDGE_FUNCTIONS` y `normalize_ddl_type`).
+// SET PORTABLE — snapshot del contrato versionado del runtime
+// (`hub/schemas/sql-bridge-functions.json`). `scripts/sync-sql-contract.mjs --check` compara este
+// snapshot con la fuente canónica sin depender de que exista un checkout hermano de `hub`.
 //
 // TODO (columna del HUMANO): el ADR-0007 enumera estos sets solo con EJEMPLOS ("p.ej.
 // erp_now()/erp_lpad()") y NO los cierra del todo. Aquí se replica EXACTAMENTE lo que el
-// shim soporta HOY. Ampliar/cerrar este set definitivo es decisión del humano y, cuando se
-// decida, hay que cambiarlo a la vez en DOS sitios: este fichero y `BRIDGE_FUNCTIONS` del
-// runtime. Idealmente un único punto de verdad en el futuro (p.ej. un JSON compartido).
+// shim soporta HOY. Ampliar/cerrar el set implica cambiar primero el contrato canónico y refrescar
+// este snapshot; el runtime y el validador cargan datos, no dos arrays escritos a mano.
 // ─────────────────────────────────────────────────────────────────────────────────────────
 
 /** Funciones-puente `erp_*` que el shim del runtime sabe reescribir. Set CERRADO:
@@ -35,10 +35,13 @@ import { join, isAbsolute } from 'node:path';
  *  validador rechazaba SQL PORTABLE: `erplora validate modules/sales` fallaba con «función-puente
  *  desconocida `erp_date`». Y como el SQL se valida ANTES que los schemas, ningún módulo que usara
  *  una función de fecha llegaba siquiera a que le revisaran el dinero. */
-export const BRIDGE_FUNCTIONS = [
-  'erp_now', 'erp_lpad', 'erp_pad', 'erp_dt', 'erp_date', 'erp_dateadd',
-  'erp_month_start', 'erp_dow_mon0', 'erp_extract', 'erp_datediff_days', 'erp_timefmt',
-];
+const SQL_BRIDGE_CONTRACT = JSON.parse(
+  readFileSync(new URL('../contracts/sql-bridge-functions.json', import.meta.url), 'utf8'),
+);
+if (SQL_BRIDGE_CONTRACT.schema_version !== 1 || !Array.isArray(SQL_BRIDGE_CONTRACT.functions)) {
+  throw new Error('contracts/sql-bridge-functions.json: contrato inválido o versión desconocida');
+}
+export const BRIDGE_FUNCTIONS = Object.freeze([...SQL_BRIDGE_CONTRACT.functions]);
 
 /** Tipos del subconjunto portable admitidos en DDL (`CREATE TABLE`). Espejo de las claves
  *  de `normalize_ddl_type` del shim. Todo lo demás en posición de tipo es no portable. */

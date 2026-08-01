@@ -12,18 +12,11 @@ const errors = (sql) => lintSql(sql).filter((f) => f.level === 'error');
 const warnings = (sql) => lintSql(sql).filter((f) => f.level === 'warning');
 const kinds = (sql) => lintSql(sql).map((f) => f.kind);
 
-// ── el set portable está sincronizado con lo que documentamos del shim ───────────────────
-// ESTA LISTA ES UN ESPEJO de `BRIDGE_FUNCTIONS` en `hub/crates/db/src/lib.rs`. Se había quedado
-// con solo 3 de las 11 que el shim implementa de verdad, así que el validador rechazaba SQL
-// perfectamente portable: `erplora validate modules/sales` fallaba con «función-puente desconocida
-// `erp_date`» — y como el SQL se valida ANTES que los schemas, ningún módulo que use una función de
-// fecha llegaba siquiera a que le revisaran el dinero. Si añades una función-puente al shim,
-// añádela aquí.
-test('set portable expone las constantes del shim', () => {
-  assert.deepEqual(BRIDGE_FUNCTIONS, [
-    'erp_now', 'erp_lpad', 'erp_pad', 'erp_dt', 'erp_date', 'erp_dateadd',
-    'erp_month_start', 'erp_dow_mon0', 'erp_extract', 'erp_datediff_days', 'erp_timefmt',
-  ]);
+// ── el set portable sale del snapshot verificable del contrato del shim ──────────────────
+test('set portable expone el contrato versionado del shim', () => {
+  assert.equal(Object.isFrozen(BRIDGE_FUNCTIONS), true);
+  assert.ok(BRIDGE_FUNCTIONS.includes('erp_date'));
+  assert.equal(new Set(BRIDGE_FUNCTIONS).size, BRIDGE_FUNCTIONS.length);
   assert.deepEqual(PORTABLE_TYPES, ['TEXT', 'INTEGER', 'REAL', 'BLOB']);
 });
 
