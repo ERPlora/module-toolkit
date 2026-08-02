@@ -336,7 +336,7 @@ test('loadSlot lleva el prefijo del PROPIO módulo (el host define sus puntos de
   assert.match(errs[0], /alpha\.detail\.actions/);
 });
 
-// El core NO es un módulo: `hub.` es su namespace reservado en el dispatcher (ADR-0188). Un módulo
+// El core NO es un módulo: `hub.` es su namespace reservado en el dispatcher (ADR-0192). Un módulo
 // que lee la identidad del Hub (p. ej. `staff`, que vincula su ficha de profesional a un usuario)
 // no puede —ni debe— declarar `depends_on: ["hub"]`: no hay nada que instalar ni que resolver en el
 // topo-orden. El validador tiene que conocerlo, o el gate rechaza un módulo perfectamente correcto.
