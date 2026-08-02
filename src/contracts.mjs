@@ -224,7 +224,7 @@ export function loadUniverse(modulesDir) {
  *     workspace al lado) → constancia de lo no comprobado; lo cubren la publicación/instalación
  */
 /**
- * Namespace RESERVADO del core en el dispatcher (ADR-0188): lo sirve el runtime, no un módulo.
+ * Namespace RESERVADO del core en el dispatcher (ADR-0192): lo sirve el runtime, no un módulo.
  * Un módulo lo consume como cualquier otra query (`erplora().query('hub.users.list')`) pero NO lo
  * declara en `depends_on`: no es instalable ni participa del topo-orden.
  *
@@ -251,7 +251,7 @@ export function crossValidateFull(manifest, contracts, universe) {
   const checkOperation = (name, opKind, { optional = false } = {}) => {
     const owner = name.split('.')[0];
     const surface = opKind === 'command' ? 'commands' : 'queries';
-    // El CORE no es un módulo (ADR-0188): `hub.` es su namespace reservado en el dispatcher. No se
+    // El CORE no es un módulo (ADR-0192): `hub.` es su namespace reservado en el dispatcher. No se
     // declara en `depends_on` (no hay nada que instalar ni que ordenar topológicamente) y siempre
     // está presente. Pero el nombre sí se comprueba: un typo aquí también es un contrato roto.
     if (owner === CORE_NAMESPACE) {
