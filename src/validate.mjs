@@ -2,6 +2,7 @@
 // el SQL portable "ERPlora SQL" (ADR-0007) y, si hay bundle, que sea CSP-safe.
 // Sin dependencias externas.
 import { readFileSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { validateSql } from './validate-sql.mjs';
 import { checkMigrations } from './validate-migrations.mjs';
@@ -118,11 +119,82 @@ export async function validate(moduleDir) {
     throw new Error('contratos de interoperabilidad rotos (ADR-0127):\n  - ' + contracts.errors.join('\n  - '));
   }
 
+  // module-toolkit#135: si un comando declara `handler.type === "wasm"`, el `dist/handler.wasm` debe
+  // ser REPRODUCIBLE desde el source Rust presente (`handler/`). Antes `validate` solo tocaba el
+  // bundle JS: un módulo pasaba `erplora validate` con un `dist/handler.wasm` cuyo source actual NO
+  // compilaba (p.ej. ERPlora/services#11 `round_cents`), y el runtime ejecutaba el wasm viejo.
+  //
+  // Política (para no romper módulos ya publicados ni módulos sin WASM):
+  //  - Sin `handler/` (módulo 100% declarativo, sin Rust distribuido) → válido, no se comprueba.
+  //  - Con `handler/Cargo.toml` → se compila el source (`cargo build`); si NO compila → FAIL.
+  //    Es la condición que cazaba el bug real: un source roto no puede pasar validate.
+  //  - Si `cargo` no está instalado → WARN (no se puede verificar, pero no se bloquea al dev).
+  const wasmResult = checkWasmHandler(dir, manifest);
+  for (const w of wasmResult.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (wasmResult.errors.length) {
+    throw new Error('handler WASM no compila desde el source (module-toolkit#135):\n  - ' + wasmResult.errors.join('\n  - '));
+  }
+
   const bundle = join(dir, 'dist', `${manifest.id}.esm.js`);
   if (existsSync(bundle)) assertCspSafe(readFileSync(bundle, 'utf8'), `${manifest.id} bundle`);
 
   const sqlNote = warnings.length ? ` (${warnings.length} warning(s) SQL)` : '';
+  const wasmNote = wasmResult.checked ? ' + handler WASM compila' : '';
   console.log(
-    `✓ validate ${manifest.id}: manifest OK + SQL portable${sqlNote} + contratos OK${existsSync(bundle) ? ' + bundle CSP-safe' : ''}`,
+    `✓ validate ${manifest.id}: manifest OK + SQL portable${sqlNote} + contratos OK${wasmNote}${existsSync(bundle) ? ' + bundle CSP-safe' : ''}`,
   );
+}
+
+/// Comprueba que todo `commands[].handler` de tipo `wasm` tenga un source Rust que compila.
+///
+/// Devuelve `{ checked: bool, errors: string[], warnings: string[] }`:
+/// - `checked: false` y sin errores → el módulo no declara WASM (o no trae `handler/`): válido.
+/// - `checked: true` y sin errores → hay `handler/` y compila.
+/// - `errors` no vacío → el source NO compila (fail).
+/// No exige `wasm32`/`wasm-pack`: compila el crate del guest al target del host. Un source que
+/// compila para el host compila para wasm32 (mismo código, solo cambia el target); si falta un
+/// símbolo (el bug de `round_cents`) salta aquí igual. Así el check funciona sin toolchain wasm.
+export function checkWasmHandler(dir, manifest) {
+  const out = { checked: false, errors: [], warnings: [] };
+  const cmds = Object.values(manifest.commands ?? {});
+  const hasWasmHandler = cmds.some((c) => c?.handler?.type === 'wasm');
+  if (!hasWasmHandler) return out; // módulo sin handler WASM: nada que verificar.
+
+  const handlerDir = join(dir, 'handler');
+  const cargoToml = join(handlerDir, 'Cargo.toml');
+  if (!existsSync(cargoToml)) {
+    // Hay handler wasm declarado pero no hay source distribuido. Es válido SOLO si hay una política
+    // explícita de "wasm precompilado de terceros" — sin esa señal, avisamos (no bloqueamos, para
+    // no romper módulos ya publicados sin source).
+    out.warnings.push(
+      'declara handler.type=wasm pero no trae handler/Cargo.toml: no se puede verificar que ' +
+        'dist/handler.wasm se genere desde este commit. Si es un módulo first-party, añade handler/. ' +
+        '(module-toolkit#135)',
+    );
+    return out;
+  }
+
+  // Reusa el target compartido del workspace si existe; si no, uno del propio módulo.
+  let cargoOk = false;
+  try {
+    // `cargo build` sin features de guest: compila el crate como rlib (los tests unitarios hacen
+    // lo mismo). Compila el source y sus dependencias; cualquier error de compilación salta aquí.
+    const args = ['build', '--manifest-path', cargoToml, '--quiet'];
+    const res = spawnSync('cargo', args, { encoding: 'utf8', timeout: 300000 });
+    if (res.status === 0) {
+      cargoOk = true;
+    } else {
+      const tail = (res.stderr || res.stdout || '').split('\n').filter(Boolean).slice(-8).join('\n    ');
+      out.errors.push(`handler/ no compila (module-toolkit#135):\n    ${tail || 'cargo terminó sin salida'}`);
+    }
+  } catch (e) {
+    out.warnings.push(
+      `no se pudo ejecutar \`cargo\` para verificar el handler WASM (${e.code === 'ENOENT' ? 'cargo no instalado' : e.message}). ` +
+        'El dist no se ha verificado contra el source. (module-toolkit#135)',
+    );
+    return out;
+  }
+
+  out.checked = cargoOk;
+  return out;
 }
