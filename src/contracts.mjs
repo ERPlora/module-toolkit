@@ -223,6 +223,20 @@ export function loadUniverse(modulesDir) {
  *   - deferred: dependencias declaradas que no están en el universo (CI por-módulo sin el
  *     workspace al lado) → constancia de lo no comprobado; lo cubren la publicación/instalación
  */
+/**
+ * Namespace RESERVADO del core en el dispatcher (ADR-0188): lo sirve el runtime, no un módulo.
+ * Un módulo lo consume como cualquier otra query (`erplora().query('hub.users.list')`) pero NO lo
+ * declara en `depends_on`: no es instalable ni participa del topo-orden.
+ *
+ * La lista es el espejo de `CORE_QUERIES` en `hub/crates/runtime/src/hub_users.rs`. Si el runtime
+ * gana una capacidad de core nueva, se añade aquí — si no, el gate la rechaza como typo.
+ */
+const CORE_NAMESPACE = 'hub';
+const CORE_OPERATIONS = {
+  queries: ['hub.users.list', 'hub.roles.list'],
+  commands: [],
+};
+
 export function crossValidateFull(manifest, contracts, universe) {
   const errors = [];
   const deferred = [];
@@ -237,6 +251,15 @@ export function crossValidateFull(manifest, contracts, universe) {
   const checkOperation = (name, opKind, { optional = false } = {}) => {
     const owner = name.split('.')[0];
     const surface = opKind === 'command' ? 'commands' : 'queries';
+    // El CORE no es un módulo (ADR-0188): `hub.` es su namespace reservado en el dispatcher. No se
+    // declara en `depends_on` (no hay nada que instalar ni que ordenar topológicamente) y siempre
+    // está presente. Pero el nombre sí se comprueba: un typo aquí también es un contrato roto.
+    if (owner === CORE_NAMESPACE) {
+      if (!CORE_OPERATIONS[surface].includes(name)) {
+        errors.push(`\`${name}\`: no existe en el core (capacidades del namespace \`${CORE_NAMESPACE}.\`: ${CORE_OPERATIONS[surface].join(', ') || 'ninguna'})`);
+      }
+      return;
+    }
     if (owner === me) {
       if (!universe.get(me)?.[surface].has(name)) {
         errors.push(`\`${name}\`: no existe en el propio manifest de \`${me}\` (¿typo?)`);
