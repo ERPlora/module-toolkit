@@ -336,6 +336,28 @@ test('loadSlot lleva el prefijo del PROPIO módulo (el host define sus puntos de
   assert.match(errs[0], /alpha\.detail\.actions/);
 });
 
+// El core NO es un módulo: `hub.` es su namespace reservado en el dispatcher (ADR-0188). Un módulo
+// que lee la identidad del Hub (p. ej. `staff`, que vincula su ficha de profesional a un usuario)
+// no puede —ni debe— declarar `depends_on: ["hub"]`: no hay nada que instalar ni que resolver en el
+// topo-orden. El validador tiene que conocerlo, o el gate rechaza un módulo perfectamente correcto.
+test('las queries del CORE (`hub.*`) no exigen depends_on ni existen como módulo', () => {
+  const { ws, beta } = fakeWorkspace();
+  write(beta, 'ui/components/x.ts', `await erplora().query('hub.users.list');`);
+  const manifest = readManifest(beta);
+  const { errors, deferred } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.deepEqual(errors, [], 'el core no es una dependencia declarable');
+  assert.deepEqual(deferred, [], 'ni algo aplazado: el core siempre está');
+});
+
+test('una query del core que NO existe sí es un contrato roto', () => {
+  const { ws, beta } = fakeWorkspace();
+  write(beta, 'ui/components/x.ts', `await erplora().query('hub.inventado.list');`);
+  const manifest = readManifest(beta);
+  const { errors } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /hub\.inventado\.list/);
+});
+
 test('un depends_on ausente del workspace APLAZA su chequeo (CI por-módulo), no lo inventa', () => {
   const { ws, beta } = fakeWorkspace();
   write(beta, 'ui/components/x.ts', `await erplora().query('delta.rows.list');`);
