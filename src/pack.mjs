@@ -1,6 +1,6 @@
 // `erplora pack|sign|publish`: empaqueta el módulo para el marketplace (ARQUITECTURA.md §7.4, §2.2).
 //  • pack    → build + module.zip + manifest.lock.json + SHA256
-//  • sign    → (re)calcula SHA256 del zip (firma real con clave: pendiente — ver nota)
+//  • sign    → SHA256 + FIRMA ed25519 detached (`<zip>.sig`) con la clave del marketplace
 //  • publish → flujo hacia el Cloud Portal (NO automatizado: requiere auth + confirmación)
 import { build } from './build.mjs';
 import { validate } from './validate.mjs';
@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { signatureFileFor } from './signing.mjs';
 
 // Lo que entra en el module.zip (resto se ignora: node_modules, .git, src TS, fixtures, etc.).
 // El contrato: manifest + artefacto UI + SQL (Postgres) + WASM opcional + documentación.
@@ -88,9 +89,23 @@ export async function sign(moduleDir) {
   if (!existsSync(zipPath)) throw new Error(`no hay zip; ejecuta 'erplora pack ${manifest.id}' primero`);
   const hash = sha256(readFileSync(zipPath));
   writeFileSync(`${zipPath}.sha256`, `${hash}  ${manifest.id}-v${manifest.version}.zip\n`);
-  console.log(`✓ sign ${manifest.id}: SHA256 ${hash}`);
-  console.log('  Nota: la FIRMA criptográfica con clave del marketplace aún no está cableada (decisión humano: §7.4).');
-  console.log('  Hoy el contrato de integridad es el SHA256 que el Hub re-verifica al instalar (§2.2).');
+
+  // (#967, ADR-0193) El SHA256 se sigue escribiendo —es el contrato de integridad de ADR-0015 y
+  // el Hub lo re-verifica al instalar—, pero YA NO es lo único: prueba que el zip llegó entero,
+  // no de quién es. La firma ed25519 es lo que prueba autoría, y va aparte porque cubre el zip
+  // completo (meterla dentro cambiaría lo firmado).
+  //
+  // Aquí SÍ se falla sin clave, al revés que en el SaaS: publicar no puede depender de que la
+  // firma esté configurada, pero `sign` no tiene otra razón de ser. Salir con éxito sin haber
+  // firmado es justo lo que hacía la versión anterior — decía «✓ sign» y no firmaba nada.
+  const sigPath = signatureFileFor(zipPath);
+  const { key_id: keyId } = JSON.parse(readFileSync(sigPath, 'utf8'));
+
+  console.log(`✓ sign ${manifest.id} v${manifest.version}
+  sha256: ${hash}
+  firma:  ${sigPath}  (ed25519, key_id ${keyId})`);
+  console.log(`  Súbelo junto al zip: el SaaS expone la firma en versions/ y el Hub la verifica
+  contra su anillo (HUB_MODULE_TRUSTED_KEYS) antes de instalar.`);
 }
 
 export async function publish(moduleDir) {
