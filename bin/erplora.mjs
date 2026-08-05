@@ -39,7 +39,7 @@ const usage = () => {
   validate <dir>                 valida el manifest + CSP del bundle + contratos (ADR-0127)
   contracts <dir>                (re)genera .erplora/contracts.json (superficie consumida)
   pack <dir>                     module.zip + manifest.lock + SHA256
-  sign <dir>                     SHA256 + firma ed25519 (`<zip>.sig`, MODULE_SIGNING_KEY)
+  sign <dir>                     SHA256 + firma ed25519 (\`<zip>.sig\`, MODULE_SIGNING_KEY)
   publish <dir>                  guía de publicación al marketplace (no automatizado)`);
   process.exit(2);
 };
