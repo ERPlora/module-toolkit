@@ -13,9 +13,10 @@
 // El módulo tiene que ser AUTÓNOMO: trae sus iconos en el zip, y el shell los registra al cargarlo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { generateIcons } from '../src/icons.mjs';
 
 /** Módulo temporal con un `dist/` y, opcionalmente, el fuente de un Web Component. */
@@ -80,6 +81,132 @@ test('hornea también los iconos que el módulo pasa por prop a un ok-* (OutfitK
     const icons = iconsOf(dir);
     assert.match(icons['checkmark-circle-outline'] ?? '', /^<svg/);
     assert.match(icons['ribbon-outline'] ?? '', /^<svg/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Bug 2026-08-05 (#22, real case ERPlora/inventory#32): the baker only scanned MARKUP
+// (`<ion-icon name=…>`, `<ok-* icon=…>`), not icon names passed as DATA — the `icon:` literals in
+// the `actions` arrays a module hands to ok-data-table via JS props. A blind rebuild of
+// `dist/icons.json` for the inventory module dropped 5 icons that were in use (eye, create, trash,
+// download, calculator-outline) and they rendered BLANK in the Hub.
+test('bakes the icon: literals of ok-data-table actions (data, not markup)', () => {
+  // Verbatim shape from inventory's erp-inventory-products.ts — the exact case that lost 5 icons.
+  const dir = mod(`
+    private actions(): DataTableAction[] {
+      return [
+        { id: 'detail', label: t('ui.actionDetail'), icon: 'eye-outline' },
+        { id: 'receive', label: t('ui.actionReceive'), icon: 'download-outline' },
+        { id: 'count', label: t('ui.actionCount'), icon: 'calculator-outline' },
+        ...(this.canEdit ? [{ id: 'edit', label: t('ui.actionEdit'), icon: 'create-outline' }] : []),
+        ...(this.canDelete ? [{ id: 'delete', label: t('ui.actionDelete'), icon: 'trash-outline', color: 'danger' }] : []),
+      ];
+    }`);
+  try {
+    generateIcons(dir, {});
+    const icons = iconsOf(dir);
+    for (const name of ['eye-outline', 'download-outline', 'calculator-outline', 'create-outline', 'trash-outline']) {
+      assert.match(icons[name] ?? '', /^<svg/, `${name} should be baked`);
+    }
+    // Neighbouring string literals are NOT icons: don't bake the label key or the color.
+    assert.equal(icons['ui.actionDelete'], undefined);
+    assert.equal(icons['danger'], undefined);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('bakes the literal fallback of a runtime icon (icon: expr ?? \'cube-outline\')', () => {
+  // inventory's categories table: `icon: (r.icon as string) ?? 'cube-outline'` — the variable part
+  // is not bakeable, but the literal fallback is in use and must travel.
+  const dir = mod(`rows.map((r) => ({ label: r.name, icon: (r.icon as string) ?? 'cube-outline' }))`);
+  try {
+    generateIcons(dir, {});
+    assert.match(iconsOf(dir)['cube-outline'] ?? '', /^<svg/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a TypeScript `icon: string` type annotation bakes nothing (no garbage)', () => {
+  const dir = mod(`
+    interface DataTableAction {
+      icon: string;
+      label: 'primary' | 'secondary';
+    }`);
+  try {
+    const { missing } = generateIcons(dir, {});
+    assert.deepEqual(Object.keys(iconsOf(dir)), []);
+    assert.deepEqual(missing, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('bakes icon literals bound to icon-suffixed props (.cardIcon of ok-data-table)', () => {
+  // Real case (customers, cart_checkout): `.cardIcon=${() => 'person-outline'}` — the icon of the
+  // mobile auto-cards mode. The bound-attribute scan only matched a prop named exactly `icon`, so a
+  // rebuild lost these too. Any `…icon`/`…Icon`-suffixed prop of an ok-* may carry icon names.
+  const dir = mod(`
+    render() {
+      return html\`<ok-data-table .serverSide=\${true} .cardIcon=\${() => 'person-outline'} .rows=\${this.rows}></ok-data-table>
+                  <ok-data-table .cardIcon=\${(r) => (r.vip ? 'star' : 'pricetag-outline')}></ok-data-table>\`;
+    }`);
+  try {
+    generateIcons(dir, {});
+    const icons = iconsOf(dir);
+    for (const name of ['person-outline', 'star', 'pricetag-outline']) {
+      assert.match(icons[name] ?? '', /^<svg/, `${name} should be baked`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('bakes manifest icons beyond the top level: settings.icon and widgets.*.icon', () => {
+  // Same bug class as the actions (#22), found while re-baking the real inventory module: the baker
+  // only read `manifest.icon` + `navigation[].icon`, but the manifest also declares icons in
+  // `settings.icon` and in the dashboard `widgets` blocks (ADR-0054). A blind rebuild dropped
+  // cash-outline and trending-down-outline (inventory's widget icons).
+  const dir = mod(undefined);
+  try {
+    generateIcons(dir, {
+      icon: 'cube-outline',
+      settings: { icon: 'options-outline' },
+      widgets: {
+        inventory: {
+          value: { icon: 'cash-outline', options: { icon: 'cash-outline' } },
+          low_stock_products: { icon: 'trending-down-outline' },
+        },
+      },
+    });
+    const icons = iconsOf(dir);
+    for (const name of ['cube-outline', 'options-outline', 'cash-outline', 'trending-down-outline']) {
+      assert.match(icons[name] ?? '', /^<svg/, `${name} should be baked`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Verification against the REAL inventory module (read-only fixture): its ui/ sources are copied to
+// a temp dir and baked; the 5 icons lost in ERPlora/inventory#32 must be in the result. Skipped when
+// the modules workspace is not checked out next to this repo (e.g. CI).
+test('real inventory module: the 5 action icons of inventory#32 end up baked', (t) => {
+  const inventoryUi = fileURLToPath(
+    new URL('../../modules-workspace/modules/inventory/ui', import.meta.url),
+  );
+  if (!existsSync(inventoryUi)) return t.skip('modules-workspace/modules/inventory not checked out');
+  const dir = mkdtempSync(join(tmpdir(), 'erplora-icons-inventory-'));
+  mkdirSync(join(dir, 'dist'), { recursive: true });
+  cpSync(inventoryUi, join(dir, 'ui'), { recursive: true });
+  try {
+    generateIcons(dir, {});
+    const icons = iconsOf(dir);
+    for (const name of ['eye-outline', 'create-outline', 'trash-outline', 'download-outline', 'calculator-outline']) {
+      assert.match(icons[name] ?? '', /^<svg/, `${name} should be baked`);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
