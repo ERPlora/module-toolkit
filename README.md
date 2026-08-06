@@ -25,7 +25,7 @@ aporta las dependencias y la configuración de build.
 | `erplora g view\|command\|query <id> <n>` | ✅ | Añade piezas dentro de un módulo existente. |
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
 | `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe). |
-| `erplora validate <id\|dir>` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle. |
+| `erplora validate <id\|dir>` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíl module-toolkit#135). |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
 | `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
 | `erplora publish <id\|dir>` | 📋 guía | Imprime el flujo de publicación al marketplace (no automatizado: auth + confirmación). |
@@ -51,8 +51,9 @@ Bundle **auto-contenido** (lit + outfitkit dentro), **sin import-map, sin extern
 
 ## Workspace local (lo que existe hoy)
 
-Los 27 módulos POS viven en **`ERPlora/modules-workspace/`** (creado con `startproject`, cada
-módulo su propio repo git en `modules/<id>/`). Para trabajar:
+Los **24** módulos viven en **`ERPlora/modules-workspace/`** (creado con `startproject`, cada
+módulo su propio repo git en `modules/<id>/`; recuento vivo: `ls modules-workspace/modules/` —
+los retirados están en `_retirados/`). Para trabajar:
 
 ```sh
 cd modules-workspace
@@ -73,6 +74,7 @@ El Hub consume los `dist/` de aquí: `hub/apps/web/sync-modules.mjs` apunta a
   Imprime el flujo; subir+registrar requiere confirmación y credenciales.
 - **`hub/packages/module-cli`** queda **deprecado** (ver su `DEPRECATED.md`). Borrarlo (y limpiar
   los scripts `build:*` del `package.json` raíz de `hub/`) es **decisión del humano**.
-- **Distribución a devs externos**: hoy las deps `@erplora/*` se enlazan por `file:` a
-  `hub/packages/*` (uso interno). Para terceros del marketplace hay que **publicar/vendorizar**
-  `@erplora/outfitkit` + `module-sdk` (hoy `private`/`workspace`). Fase aparte.
+- **Distribución a devs externos**: `@erplora/outfitkit` **ya está publicado en npm** (v0.1.31,
+  MIT); en el workspace local se enlaza por `file:../outfitkit`. `@erplora/module-sdk` +
+  `@erplora/module-types` siguen enlazados por `file:../hub/packages/*` (uso interno): para
+  terceros del marketplace queda **publicar/vendorizar** solo esos dos. Fase aparte.
