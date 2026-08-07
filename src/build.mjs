@@ -15,19 +15,33 @@ import { resolve, join, extname } from 'node:path';
 import { assertCspSafe } from './validate.mjs';
 import { erploraResolvePlugin } from './resolve-plugin.mjs';
 import { generateIcons } from './icons.mjs';
+import { buildWasmHandler } from './wasm.mjs';
 
 // Flags clásicos de decoradores para los `@state()/@property()` de Lit (igual que Vite).
 const TSCONFIG_RAW = {
   compilerOptions: { experimentalDecorators: true, useDefineForClassFields: false },
 };
 
-export async function build(moduleDir) {
+export async function build(moduleDir, { wasm = {} } = {}) {
   const dir = resolve(process.cwd(), moduleDir);
   const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
   const id = manifest.id;
 
   const outfile = join(dir, 'dist', `${id}.esm.js`);
   mkdirSync(join(dir, 'dist'), { recursive: true });
+
+  // Tier-2 handler BEFORE the Web Component (module-toolkit#26): until today `build` only touched
+  // the JS bundle and the icons, so a module whose `handler/src/lib.rs` had just changed was packed
+  // with the `dist/handler.wasm` of the last MANUAL compile — old logic under a new manifest, with
+  // nothing failing until it reached a real hub (tables#25, pricing#17). It runs first so a handler
+  // that cannot be regenerated fails before the bundle is spent: `buildWasmHandler` THROWS there.
+  // `wasm` injects the toolchain/runner in tests; in production both resolve themselves.
+  const handler = buildWasmHandler(dir, manifest, wasm);
+  if (handler.status === 'built') {
+    console.log(`✓ wasm ${id}: ${handler.file} recompilado (${(handler.bytes / 1024).toFixed(1)} KB)`);
+  } else if (handler.status === 'fresh') {
+    console.log(`✓ wasm ${id}: ${handler.file} al día (no se recompila)`);
+  }
 
   const common = {
     bundle: true,
