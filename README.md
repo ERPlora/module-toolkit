@@ -24,8 +24,8 @@ aporta las dependencias y la configuración de build.
 | `erplora g module <id>` | ✅ | Genera un módulo (repo propio): manifest + WC Lit (`ok-data-table`) + SQL + fixtures. |
 | `erplora g view\|command\|query <id> <n>` | ✅ | Añade piezas dentro de un módulo existente. |
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
-| `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe). |
-| `erplora validate <id\|dir>` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíl module-toolkit#135). |
+| `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe) **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
+| `erplora validate <id\|dir>` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
 | `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
 | `erplora publish <id\|dir>` | 📋 guía | Imprime el flujo de publicación al marketplace (no automatizado: auth + confirmación). |
@@ -48,6 +48,26 @@ contiene **una sola** `ReactiveElement`.
 Bundle **auto-contenido** (lit + outfitkit dentro), **sin import-map, sin externals** — decisión
 2026-06-07: bajo `script-src 'self'` un import-map inline viola la CSP. Mismo contrato de salida
 (`dist/<id>.esm.js`) que el antiguo `@erplora/module-cli`, para no tocar `module-loader`/`sync-modules`.
+
+## El handler Tier 2 (`handler/` → `dist/handler.wasm`)
+
+Un módulo con lógica Tier 2 lleva un crate Rust en `handler/`; el binario que viaja en el
+`module.zip` es `dist/handler.wasm`. Hasta el 2026-08-07 `erplora build` **no lo tocaba**: si
+editabas `handler/src/lib.rs` y no te acordabas de compilarlo a mano, el módulo se publicaba con la
+lógica vieja y el manifest nuevo — y **no fallaba nada** hasta llegar a un hub real (los tests del
+handler corren sobre el Rust, no sobre el binario). Pasó en `tables` y en `pricing` el mismo día
+(module-toolkit#26).
+
+- **`erplora build`** compila el handler (`cargo build --release --target wasm32-unknown-unknown
+  --features guest`) cuando el binario no está al día, lo copia a `dist/handler.wasm` y deja al lado
+  un **sello** `dist/handler.build.json` (sha256 de `handler/` + sha256 del binario). Si ya está al
+  día no recompila; si **no puede** recompilar (sin `cargo` o sin el target wasm32) **falla en voz
+  alta** en vez de empaquetar lógica vieja.
+- **`erplora validate`** (y por tanto `pack`) **rechaza** un binario desincronizado: que exporte
+  todas las funciones que el manifest enruta (`commands[].handler.function`) y que corresponda al
+  source. Para lo segundo se usa la mejor evidencia disponible — el sello, si no el historial de
+  git (fuentes tocadas sin recompilar, o `handler/` commiteado después del binario) y, en último
+  término, las fechas de fichero.
 
 ## Workspace local (lo que existe hoy)
 

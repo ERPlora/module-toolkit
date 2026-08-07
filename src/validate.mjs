@@ -9,6 +9,7 @@ import { checkMigrations } from './validate-migrations.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 import { checkContracts } from './contracts.mjs';
 import { checkPgCompat } from './validate-pg.mjs';
+import { checkWasmArtifact } from './wasm.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -117,6 +118,17 @@ export async function validate(moduleDir) {
   for (const d of contracts.deferred) console.warn(`⚠ ${manifest.id}: ${d}`);
   if (contracts.errors.length) {
     throw new Error('contratos de interoperabilidad rotos (ADR-0127):\n  - ' + contracts.errors.join('\n  - '));
+  }
+
+  // module-toolkit#26: the BINARY about to be packed must match both the source and the manifest.
+  // Two cheap checks (no `cargo`, which is why they run BEFORE the verification build below): that
+  // it exports every function the manifest routes to it, and that it corresponds to the current
+  // `handler/`. Without them a module published July's Tier-2 logic under August's manifest and
+  // nothing failed until a real hub ran it (tables#25, pricing#17).
+  const artifact = checkWasmArtifact(dir, manifest);
+  for (const w of artifact.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (artifact.errors.length) {
+    throw new Error('handler WASM desfasado (module-toolkit#26):\n  - ' + artifact.errors.join('\n  - '));
   }
 
   // module-toolkit#135: si un comando declara `handler.type === "wasm"`, el `dist/handler.wasm` debe
