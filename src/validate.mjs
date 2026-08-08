@@ -21,6 +21,43 @@ export function assertCspSafe(code, label = 'bundle') {
   }
 }
 
+/**
+ * Valida el bloque **opcional** `fiscal_regime` (ADR-0259 D6, hub#555): el régimen fiscal que este
+ * módulo IMPLEMENTA. Devuelve la lista de errores (vacía = correcto).
+ *
+ * Se valida aquí y no solo en el JSON Schema porque el schema no es la puerta que corre el autor
+ * del módulo: hoy `erplora validate` **no** mira el bloque `setup` y esa es exactamente la clase de
+ * hueco que hub#555 pide no repetir. Y el fallo es caro y silencioso: un `country` que no case con
+ * nada se lee, aguas abajo, igual que «no hay ningún proveedor instalado» — que es lo que bloquea
+ * un TPV.
+ *
+ * Dos comprobaciones, porque solo hay dos cosas contra las que se compara: el `country_code` del
+ * hub y el registro de regímenes del core.
+ */
+export function checkFiscalRegime(manifest) {
+  const f = manifest.fiscal_regime;
+  if (f === undefined || f === null) return []; // No es proveedor fiscal: la forma de los 24 publicados.
+  if (typeof f !== 'object' || Array.isArray(f)) {
+    return ['fiscal_regime debe ser un objeto { country, regime }'];
+  }
+  const errs = [];
+  const country = typeof f.country === 'string' ? f.country.trim() : '';
+  if (!/^[A-Za-z]{2}$/.test(country)) {
+    errs.push(
+      `fiscal_regime.country inválido: ${JSON.stringify(f.country)} — se espera ISO-3166-1 alpha-2 ` +
+        '(dos letras, p. ej. `ES`); es la forma contra la que se compara el país del hub',
+    );
+  }
+  const regime = typeof f.regime === 'string' ? f.regime.trim() : '';
+  if (!regime) {
+    errs.push(
+      'fiscal_regime.regime vacío: la clave es lo que el core cuenta como proveedor, y una vacía ' +
+        'no declara nada aunque lo parezca',
+    );
+  }
+  return errs;
+}
+
 export async function validate(moduleDir) {
   const dir = resolve(process.cwd(), moduleDir);
   const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
@@ -46,6 +83,8 @@ export async function validate(moduleDir) {
       if (!codeRe.test(code)) errs.push(`marketplace.${key}: código inválido: ${code}`);
     }
   }
+  // ADR-0259 D6 (hub#555): el régimen fiscal que el módulo dice implementar.
+  errs.push(...checkFiscalRegime(manifest));
   // La clasificación/pricing a nivel raíz queda obsoleta: va dentro de `marketplace`/`billing`.
   for (const moved of ['sectors', 'business_types', 'functional_unit', 'pricing']) {
     if (moved in manifest) errs.push(`'${moved}' a nivel raíz: muévelo a 'marketplace'/'billing' (ADR-0007)`);
