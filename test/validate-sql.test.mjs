@@ -206,3 +206,105 @@ test('validateSql LANZA cuando una migración postgres usa tipo no portable', ()
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── regla: aislamiento de tablas por módulo (hub#513) ────────────────────────────────────
+// El SQL de un módulo se ejecuta tal cual contra la BD del hub. Sin guarda, un command puede
+// llevar `UPDATE hub_user SET role='admin'` o `DELETE FROM _elevation_audit`. Esta regla lo caza
+// en build: denylist dura del core (ERROR) + fuera-de-prefijo (WARNING).
+const scopeErrs = (sql, moduleId) =>
+  lintSql(sql, '<sql>', moduleId ? { moduleId } : undefined).filter(
+    (f) => f.level === 'error' && /core|prefijo|tabla/.test(f.kind),
+  );
+const scopeWarns = (sql, moduleId) =>
+  lintSql(sql, '<sql>', moduleId ? { moduleId } : undefined).filter(
+    (f) => f.level === 'warning' && /core|prefijo|tabla/.test(f.kind),
+  );
+
+test('FALLA: un módulo que borra de _elevation_audit (tabla de sistema)', () => {
+  const e = scopeErrs('DELETE FROM _elevation_audit', 'sales');
+  assert.ok(e.length >= 1, '_elevation_audit es del sistema → error');
+  assert.match(e[0].kind, /tabla de sistema `_elevation_audit`/);
+});
+
+test('FALLA: lectura de una tabla de sistema del runtime (_scheduled_tasks)', () => {
+  const e = scopeErrs('SELECT * FROM _scheduled_tasks WHERE next_run <= :now', 'sales');
+  assert.ok(e.length >= 1, 'una tabla interna del runtime es error incluso en lectura');
+});
+
+test('WARN: un módulo que LEE hub_user (tabla del core — lectura es aviso, no bloqueo)', () => {
+  // La lectura de tablas hub_* es WARNING (algunas son referencias legítimas). Es un aviso para
+  // revisar, no un bloqueo: la medición sobre el catálogo mostró que taxes lee hub_settings y
+  // hub_country documentado (ADR-0085). El que aquí usemos hub_user de ejemplo no cambia el nivel.
+  const w = scopeWarns('SELECT pin_hash FROM hub_user WHERE id = :id', 'sales');
+  assert.ok(w.length >= 1, 'lectura de hub_* → warning (referencia a revisar)');
+});
+
+test('FALLA: un módulo que ESCRIBE en hub_user (tabla del core)', () => {
+  const e = scopeErrs("UPDATE hub_user SET role = 'admin' WHERE id = :id", 'sales');
+  assert.ok(e.length >= 1, 'escritura en hub_* → error');
+  assert.match(e[0].kind, /escritura en tabla del core/);
+});
+
+test('FALLA: CREATE TABLE con nombre del core', () => {
+  const e = scopeErrs('CREATE TABLE hub_foo (k TEXT, v TEXT)', 'sales');
+  assert.ok(e.length >= 1, 'un módulo no crea tablas del core');
+});
+
+test('WARN: hub_settings en LECTURA (ADR-0085 lo tolera para identidad fiscal)', () => {
+  // taxes lee hub_settings.country_code documentado — lectura es WARNING, no ERROR.
+  const w = scopeWarns('SELECT country_code FROM hub_settings WHERE hub_id = :hub_id', 'taxes');
+  assert.ok(w.length >= 1, 'lectura de hub_settings → warning (no error)');
+});
+
+test('FALLA: hub_settings en ESCRITURA (un módulo no reescribe la identidad del negocio)', () => {
+  const e = scopeErrs("UPDATE hub_settings SET v = 'ES' WHERE k = 'country_code'", 'taxes');
+  assert.ok(e.length >= 1, 'escritura en hub_settings → error');
+});
+
+test('WARN: lectura de hub_country (tabla de referencia del core, como hub_settings)', () => {
+  // taxes lee hub_country (referencia de países) — mismo trato que hub_settings: lectura tolerada.
+  const w = scopeWarns('SELECT code FROM hub_country', 'taxes');
+  assert.ok(w.length >= 1, 'lectura de tabla de referencia del core → warning');
+});
+
+test('WARN: un módulo que lee la tabla de OTRO módulo (sales_sale_item desde inventory)', () => {
+  // El cruce real hoy: inventory lee sales_sale_item. No es error (no es del core), pero avisa.
+  const w = scopeWarns('SELECT product_id FROM sales_sale_item WHERE id = :id', 'inventory');
+  assert.ok(w.length >= 1, 'tabla sin prefijo del módulo → warning');
+  assert.match(w[0].kind, /sin el prefijo del módulo `inventory_`/);
+});
+
+test('PASA: un módulo que lee SU PROPIA tabla (prefijo correcto)', () => {
+  assert.equal(scopeErrs('SELECT * FROM sales_order WHERE id = :id', 'sales').length, 0);
+  assert.equal(scopeWarns('SELECT * FROM sales_order WHERE id = :id', 'sales').length, 0);
+});
+
+test('PASA: alias de tabla no se confunde con tabla del core', () => {
+  // `FROM hub_user u` — el alias `u` no debe marcarse; la tabla `hub_user` (lectura) sí, como aviso.
+  const w = scopeWarns('SELECT u.id FROM hub_user u', 'sales');
+  assert.equal(w.length, 1, 'solo la tabla, no el alias');
+  assert.match(w[0].kind, /hub_user/);
+});
+
+test('PASA: tabla TEMP propia con prefijo _ no se marca como core (carve-out de _taxes_backfill)', () => {
+  // Caso real: taxes crea `_taxes_backfill_hubs` como TEMP. Empieza por _ pero es del módulo.
+  // Sin embargo, la denylist dura marcaría _taxes_backfill_hubs. Esto es un TENSION conocida:
+  // la regla es léxica y no distingue TEMP-propia de tabla-de-sistema. El contracto es que las
+  // TEMP propias también lleven el prefijo del módulo. Aquí confirmamos el comportamiento actual.
+  const e = scopeErrs('CREATE TEMP TABLE taxes_backfill_hubs AS SELECT 1', 'taxes');
+  assert.equal(e.length, 0, 'taxes_backfill_hubs lleva el prefijo del módulo → no es core');
+});
+
+test('PASA: JOIN a tabla propia con prefijo correcto', () => {
+  const sql =
+    'SELECT i.* FROM sales_order o JOIN sales_order_item i ON i.order_id = o.id WHERE o.id = :id';
+  assert.equal(scopeErrs(sql, 'sales').length, 0);
+  assert.equal(scopeWarns(sql, 'sales').length, 0);
+});
+
+test('PASA: sin moduleId, la regla solo aplica la allowlist de tablas protegidas', () => {
+  // lintSql suelto (sin ctx) no puede juzgar el prefijo, pero sí defiende el core.
+  assert.equal(scopeErrs('SELECT * FROM sales_order', undefined).length, 0, 'sin ctx no juzga prefijo');
+  // Las tablas de sistema del runtime (_*) siempre son error, con o sin ctx.
+  assert.ok(scopeErrs('DELETE FROM _elevation_audit', undefined).length >= 1, 'las tablas _ del runtime siempre se defienden');
+});

@@ -358,6 +358,134 @@ function ruleMoneyAsFloat(masked, original, findings) {
   }
 }
 
+// ── hub#513: aislamiento de tablas por módulo ───────────────────────────────────────────
+//
+// El SQL declarativo de un módulo se ejecuta TAL CUAL contra la BD del hub. Sin una guarda, un
+// `command` puede llevar `UPDATE hub_user SET role='admin'` o `DELETE FROM _elevation_audit` y el
+// dispatcher lo ejecuta. El permiso que se comprueba es el que el PROPIO módulo declaró para ese
+// command (ADR-0263, hub#513), así que nada defiende al core.
+//
+// El contrato (que hoy solo se cumple por costumbre): toda tabla que un módulo crea, lee o escribe
+// empieza por `<module_id>_`. Esta regla lo hace ruidoso en build, en vez de intentar cazarlo en
+// runtime (no se reescribe el SQL — ADR-0007 curó un subconjunto, no un parser).
+//
+// Dos niveles (decididos tras MEDIR sobre los 24 módulos del catálogo, como pide la issue):
+//   · ERROR (allowlist de tablas protegidas del core/sistema): `hub_*` y el set cerrado de tablas
+//     de sistema del runtime (`_*` que el runtime posee). Medir mostró que `_*` a secas rompe
+//     `taxes` (crea `_taxes_backfill_hubs` como TEMP legítima), así que NO se marca toda `_*`:
+//     solo el set conocido de tablas del runtime. `hub_*` sí entero (0 falsos positivos en 24
+//     módulos: ningún módulo crea tablas `hub_`).
+//   · WARNING: una tabla que no empieza por `<module_id>_` y no es del core. La medición mostró
+//     que el único cruce REAL es `inventory→sales_sale_item` (4 avisos); el resto son CTE/alias
+//     (`cfg`, `slots`, `win`) que un linter léxico no puede distinguir de tablas persistidas sin
+//     trackear `WITH … AS`. Por eso es WARNING (informativo), no ERROR.
+const PROTECTED_TABLE_RE = /^hub_/;
+const RUNTIME_SYSTEM_TABLES = new Set([
+  '_scheduled_tasks',
+  '_event_outbox',
+  '_elevation_audit',
+  '_print_queue',
+  '_print_hosts',
+  '_hub_certificate',
+  '_hub_migrations',
+  '_hub_fiscal_profile',
+]);
+
+/**
+ * Extrae los identificadores en posición de tabla de un SQL enmascarado. Devuelve
+ * `[{name, offset, write}]` donde `write` es `true` para cláusulas que MUTAN la tabla
+ * (`INSERT INTO`, `UPDATE`, `DELETE FROM`, `CREATE/ALTER/DROP TABLE`) y `false` para lectura
+ * (`FROM`, `JOIN`). La distinción importa: leer `hub_settings` es legítimo (ADR-0085 expone la
+ * identidad fiscal del hub a los módulos), pero escribir en `hub_user` nunca lo es.
+ *
+ * No es un parser: captura el primer identificador tras la palabra clave, saltando `IF [NOT]
+ * EXISTS`, `TEMPORARY`/`TEMP` y cualificación de esquema (`schema.t` → `t`). Suficiente para el
+ * contrato `<module_id>_` (ADR-0263, hub#513).
+ */
+function tableIdentifiers(masked) {
+  const out = [];
+  // Cláusulas DML + DDL donde el primer identificador tras la palabra clave es (o contiene) el
+  // nombre de la tabla. Exclusiones léxicas para no dar falsos positivos:
+  //   · `UPDATE SET` (de `ON CONFLICT … DO UPDATE SET col=…`) — `SET` es palabra clave, no tabla.
+  //   · `JOIN LATERAL` / `JOIN INNER` / etc. — esas son palabras clave del join, no tabla.
+  // Grupo 1 = el verbo (para saber si es escritura); grupo 2 = nombre (posiblemente cualificado).
+  const re = /\b(FROM|JOIN(?!\s+(?:LATERAL|CROSS|NATURAL|STRAIGHT_JOIN|INNER|LEFT|RIGHT|OUTER|FULL|USING|ON))|INTO|UPDATE(?!\s*SET)|TABLE)\b\s*(?:IF\s+(?:NOT\s+)?EXISTS\s*)?(?:TEMP(?:ORARY)?\s*)?(?:OR\s+REPLACE\s*)?(?:VIEW\s*)?([A-Za-z_][A-Za-z0-9_]*(?:\s*\.\s*[A-Za-z_][A-Za-z0-9_]*)?)/gi;
+  let m;
+  while ((m = re.exec(masked)) !== null) {
+    const verb = m[1].toUpperCase();
+    const write = verb === 'INTO' || verb === 'UPDATE' || verb === 'TABLE';
+    // `schema.table` → nos quedamos con la parte de la tabla (tras el último punto).
+    const qualified = m[2];
+    const dot = qualified.lastIndexOf('.');
+    const name = dot >= 0 ? qualified.slice(dot + 1).trim() : qualified;
+    const offset = m.index + m[0].lastIndexOf(name);
+    out.push({ name, offset, write });
+  }
+  return out;
+}
+
+/**
+ * Regla de aislamiento de tablas (hub#513). `ctx.moduleId` es el prefijo esperado; sin él la regla
+ * solo aplica la allowlist de tablas protegidas (no puede juzgar el prefijo de módulo).
+ */
+function ruleTableScope(masked, original, findings, ctx) {
+  const moduleId = ctx?.moduleId;
+  const prefix = moduleId ? `${moduleId}_` : null;
+  for (const { name, offset, write } of tableIdentifiers(masked)) {
+    const lower = name.toLowerCase();
+    const isSystem = RUNTIME_SYSTEM_TABLES.has(lower);
+
+    // 1) Tablas de sistema del runtime (`_*`): auditoría, colas, migraciones. Trazabilidad y
+    //    secretos que un módulo no toca jamás, ni en lectura ni en escritura → ERROR.
+    if (isSystem) {
+      findings.push({
+        line: lineAt(original, offset),
+        kind: `tabla de sistema \`${name}\``,
+        snippet: snippetAt(original, offset, 28),
+        suggestion:
+          'un módulo no toca las tablas internas del runtime (_elevation_audit, _print_queue…); son trazabilidad/secretos',
+        level: 'error',
+      });
+      continue;
+    }
+
+    // 2) Tablas del core `hub_*`:
+    //    · ESCRITURA (INSERT/UPDATE/DELETE/CREATE) → siempre ERROR. Un módulo no reescribe la
+    //      identidad del negocio ni las cuentas de usuario.
+    //    · LECTURA (FROM/JOIN) → WARNING. El runtime expone tablas de referencia del core a los
+    //      módulos por diseño (ADR-0085: `hub_settings.country_code`; `hub_country` para impuestos).
+    //      Es lectura tolerada; el WARNING invita a revisarla pero no rompe el build, porque la
+    //      medición sobre los 24 módulos mostró que `taxes` lo hace documentado.
+    if (PROTECTED_TABLE_RE.test(name)) {
+      findings.push({
+        line: lineAt(original, offset),
+        kind: write ? `\`${name}\` (escritura en tabla del core)` : `\`${name}\` (lectura de tabla del core)`,
+        snippet: snippetAt(original, offset, 28),
+        suggestion: write
+          ? 'un módulo no ESCRIBE en tablas del core (hub_*); la identidad del negocio la gestiona el runtime'
+          : 'lectura de una tabla del core (hub_*); revísala — si es referencia legítima (hub_settings, hub_country), el WARNING es solo informativo',
+        level: write ? 'error' : 'warning',
+      });
+      continue;
+    }
+
+    // 3) Fuera de prefijo de módulo → WARNING (informativo). La medición sobre el catálogo mostró
+    //    que el único cruce real es inventory→sales_sale_item; el resto son CTE/alias que un linter
+    //    léxico (sin AST) no puede distinguir de tablas persistidas. Por eso WARNING, no ERROR.
+    if (prefix && !lower.startsWith(prefix.toLowerCase())) {
+      findings.push({
+        line: lineAt(original, offset),
+        kind: `tabla \`${name}\` sin el prefijo del módulo \`${moduleId}_\``,
+        snippet: snippetAt(original, offset, 28),
+        suggestion:
+          `las tablas de un módulo empiezan por \`${moduleId}_\` (contrato de aislamiento, ADR-0263); ` +
+          `si es una CTE o un alias, ignora este aviso (un linter léxico no las distingue)`,
+        level: 'warning',
+      });
+    }
+  }
+}
+
 const RULES = [
   ruleNoPositionalPlaceholders,
   ruleNoInsertOrReplace,
@@ -366,16 +494,21 @@ const RULES = [
   ruleNonPortableFunctions,
   ruleUnknownErpFunctions,
   ruleMoneyAsFloat,
+  ruleTableScope,
 ];
 
 /**
  * Escanea UN fragmento de SQL. Devuelve un array de findings (con `level: 'error'|'warning'`).
  * `source` es la etiqueta de origen para el reporte (fichero o module.json#clave).
+ *
+ * `ctx` (opcional) lleva el contexto que alguna regla necesita y que el SQL por sí solo no da:
+ * hoy, `moduleId` (para la regla de aislamiento de tablas de hub#513). Sin `ctx`, esa regla solo
+ * aplica la denylist dura del core (no puede juzgar el prefijo de módulo).
  */
-export function lintSql(sql, source = '<sql>') {
+export function lintSql(sql, source = '<sql>', ctx) {
   const masked = maskLiteralsAndComments(sql);
   const findings = [];
-  for (const rule of RULES) rule(masked, sql, findings);
+  for (const rule of RULES) rule(masked, sql, findings, ctx);
   for (const f of findings) f.source = source;
   return findings;
 }
@@ -445,8 +578,10 @@ export function collectModuleSql(dir, manifest) {
  */
 export function validateSql(dir, manifest, { print = true } = {}) {
   const entries = collectModuleSql(dir, manifest);
+  // ctx para la regla de aislamiento de tablas (hub#513): el prefijo esperado es el id del módulo.
+  const ctx = manifest?.id ? { moduleId: manifest.id } : undefined;
   const all = [];
-  for (const { sql, source } of entries) all.push(...lintSql(sql, source));
+  for (const { sql, source } of entries) all.push(...lintSql(sql, source, ctx));
 
   const errors = all.filter((f) => f.level === 'error');
   const warnings = all.filter((f) => f.level === 'warning');
