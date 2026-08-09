@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "whatsapp_inbox.messages.ingest",
+  "description": "Ingiere un mensaje entrante de WhatsApp (llamado por el webhook handler del hub).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "new_conv_id",
+    "wa_contact_id",
+    "contact_phone",
+    "phone_number_id",
+    "wa_message_id",
+    "message_type",
+    "body"
+  ],
+  "properties": {
+    "new_conv_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "UUID para la conversación si es nueva (el caller lo genera siempre; se ignora si ya existe)"
+    },
+    "wa_contact_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ID del contacto en WhatsApp (wa_id del entry de la notificación)"
+    },
+    "contact_name": {
+      "type": "string",
+      "default": "",
+      "description": "Nombre del perfil del contacto (puede estar vacío)"
+    },
+    "contact_phone": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Número de teléfono del contacto (E.164)"
+    },
+    "phone_number_id": {
+      "type": "string",
+      "default": "",
+      "description": "ID del número de WhatsApp Business que recibe el mensaje"
+    },
+    "wa_message_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "ID único del mensaje asignado por la API de WhatsApp"
+    },
+    "message_type": {
+      "type": "string",
+      "enum": ["text", "image", "audio", "video", "document", "location", "sticker", "interactive", "button", "unknown"],
+      "default": "text"
+    },
+    "body": {
+      "type": "string",
+      "default": "",
+      "description": "Texto del mensaje (vacío para mensajes de media)"
+    },
+    "media_url": {
+      "type": "string",
+      "default": "",
+      "description": "URL del medio adjunto (solo para tipos image, audio, video, document)"
+    },
+    "extra_metadata": {
+      "type": "string",
+      "default": "{}",
+      "description": "JSON libre con campos adicionales del payload de la notificación"
+    }
+  }
+}

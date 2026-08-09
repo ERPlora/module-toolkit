@@ -1,0 +1,21 @@
+{
+  "id": "whatsapp_inbox",
+  "name": "WhatsApp Inbox (fixture)",
+  "version": "2.1.17",
+  "_fixture": "Verbatim slice of ERPlora/whatsapp_inbox v2.1.17 (migrations + the ingest statement) kept for module-toolkit#32: `m.created_at >= erp_month_start(:now)` compares TEXT with timestamptz, so Postgres cannot PREPARE it — and no lexical rule can see it. Only `erplora validate --pg` catches this one (whatsapp_inbox#24).",
+  "migrations": {
+    "postgres": [
+      "migrations/postgres/001_init.sql",
+      "migrations/postgres/002_free_tier.sql",
+      "migrations/postgres/003_request_counter.sql"
+    ]
+  },
+  "commands": {
+    "whatsapp_inbox.messages.ingest": {
+      "permission": "whatsapp_inbox.manage_connections",
+      "transaction": true,
+      "sql": ["commands/message_ingest_msg.sql"],
+      "schema": "schemas/message_ingest.json"
+    }
+  }
+}
