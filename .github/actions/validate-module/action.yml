@@ -1,0 +1,101 @@
+# `erplora validate` as a step, for the CI gate of the 24 module repos (ERPlora/pm#107).
+#
+# WHY IT LIVES HERE. A module repo cannot run the validator on its own: the validator is this
+# repository, it is private, and the caller's GITHUB_TOKEN cannot check out another private repo.
+# A composite action is the one shape GitHub resolves WITHOUT any credential — with
+# "Access: accessible from repositories in the organization" set on this repo, the runner fetches
+# it the same way it fetches a public action. No PAT lives in 24 repos, and the gate always runs
+# the validator that sits on this repo's `main`, so fixing a hole here fixes it everywhere at once.
+#
+# WHY NOT `npm install`. Three of this package's dependencies are `file:` paths into sibling
+# checkouts (`../hub/packages/module-sdk`, `../hub/packages/module-types`, `../outfitkit`) that do
+# not exist on a runner, so a plain install fails as a whole. `validate` needs exactly ONE public
+# package — `typescript`, used by contracts.mjs to read the module's .ts — so that one is installed
+# on its own, at the version this repo declares. If the validator ever grows another dependency the
+# gate dies with ERR_MODULE_NOT_FOUND, loudly; it never degrades into a green.
+#
+# WHAT IS AND IS NOT VERIFIED. Manifest, portable SQL, migrations, JSON schemas, ADR-0127
+# contracts, bundle CSP, `dist/handler.wasm` freshness against the Rust source, and — with
+# `pg: true` — a real `PREPARE` of every declared statement against Postgres. The one thing left
+# out is compiling the handler to wasm32: the 21 modules with `handler/` depend on the hub's
+# `guest-sdk` BY RELATIVE PATH, and there is no checkout of ERPlora/hub here. The validator says so
+# out loud ("handler WASM SIN VERIFICAR"); it does not blame the module and it does not pretend.
+name: Validate an ERPlora module
+description: Runs `erplora validate` (manifest + SQL + contracts, optionally PREPARE against Postgres) on a module checkout.
+
+inputs:
+  path:
+    description: Path of the module (the directory holding module.json).
+    required: false
+    default: '.'
+  pg:
+    description: >
+      'true' to also PREPARE every declared statement against a real Postgres (`--pg`). This is the
+      only door that catches SQL no lexical rule can see (a TEXT column compared with a
+      timestamptz), which is how whatsapp_inbox shipped a dead command. Without Postgres reachable
+      the validator FAILS saying nothing was checked — it never passes in silence.
+    required: false
+    default: 'true'
+  postgres-image:
+    description: Postgres image for the scratch database. Pinned to the major that runs in production.
+    required: false
+    default: 'postgres:18'
+  node-version:
+    description: Node version used to run the validator.
+    required: false
+    default: '22'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install the single public dependency the validator needs
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        toolkit=$(cd "$ACTION_PATH/../../.." && pwd)
+        # The version comes from the toolkit's own package.json: the gate cannot drift from the
+        # validator it runs.
+        ts=$(node -p "require('$toolkit/package.json').dependencies.typescript")
+        deps="$RUNNER_TEMP/erplora-validator-deps"
+        mkdir -p "$deps"
+        # Installed in a scratch prefix on purpose: installing INTO the toolkit would reify its
+        # whole tree, `file:` dependencies included, and fail.
+        npm install --prefix "$deps" --no-audit --no-fund --loglevel=error "typescript@$ts"
+        mkdir -p "$toolkit/node_modules"
+        # ESM ignores NODE_PATH, so the package has to be physically resolvable from the toolkit.
+        ln -sfn "$deps/node_modules/typescript" "$toolkit/node_modules/typescript"
+        echo "ERPLORA_TOOLKIT=$toolkit" >> "$GITHUB_ENV"
+
+    - name: Start the scratch Postgres
+      if: inputs.pg == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Same container name the module regression tests use locally, so the two doors are the
+        # same door. `docker exec` is the transport: no port publishing, no driver.
+        docker run -d --name erplora-test-pg-5433 \
+          -e POSTGRES_PASSWORD=postgres \
+          "${{ inputs.postgres-image }}"
+        for _ in $(seq 1 60); do
+          if docker exec erplora-test-pg-5433 pg_isready -U postgres >/dev/null 2>&1; then
+            echo "→ postgres ready"
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "::error::the scratch Postgres never became ready"
+        exit 1
+
+    - name: erplora validate
+      shell: bash
+      run: |
+        set -euo pipefail
+        flags=()
+        if [ "${{ inputs.pg }}" = "true" ]; then flags+=(--pg); fi
+        node "$ERPLORA_TOOLKIT/bin/erplora.mjs" validate "${{ inputs.path }}" "${flags[@]}"

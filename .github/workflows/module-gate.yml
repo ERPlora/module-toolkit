@@ -1,0 +1,50 @@
+# The gate of the 24 module repos, in ONE place (ERPlora/pm#107).
+#
+# Called from each module repo with a ~10-line stub. Everything that can change — the validator,
+# the Postgres image, the Node version, the timeout — lives here, so a fix reaches the 24 repos
+# without 24 pull requests.
+#
+# WHY THIS EXISTS. On 2026-08-09 a sweep found 4 of the 24 PUBLISHED modules shipping SQL that
+# Postgres cannot even PREPARE. Since ADR-0154 modules ship the `postgres` dialect only, so "does
+# not prepare" means the command DOES NOT EXIST in any hub: install it and the button does nothing.
+# Nothing stood between a broken merge and the marketplace — the SaaS republishes on the `push` to
+# main on its own.
+#
+# The stub wires this to `pull_request` AND makes the release job depend on it, so the two doors a
+# module can walk through — a merge, and the version bump that actually publishes — are both gated.
+name: Module gate
+
+on:
+  workflow_call:
+    inputs:
+      path:
+        description: Path of the module inside the repository.
+        required: false
+        type: string
+        default: '.'
+      pg:
+        description: >
+          PREPARE every declared statement against a real Postgres. ON by default and it should
+          stay on: measured on the four modules that were broken, the lexical rules alone catch
+          three and let the fourth through green, and the whole check costs ~2 s per module.
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+  validate:
+    name: erplora validate
+    runs-on: ubuntu-latest
+    # Generous but finite: the whole job measures under two minutes. A hung docker pull must not
+    # burn the org's Actions budget (private repos are billed by the minute).
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Resolved without any token: this repository is private, but its actions are shared with the
+      # organization (repo Settings → Actions → Access). Pinned to `main` on purpose — the gate is
+      # meant to be the CURRENT validator, not the one that existed when the stub was written.
+      - uses: ERPlora/module-toolkit/.github/actions/validate-module@main
+        with:
+          path: ${{ inputs.path }}
+          pg: ${{ inputs.pg }}
