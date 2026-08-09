@@ -9,11 +9,15 @@
 //                              con --pg, PREPARA cada SQL contra un Postgres efímero (#32)
 //   erplora contracts <dir>    (re)genera .erplora/contracts.json
 //   erplora pack|sign|publish  empaquetado/firma/publicación al marketplace (§7.4)
-import { build } from '../src/build.mjs';
+//
+// Only `validate` is imported statically. The rest of the commands are loaded ON DEMAND because
+// they pull heavy third-party packages (esbuild, lit, @ionic/core, @iconify) that the CI gate of
+// the module repos does not — and cannot — install: three of this package's dependencies are
+// `file:` paths into sibling checkouts (`../hub/...`, `../outfitkit`) that do not exist on a
+// runner, so `npm install` fails as a whole and the gate installs the public ones by hand
+// (ERPlora/pm#107). Loading `build.mjs` just to run `validate` made the CLI die with
+// `ERR_MODULE_NOT_FOUND: esbuild` before parsing a single argument.
 import { validate } from '../src/validate.mjs';
-import { startproject, generate } from '../src/scaffold.mjs';
-import { dev } from '../src/dev.mjs';
-import { pack, sign, publish } from '../src/pack.mjs';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -54,12 +58,12 @@ try {
   switch (cmd) {
     case 'startproject':
       need(rest[0], 'falta el nombre del proyecto');
-      await startproject(rest[0]);
+      await (await import('../src/scaffold.mjs')).startproject(rest[0]);
       break;
     case 'g':
     case 'generate':
       need(rest[0], 'falta el tipo (module|view|command|query)');
-      await generate(rest[0], ...rest.slice(1));
+      await (await import('../src/scaffold.mjs')).generate(rest[0], ...rest.slice(1));
       break;
     case 'dev': {
       // Sin arg → workspace completo (página main). Con id/dir → preselecciona ese módulo.
@@ -67,12 +71,12 @@ try {
       const isPort = rest[0] && /^\d+$/.test(rest[0]);
       const modArg = isPort ? undefined : target(rest[0]);
       const port = Number(isPort ? rest[0] : rest[1]) || undefined;
-      await dev(modArg, { port });
+      await (await import('../src/dev.mjs')).dev(modArg, { port });
       break;
     }
     case 'build':
       need(rest[0], 'falta la ruta del módulo');
-      await build(target(rest[0]));
+      await (await import('../src/build.mjs')).build(target(rest[0]));
       break;
     case 'validate':
       need(rest[0], 'falta la ruta del módulo');
@@ -92,15 +96,15 @@ try {
     }
     case 'pack':
       need(rest[0], 'falta la ruta del módulo');
-      await pack(target(rest[0]));
+      await (await import('../src/pack.mjs')).pack(target(rest[0]));
       break;
     case 'sign':
       need(rest[0], 'falta la ruta del módulo');
-      await sign(target(rest[0]));
+      await (await import('../src/pack.mjs')).sign(target(rest[0]));
       break;
     case 'publish':
       need(rest[0], 'falta la ruta del módulo');
-      await publish(target(rest[0]));
+      await (await import('../src/pack.mjs')).publish(target(rest[0]));
       break;
     default:
       usage();

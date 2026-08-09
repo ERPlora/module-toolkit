@@ -1,0 +1,68 @@
+# Tests of the validator itself — the engine of the gate that now guards the 24 module repos.
+#
+# TWO reasons this file exists, and the second one is not optional:
+#
+#  1. `module-gate.yml` turns this repository into the single point of failure of every module
+#     repo's CI. A hole here is a hole in 24 gates at once, so the validator's own tests have to run
+#     on every pull request.
+#
+#  2. `merge-pr.sh` — the only sanctioned way to merge — refuses to merge when a repo HAS workflows
+#     but the pull request reports no checks ("CI is silent: outage or out of minutes"). Adding
+#     `module-gate.yml`, which only answers to `workflow_call` and therefore never produces a check
+#     of its own, would have deadlocked every future merge into this repository. A workflow that
+#     does answer to `pull_request` is what keeps that door open.
+#
+# SCOPE. Only the validator's tests run here: `npm install` is impossible on a runner (three
+# dependencies are `file:` paths into sibling checkouts that do not exist), so the suites that need
+# esbuild, lit or @ionic/core — build, dev, icons, pack, scaffold, signing, wasm-build — stay a
+# local `node --test`. What runs is what the gate runs: 142 tests including the real PREPARE ones,
+# in about 30 seconds.
+name: CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: node --test (validator)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install the single public dependency the validator needs
+        run: |
+          set -euo pipefail
+          ts=$(node -p "require('./package.json').dependencies.typescript")
+          deps="$RUNNER_TEMP/erplora-validator-deps"
+          mkdir -p "$deps" node_modules
+          npm install --prefix "$deps" --no-audit --no-fund --loglevel=error "typescript@$ts"
+          ln -sfn "$deps/node_modules/typescript" node_modules/typescript
+
+      - name: Start the scratch Postgres
+        run: |
+          set -euo pipefail
+          docker run -d --name erplora-test-pg-5433 -e POSTGRES_PASSWORD=postgres postgres:18
+          for _ in $(seq 1 60); do
+            if docker exec erplora-test-pg-5433 pg_isready -U postgres >/dev/null 2>&1; then
+              echo "→ postgres ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the scratch Postgres never became ready"
+          exit 1
+
+      # The PREPARE suites SKIP themselves when there is no container; the step above is what makes
+      # them actually run. If they ever start skipping here the count drops, which is visible.
+      - name: Tests
+        run: node --test test/validate-*.test.mjs test/contracts.test.mjs test/bin-*.test.mjs

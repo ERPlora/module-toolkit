@@ -105,11 +105,46 @@ regla léxica plausible puede ver.
 - Un fallo **estructural** (columna ambigua, tabla propia inexistente, sintaxis) es error aunque
   haya binds sin declarar: ningún caller puede arreglarlo.
 
-**Aviso para un gate de CI**: los 21 módulos con `handler/` dependen del `guest-sdk` del hub **por
-ruta relativa** (`../../../../hub/crates/guest-sdk`). En un runner no hay checkout de `ERPlora/hub`,
-así que `validate` lo detecta **antes** de llamar a `cargo` y lo dice en voz alta (`handler WASM SIN
-VERIFICAR`) en vez de acusar al módulo de no compilar — que es lo que produjo falsos positivos en el
-barrido de pm#107.
+## El gate de CI de los repos de módulo (ERPlora/pm#107)
+
+El validador **es** el gate: los 24 repos de módulo lo llaman desde aquí. Dos piezas, las dos en
+este repo, para que arreglar un agujero no sean 24 PRs:
+
+| Pieza | Qué es |
+|---|---|
+| `.github/actions/validate-module/action.yml` | composite action: instala `typescript`, levanta el Postgres de scratch y corre `erplora validate <dir> --pg` |
+| `.github/workflows/module-gate.yml` | workflow **reutilizable** (`workflow_call`) que hace el checkout del repo llamante y ejecuta la action |
+
+El stub que va en cada repo de módulo (`.github/workflows/module-gate.yml`) son ~10 líneas:
+`on: pull_request` + `uses: ERPlora/module-toolkit/.github/workflows/module-gate.yml@main`. Además
+el `release.yml` de cada módulo pasa a llevar `needs: gate`, así que el bump de versión —que es lo
+que hace que el SaaS republique— **no ocurre si el gate está rojo**.
+
+**Por qué aquí y no en cada repo.** El validador es privado y el `GITHUB_TOKEN` de un repo de
+módulo no puede hacer checkout de otro repo privado. Una composite action es la única forma que
+GitHub resuelve **sin credencial**, con el ajuste *Settings → Actions → Access → accessible from
+repositories in the organization* puesto en este repo. Así no hay un PAT del hub/toolkit repartido
+por 24 repos, y el gate corre siempre el validador de `main`, no el del día que se escribió el stub.
+
+**Qué NO cubre el gate: compilar el handler a wasm32.** Los 21 módulos con `handler/` dependen del
+`guest-sdk` del hub **por ruta relativa** (`../../../../hub/crates/guest-sdk`) y en un runner no hay
+checkout de `ERPlora/hub`. Se decidió dejarlo fuera, no clonar el hub:
+
+- clonarlo exige un **PAT con lectura de `ERPlora/hub` en los 24 repos** — 24 copias de una
+  credencial que abre el core entero, por una comprobación;
+- ata cada PR de módulo al `main` del hub: un cambio en el `guest-sdk` pone en rojo 21 repos que no
+  han tocado nada (el falso positivo `no 'tax' in the root` del barrido, otra vez pero al revés);
+- el coste en minutos es lo de menos y aun así se midió: `rustup target add wasm32` + `cargo build`
+  en frío ≈ **+2 min por run** sobre los ~2 min del gate.
+
+Lo que sí queda cubierto sin `cargo`: que `dist/handler.wasm` **no esté desfasado** respecto al
+source Rust del commit (hash de `handler/src` + `Cargo.lock`) y que exporte las funciones que el
+manifest enruta. Que el Rust compile se ve en local en cuanto se toca (`erplora build` lo recompila
+y se niega a publicar un binario viejo). El validador nunca miente sobre esto: la línea de resumen
+dice **`handler WASM SIN VERIFICAR`**.
+
+La salida sería consumir el `guest-sdk` **versionado** en vez de por ruta; mientras siga siendo una
+ruta relativa, esta puerta no puede cerrarse en CI sin pagar las otras dos facturas.
 
 ## Workspace local (lo que existe hoy)
 
