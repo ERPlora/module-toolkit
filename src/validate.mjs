@@ -9,6 +9,7 @@ import { checkMigrations } from './validate-migrations.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 import { checkContracts } from './contracts.mjs';
 import { checkPgCompat } from './validate-pg.mjs';
+import { checkPrepare } from './validate-prepare.mjs';
 import { checkWasmArtifact } from './wasm.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
@@ -58,7 +59,7 @@ export function checkFiscalRegime(manifest) {
   return errs;
 }
 
-export async function validate(moduleDir) {
+export async function validate(moduleDir, { pg = false } = {}) {
   const dir = resolve(process.cwd(), moduleDir);
   const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
 
@@ -110,15 +111,16 @@ export async function validate(moduleDir) {
   // dialectos). Lanza si hay errores; imprime warnings (heurística de dinero).
   const { warnings } = validateSql(dir, manifest);
 
-  // Compatibilidad Postgres (auditoría pm#16; actualizada tras ADR-0154 + hub#210): la familia
-  // que mató 4 P0 en Hub Cloud. ERRORES que rompen en PG (multi-statement en un prepared
-  // statement, ON CONFLICT sin cualificar) bloquean; WARNINGS de patrón (CASE WHEN sobre bool ya
-  // obsoleto por la coerción central, `:param IS NULL` sin tipo → posible 42P08) solo avisan.
-  const pg = checkPgCompat(dir, manifest);
-  for (const w of pg.filter((f) => f.level === 'warning')) {
+  // Compatibilidad Postgres (auditoría pm#16; actualizada tras ADR-0154 + hub#210 y tras el barrido
+  // de pm#107 — module-toolkit#32): la familia que mató 4 P0 en Hub Cloud. Los ERRORES son SQL que
+  // Postgres no puede ni preparar (multi-statement en un prepared statement, ON CONFLICT sin
+  // cualificar en cualquiera de sus formas, `:param IS NULL` sin tipo → 42P08) y bloquean; el único
+  // WARNING que queda es de patrón obsoleto (CASE WHEN sobre un bool ya coercionado).
+  const pgCompat = checkPgCompat(dir, manifest);
+  for (const w of pgCompat.filter((f) => f.level === 'warning')) {
     console.warn(`⚠ ${manifest.id}: [${w.rule}] ${w.message}`);
   }
-  const pgErrors = pg.filter((f) => f.level === 'error');
+  const pgErrors = pgCompat.filter((f) => f.level === 'error');
   if (pgErrors.length) {
     throw new Error('incompatibilidades Postgres (pm#16):\n  - ' + pgErrors.map((f) => f.message).join('\n  - '));
   }
@@ -189,10 +191,37 @@ export async function validate(moduleDir) {
   const bundle = join(dir, 'dist', `${manifest.id}.esm.js`);
   if (existsSync(bundle)) assertCspSafe(readFileSync(bundle, 'utf8'), `${manifest.id} bundle`);
 
+  // module-toolkit#32 (hole 3): the only door that does NOT guess — Postgres itself. Opt-in with
+  // `--pg` because it needs a container; the lexical rules above always run.
+  let pgNote = '';
+  if (pg) {
+    const prepared = await checkPrepare(dir, manifest);
+    for (const w of prepared.warnings) console.warn(`⚠ ${manifest.id}: [pg-prepare] ${w}`);
+    if (prepared.skipped) {
+      // `--pg` is opt-in: whoever typed it asked for this door to be opened. Warning and exiting 0
+      // would turn "nobody checked" into "green", which is the failure mode pm#107 is fighting.
+      throw new Error(`no se pudo comprobar el SQL contra Postgres (--pg): ${prepared.reason}`);
+    } else if (prepared.errors.length) {
+      throw new Error(
+        'Postgres no puede PREPARAR el SQL declarado (module-toolkit#32) — desde ADR-0154 solo hay ' +
+          'dialecto postgres, así que esto NO existe en ningún hub:\n  - ' +
+          prepared.errors.join('\n  - '),
+      );
+    } else {
+      pgNote = ` + ${prepared.prepared} sentencia(s) PREPARAN en Postgres`;
+    }
+  }
+
   const sqlNote = warnings.length ? ` (${warnings.length} warning(s) SQL)` : '';
-  const wasmNote = wasmResult.checked ? ' + handler WASM compila' : '';
+  // Never claim the handler was verified when it was not: on a runner with no checkout of
+  // ERPlora/hub the path dependency is missing and nothing compiled (pm#107).
+  const wasmNote = wasmResult.checked
+    ? ' + handler WASM compila'
+    : wasmResult.unverified
+      ? ' + handler WASM SIN VERIFICAR'
+      : '';
   console.log(
-    `✓ validate ${manifest.id}: manifest OK + SQL portable${sqlNote} + contratos OK${wasmNote}${existsSync(bundle) ? ' + bundle CSP-safe' : ''}`,
+    `✓ validate ${manifest.id}: manifest OK + SQL portable${sqlNote} + contratos OK${wasmNote}${existsSync(bundle) ? ' + bundle CSP-safe' : ''}${pgNote}`,
   );
 }
 
@@ -205,7 +234,7 @@ export async function validate(moduleDir) {
 /// No exige `wasm32`/`wasm-pack`: compila el crate del guest al target del host. Un source que
 /// compila para el host compila para wasm32 (mismo código, solo cambia el target); si falta un
 /// símbolo (el bug de `round_cents`) salta aquí igual. Así el check funciona sin toolchain wasm.
-export function checkWasmHandler(dir, manifest) {
+export function checkWasmHandler(dir, manifest, { runCargo = true } = {}) {
   const out = { checked: false, errors: [], warnings: [] };
   const cmds = Object.values(manifest.commands ?? {});
   const hasWasmHandler = cmds.some((c) => c?.handler?.type === 'wasm');
@@ -224,6 +253,26 @@ export function checkWasmHandler(dir, manifest) {
     );
     return out;
   }
+
+  // pm#107: 21 of the 24 modules depend on the hub's `guest-sdk` BY RELATIVE PATH
+  // (`../../../../hub/crates/guest-sdk`). On a CI runner there is no checkout of ERPlora/hub there,
+  // so `cargo` fails for a reason that has nothing to do with the module. Reporting that as
+  // "handler/ does not compile" is a gate that LIES — it is what produced the false positives of
+  // the pm#107 sweep (invoice/sales/taxes "broken" because the local hub checkout was on a branch
+  // older than hub#423). So the missing checkout is detected BEFORE running cargo and said out
+  // loud: not verified, and why.
+  const missingPaths = missingPathDeps(handlerDir);
+  if (missingPaths.length) {
+    out.unverified = true;
+    out.warnings.push(
+      `handler/Cargo.toml depende por RUTA de ${missingPaths.map((p) => `\`${p.dep}\` → \`${p.path}\``).join(', ')}, ` +
+        'que no existe aquí (es el checkout de ERPlora/hub, ausente en un runner de CI). ' +
+        'El handler WASM NO se ha verificado: no se sabe si compila. Clona ERPlora/hub en esa ruta ' +
+        'o consume el guest-sdk versionado (module-toolkit#32).',
+    );
+    return out;
+  }
+  if (!runCargo) return out;
 
   // Reusa el target compartido del workspace si existe; si no, uno del propio módulo.
   let cargoOk = false;
@@ -247,5 +296,27 @@ export function checkWasmHandler(dir, manifest) {
   }
 
   out.checked = cargoOk;
+  return out;
+}
+
+/**
+ * Path dependencies declared in `handler/Cargo.toml` whose directory is NOT on disk.
+ *
+ * Deliberately a lexical read of the `path = "…"` entries and not a TOML parser: the toolkit ships
+ * with no dependencies, and the shape in the 21 modules that have a handler is always the same one
+ * line — `erplora-guest-sdk = { path = "../../../../hub/crates/guest-sdk" }`.
+ */
+export function missingPathDeps(handlerDir) {
+  const cargoToml = join(handlerDir, 'Cargo.toml');
+  if (!existsSync(cargoToml)) return [];
+  const out = [];
+  const text = readFileSync(cargoToml, 'utf8');
+  for (const line of text.split('\n')) {
+    const clean = line.split('#')[0];
+    const hit = /^\s*([A-Za-z0-9_-]+)\s*=\s*\{[^}]*\bpath\s*=\s*"([^"]+)"/.exec(clean);
+    if (!hit) continue;
+    const abs = resolve(handlerDir, hit[2]);
+    if (!existsSync(abs)) out.push({ dep: hit[1], path: hit[2], resolved: abs });
+  }
   return out;
 }

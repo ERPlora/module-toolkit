@@ -5,7 +5,8 @@
 //   erplora g view|command|query <id> <name>   genera piezas dentro de un módulo
 //   erplora dev <dir>          preview con transport mock, CSP-safe
 //   erplora build <dir>        compila el WC a dist/<id>.esm.js
-//   erplora validate <dir>     valida manifest + CSP del bundle + contratos (ADR-0127)
+//   erplora validate <dir> [--pg]  valida manifest + CSP del bundle + contratos (ADR-0127);
+//                              con --pg, PREPARA cada SQL contra un Postgres efímero (#32)
 //   erplora contracts <dir>    (re)genera .erplora/contracts.json
 //   erplora pack|sign|publish  empaquetado/firma/publicación al marketplace (§7.4)
 import { build } from '../src/build.mjs';
@@ -17,7 +18,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 const argv = process.argv.slice(2);
-const [cmd, ...rest] = argv;
+// Flags are separated from positional args so `erplora validate <dir> --pg` works in any order.
+const flags = new Set(argv.filter((a) => a.startsWith('--')));
+const [cmd, ...rest] = argv.filter((a) => !a.startsWith('--'));
 
 // Acepta una ruta o un id suelto: desde un workspace, `erplora build inventory` → modules/inventory.
 const target = (arg) => {
@@ -36,7 +39,8 @@ const usage = () => {
   g command|query <id> <nombre>  añade un command/query SQL a un módulo
   dev <dir>                      preview del módulo con datos mock (CSP-safe)
   build <dir>                    compila el WebComponent → dist/<id>.esm.js
-  validate <dir>                 valida el manifest + CSP del bundle + contratos (ADR-0127)
+  validate <dir> [--pg]          valida el manifest + CSP del bundle + contratos (ADR-0127);
+                                 con --pg, además PREPARA cada SQL contra un Postgres efímero
   contracts <dir>                (re)genera .erplora/contracts.json (superficie consumida)
   pack <dir>                     module.zip + manifest.lock + SHA256
   sign <dir>                     SHA256 + firma ed25519 (\`<zip>.sig\`, MODULE_SIGNING_KEY)
@@ -72,7 +76,7 @@ try {
       break;
     case 'validate':
       need(rest[0], 'falta la ruta del módulo');
-      await validate(target(rest[0]));
+      await validate(target(rest[0]), { pg: flags.has('--pg') });
       break;
     case 'contracts': {
       need(rest[0], 'falta la ruta del módulo');
