@@ -34,7 +34,19 @@ on:
 jobs:
   validate:
     name: erplora validate
-    runs-on: ubuntu-latest
+    # The organization's own runner when `CI_RUNNER_LABEL` is set, the hosted image when it is not.
+    # `vars` here resolves against the CALLING repository, so a module repo picks the runner up from
+    # the org variable without a line of its own — and the `|| 'ubuntu-latest'` means that if the
+    # variable is ever removed the 25 gates fall back to the hosted image instead of queueing
+    # forever against a label nobody answers to.
+    #
+    # SECURITY. A self-hosted runner executes the pull request's code on the organization's own
+    # machine, with whatever that machine can reach. It is acceptable here because these are PRIVATE
+    # repositories in a small org, where opening a pull request already requires write access, and
+    # because this gate is `pull_request` (never `pull_request_target`), so a fork's code never runs
+    # with the base repository's secrets. Making any of these repositories public, or adding a
+    # `pull_request_target` trigger, would have to be revisited BEFORE it happens.
+    runs-on: ${{ vars.CI_RUNNER_LABEL || 'ubuntu-latest' }}
     # Generous but finite: the whole job measures under two minutes. A hung docker pull must not
     # burn the org's Actions budget (private repos are billed by the minute).
     timeout-minutes: 10

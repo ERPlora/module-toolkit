@@ -30,10 +30,31 @@ concurrency:
 jobs:
   test:
     name: node --test (validator)
-    runs-on: ubuntu-latest
+    # The organization's own runner when `CI_RUNNER_LABEL` is set, the hosted image when it is not.
+    # The fallback is the whole point: the variable can disappear — the runner gets reinstalled, the
+    # org changes plan — and CI keeps running on GitHub's image instead of queueing forever against
+    # a label nobody answers to.
+    runs-on: ${{ vars.CI_RUNNER_LABEL || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+
+      # A self-hosted runner is NOT the hosted image: it carries whatever was installed on it, and
+      # it KEEPS STATE between jobs. Print what is actually there before anything depends on it, so
+      # a missing Docker reads as "Docker is missing" instead of as a Postgres that never became
+      # ready.
+      - name: Runner preflight
+        run: |
+          set -euo pipefail
+          echo "runner=${RUNNER_NAME:-?} os=${RUNNER_OS:-?} arch=${RUNNER_ARCH:-?} host=$(hostname)"
+          echo "node=$(node --version 2>/dev/null || echo 'absent (setup-node installs it)')"
+          echo "npm=$(npm --version 2>/dev/null || echo absent)"
+          echo "python3=$(python3 --version 2>&1 || echo absent)"
+          if ! docker info >/dev/null 2>&1; then
+            echo "::error::this runner has no usable Docker, and the PREPARE suites need a scratch Postgres"
+            exit 1
+          fi
+          echo "docker=$(docker --version)"
 
       - uses: actions/setup-node@v4
         with:
@@ -51,6 +72,10 @@ jobs:
       - name: Start the scratch Postgres
         run: |
           set -euo pipefail
+          # `docker rm -f` FIRST. A hosted job gets a fresh VM; a self-hosted one does not, so the
+          # SECOND run would die on "the container name is already in use" — and a container that
+          # survived would drag the previous run's databases into this one.
+          docker rm -f erplora-test-pg-5433 >/dev/null 2>&1 || true
           docker run -d --name erplora-test-pg-5433 -e POSTGRES_PASSWORD=postgres postgres:18
           for _ in $(seq 1 60); do
             if docker exec erplora-test-pg-5433 pg_isready -U postgres >/dev/null 2>&1; then
@@ -66,3 +91,10 @@ jobs:
       # them actually run. If they ever start skipping here the count drops, which is visible.
       - name: Tests
         run: node --test test/validate-*.test.mjs test/contracts.test.mjs test/bin-*.test.mjs
+
+      # Nobody tidies up after a job on a self-hosted runner: without this, a Postgres stays holding
+      # memory on the machine until the next run reclaims the name. Best-effort on purpose — the
+      # `docker rm -f` before `docker run` is what actually guarantees a clean start.
+      - name: Stop the scratch Postgres
+        if: always()
+        run: docker rm -f erplora-test-pg-5433 >/dev/null 2>&1 || true
