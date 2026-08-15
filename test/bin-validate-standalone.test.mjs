@@ -29,6 +29,10 @@ function bareCheckout() {
   const dir = mkdtempSync(join(tmpdir(), 'erplora-toolkit-bare-'));
   cpSync(join(ROOT, 'bin'), join(dir, 'bin'), { recursive: true });
   cpSync(join(ROOT, 'src'), join(dir, 'src'), { recursive: true });
+  // The canonical manifest schema travels INSIDE the package (module-toolkit#30): the gate has no
+  // checkout of ERPlora/hub, so a schema it had to go and find would leave the unknown-key check
+  // switched off in the one door where it matters.
+  cpSync(join(ROOT, 'schemas'), join(dir, 'schemas'), { recursive: true });
   cpSync(join(ROOT, 'package.json'), join(dir, 'package.json'));
   mkdirSync(join(dir, 'node_modules'), { recursive: true });
   symlinkSync(join(ROOT, 'node_modules', 'typescript'), join(dir, 'node_modules', 'typescript'), 'dir');

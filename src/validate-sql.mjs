@@ -17,14 +17,15 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
-// SET PORTABLE — debe mantenerse SINCRONIZADO con el shim del runtime
-// (hub/crates/db/src/lib.rs: `BRIDGE_FUNCTIONS` y `normalize_ddl_type`).
+// SET PORTABLE — espejo del shim del runtime (hub/crates/db/src/lib.rs: `BRIDGE_FUNCTIONS` y
+// `normalize_ddl_type`).
 //
-// TODO (columna del HUMANO): el ADR-0007 enumera estos sets solo con EJEMPLOS ("p.ej.
-// erp_now()/erp_lpad()") y NO los cierra del todo. Aquí se replica EXACTAMENTE lo que el
-// shim soporta HOY. Ampliar/cerrar este set definitivo es decisión del humano y, cuando se
-// decida, hay que cambiarlo a la vez en DOS sitios: este fichero y `BRIDGE_FUNCTIONS` del
-// runtime. Idealmente un único punto de verdad en el futuro (p.ej. un JSON compartido).
+// El set es CERRADO y lo cierra el shim, no el ADR: el ADR-0007 solo enumera ejemplos ("p.ej.
+// erp_now()/erp_lpad()"), así que la autoridad es lo que el runtime sabe reescribir HOY. Añadir
+// una función-puente sigue siendo tocar DOS sitios —este fichero y el array de Rust—, pero ya no
+// a ciegas: `test/canonical-mirrors.test.mjs` lee `crates/db/src/lib.rs` y falla en cuanto las
+// dos listas difieren (module-toolkit#40). Se salta si el hub no está al lado, que es
+// exactamente donde nadie puede introducir la divergencia.
 // ─────────────────────────────────────────────────────────────────────────────────────────
 
 /** Funciones-puente `erp_*` que el shim del runtime sabe reescribir. Set CERRADO:

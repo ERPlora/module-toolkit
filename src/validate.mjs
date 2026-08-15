@@ -1,6 +1,12 @@
-// `erplora validate <dir>`: valida el manifest (espejo de schemas/module.schema.json),
-// el SQL portable "ERPlora SQL" (ADR-0007) y, si hay bundle, que sea CSP-safe.
-// Sin dependencias externas.
+// `erplora validate <dir>`: valida el manifest, el SQL portable "ERPlora SQL" (ADR-0007) y, si hay
+// bundle, que sea CSP-safe. Sin dependencias externas.
+//
+// El manifest se comprueba por DOS vías, y la primera dejó de ser un espejo escrito a mano
+// (module-toolkit#30): las claves admitidas se LEEN del schema canónico
+// (`schemas/module.schema.json`, vendorizado del hub — ver `manifest-schema.mjs`), así que un
+// bloque nuevo del contrato se conoce en cuanto se sincroniza el schema. Lo que sigue escrito aquí
+// son las reglas de FORMATO y de negocio que el schema no expresa (códigos de taxonomía, enums de
+// billing, bloques movidos de sitio por el ADR-0007).
 import { readFileSync, existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
@@ -13,6 +19,7 @@ import { checkPrepare } from './validate-prepare.mjs';
 import { checkWasmArtifact } from './wasm.mjs';
 import { checkNotifyChannels } from './validate-notify-channels.mjs';
 import { checkHandlerPermissionCeiling } from './validate-handler-permissions.mjs';
+import { checkManifestKeys } from './validate-manifest-keys.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -109,6 +116,15 @@ export async function validate(moduleDir, { pg = false } = {}) {
       if (t.interval !== undefined && !['month', 'year'].includes(t.interval)) errs.push(`billing.tiers[${t.slug}].interval inválido: ${t.interval}`);
     }
   }
+
+  // module-toolkit#30: claves que el contrato NO admite, leídas del schema canónico. Es la puerta
+  // que faltaba: `whatsapp_inbox` publicó durante meses `events.emit` (singular) —el runtime no vio
+  // ningún evento declarado y dejó el módulo en modo compatible— y ninguna de las tres puertas lo
+  // detectó, porque ninguna sabía mirar una clave desconocida. La severidad es la del runtime
+  // (hub#521): se rechaza donde cambia lo que se EJECUTA, se avisa donde cuesta una pantalla.
+  const keys = checkManifestKeys(manifest);
+  for (const w of keys.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  errs.push(...keys.errors);
 
   if (errs.length) throw new Error('manifest inválido:\n  - ' + errs.join('\n  - '));
 

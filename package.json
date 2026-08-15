@@ -9,6 +9,7 @@
   },
   "scripts": {
     "test": "node --test",
+    "sync-schema": "cp ../hub/schemas/module.schema.json schemas/module.schema.json",
     "smoke": "node bin/erplora.mjs build ../modules-workspace/modules/inventory && node bin/erplora.mjs build ../modules-workspace/modules/sales"
   },
   "dependencies": {
