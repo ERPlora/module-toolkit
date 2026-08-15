@@ -205,7 +205,13 @@ export function loadUniverse(modulesDir) {
     } catch {
       continue; // un manifest ilegible no tumba la validación de los demás
     }
-    const emits = new Set();
+    // Un módulo declara lo que emite por DOS vías, y las dos cuentan (module-toolkit#35):
+    // `commands[].emit` es lo que emite el dispatcher declarativo, y `events.emits` es el
+    // catálogo COMPLETO — el que además incluye lo que devuelven los handlers WASM, que no sale
+    // de ningún command. Mirando solo la primera, el validador aplazaba como «nadie lo declara»
+    // los 32 eventos que tras hub#709 viven solo en la segunda (`sale.completed`, `order.fired`,
+    // los 9 de `kitchen`): justo los del centro del hub.
+    const emits = new Set(Array.isArray(m.events?.emits) ? m.events.emits : []);
     for (const cmd of Object.values(m.commands ?? {})) for (const e of cmd.emit ?? []) emits.add(e);
     universe.set(m.id, {
       queries: new Set(Object.keys(m.queries ?? {})),
@@ -312,7 +318,20 @@ export function crossValidateFull(manifest, contracts, universe) {
   // la declaración de emisiones, un evento que nadie declara se APLAZA con constancia, no error:
   // un validador que error-ea en falso se ignora, y eso mata el contrato entero. (Que el emisor no
   // esté instalado en un hub concreto tampoco es error: lo decide la instalación, severidad info.)
-  const eventKnown = (ev) => allEmits.has(ev);
+  // Un evento del CORE no sale de ningún manifest (module-toolkit#37): `hub.` es el namespace
+  // reservado del runtime (ADR-0192), que lo escribe él mismo en `_event_outbox` —
+  // `hub.whatsapp.message_received` nace en `crates/server/src/inbound_poll.rs`. Resolverlo
+  // contra lo que emiten los módulos del workspace es preguntarle a la fuente equivocada, y el
+  // aviso resultante («typo o emisión dinámica») describía como error el patrón RECOMENDADO para
+  // reaccionar a lo que entra por WhatsApp (hub#659). Peor: la fase 3 de ADR-0127 lo volvería un
+  // error y el gate rechazaría a esos módulos.
+  //
+  // Se reconoce el NAMESPACE, no una lista de nombres: el core no publica hoy ningún registro de
+  // eventos (a diferencia de sus queries, que sí están en `CORE_QUERIES`), así que una lista aquí
+  // sería un cuarto espejo sin fuente que lo respalde. El día que el hub sirva ese registro —como
+  // hizo con `flow.schema.json` en hub#716— este es el sitio donde se lee y el nombre pasa a
+  // comprobarse de verdad.
+  const eventKnown = (ev) => allEmits.has(ev) || ev.split('.')[0] === CORE_NAMESPACE;
   for (const ev of contracts.consumes.events) {
     if (!eventKnown(ev)) deferred.push(`evento \`${ev}\`: nadie del workspace lo DECLARA (emisión dinámica de handler o typo — la fase 3/ADR-0127 lo vuelve error)`);
   }

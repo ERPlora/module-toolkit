@@ -30,6 +30,7 @@ import {
   checkWasmFreshness,
   collectHandlerSources,
   declaredWasmHandlers,
+  hashHandlerSources,
   readWasmExports,
   wasmBuildStamp,
 } from '../src/wasm.mjs';
@@ -439,6 +440,59 @@ test('a stamp whose source hash no longer matches → stale (the sources moved o
     const r = checkWasmFreshness(dir, manifest);
     assert.equal(r.errors.length, 1, r.errors.join(' | '));
     assert.match(r.errors[0], /desfasado/i);
+  } finally {
+    clean(dir);
+  }
+});
+
+// --- module-toolkit#31: Cargo.lock is not evidence of what the binary contains ---------------
+// The lock is at once an INPUT of the freshness hash and an OUTPUT of cargo, so any build rewrites
+// a file the gate is hashing. And its contents are not the module's: the handler resolves the
+// guest-sdk BY PATH into the local hub checkout, so two authors with different checkouts produce
+// different locks for the same source. What that cost, measured: ERPlora/inventory#46 went red on
+// `stamp-sources` with the binary matching its own hash — a merge blocked by a metadata line.
+
+test('a rewritten Cargo.lock does NOT make a stamped handler stale (#31)', () => {
+  const { dir, manifest } = moduleFixture({ wasmAgeMs: 0, sourceAgeMs: DAY });
+  try {
+    write(dir, 'handler/Cargo.lock', 'version = 4\n\n[[package]]\nname = "erplora-guest-sdk"\nversion = "0.0.0"\n', DAY);
+    writeStamp(dir, manifest);
+    // What a `cargo build` against a hub that moved to 1.0.0 (hub#515) leaves behind.
+    write(dir, 'handler/Cargo.lock', 'version = 4\n\n[[package]]\nname = "erplora-guest-sdk"\nversion = "1.0.0"\n', 0);
+    assert.deepEqual(checkWasmFreshness(dir, manifest).errors, [], 'metadata is not logic');
+  } finally {
+    clean(dir);
+  }
+});
+
+test('and a source edit next to it is STILL caught (#31 does not switch the gate off)', () => {
+  const { dir, manifest } = moduleFixture({ wasmAgeMs: 0, sourceAgeMs: DAY });
+  try {
+    write(dir, 'handler/Cargo.lock', 'version = 4\n', DAY);
+    writeStamp(dir, manifest);
+    write(dir, 'handler/Cargo.lock', 'version = 4\n# rewritten\n', 0);
+    write(dir, 'handler/src/lib.rs', '// a rule that is not compiled into the binary\n', 0);
+    const r = checkWasmFreshness(dir, manifest);
+    assert.equal(r.errors.length, 1, r.errors.join(' | '));
+    assert.match(r.errors[0], /desfasado/i);
+  } finally {
+    clean(dir);
+  }
+});
+
+test('a LEGACY stamp (hashed WITH the lock) is still honoured (#31)', () => {
+  // 21 modules carry a stamp written by the previous hash. Rejecting them all at once would turn
+  // the publish gate red across the catalog for a change of ours, so the old hash keeps being
+  // accepted; the immunity to the lock arrives with each module's next build.
+  const { dir, manifest } = moduleFixture({ wasmAgeMs: 0, sourceAgeMs: DAY });
+  try {
+    write(dir, 'handler/Cargo.lock', 'version = 4\n', DAY);
+    const legacy = {
+      ...wasmBuildStamp(dir, manifest),
+      sources_sha256: hashHandlerSources(join(dir, 'handler'), { includeLock: true }),
+    };
+    writeFileSync(join(dir, 'dist', 'handler.build.json'), JSON.stringify(legacy, null, 2));
+    assert.deepEqual(checkWasmFreshness(dir, manifest).errors, [], 'an old stamp is not a stale binary');
   } finally {
     clean(dir);
   }

@@ -1,7 +1,13 @@
-// `erplora validate <dir>`: valida el manifest (espejo de schemas/module.schema.json),
-// el SQL portable "ERPlora SQL" (ADR-0007) y, si hay bundle, que sea CSP-safe.
-// Sin dependencias externas.
-import { readFileSync, existsSync } from 'node:fs';
+// `erplora validate <dir>`: valida el manifest, el SQL portable "ERPlora SQL" (ADR-0007) y, si hay
+// bundle, que sea CSP-safe. Sin dependencias externas.
+//
+// El manifest se comprueba por DOS vías, y la primera dejó de ser un espejo escrito a mano
+// (module-toolkit#30): las claves admitidas se LEEN del schema canónico
+// (`schemas/module.schema.json`, vendorizado del hub — ver `manifest-schema.mjs`), así que un
+// bloque nuevo del contrato se conoce en cuanto se sincroniza el schema. Lo que sigue escrito aquí
+// son las reglas de FORMATO y de negocio que el schema no expresa (códigos de taxonomía, enums de
+// billing, bloques movidos de sitio por el ADR-0007).
+import { readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { validateSql } from './validate-sql.mjs';
@@ -13,6 +19,7 @@ import { checkPrepare } from './validate-prepare.mjs';
 import { checkWasmArtifact } from './wasm.mjs';
 import { checkNotifyChannels } from './validate-notify-channels.mjs';
 import { checkHandlerPermissionCeiling } from './validate-handler-permissions.mjs';
+import { checkManifestKeys } from './validate-manifest-keys.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -109,6 +116,15 @@ export async function validate(moduleDir, { pg = false } = {}) {
       if (t.interval !== undefined && !['month', 'year'].includes(t.interval)) errs.push(`billing.tiers[${t.slug}].interval inválido: ${t.interval}`);
     }
   }
+
+  // module-toolkit#30: claves que el contrato NO admite, leídas del schema canónico. Es la puerta
+  // que faltaba: `whatsapp_inbox` publicó durante meses `events.emit` (singular) —el runtime no vio
+  // ningún evento declarado y dejó el módulo en modo compatible— y ninguna de las tres puertas lo
+  // detectó, porque ninguna sabía mirar una clave desconocida. La severidad es la del runtime
+  // (hub#521): se rechaza donde cambia lo que se EJECUTA, se avisa donde cuesta una pantalla.
+  const keys = checkManifestKeys(manifest);
+  for (const w of keys.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  errs.push(...keys.errors);
 
   if (errs.length) throw new Error('manifest inválido:\n  - ' + errs.join('\n  - '));
 
@@ -290,13 +306,25 @@ export function checkWasmHandler(dir, manifest, { runCargo = true } = {}) {
   }
   if (!runCargo) return out;
 
-  // Reusa el target compartido del workspace si existe; si no, uno del propio módulo.
+  // module-toolkit#31: `validate` COMPRUEBA, no modifica. Pero la verificación de aquí abajo es un
+  // `cargo build`, y cargo reescribe `handler/Cargo.lock` con lo que resuelva el checkout LOCAL del
+  // hub (el guest-sdk entra por RUTA): `erplora-guest-sdk 0.0.0` → `1.0.0` tras hub#515. Ese lock
+  // se cuela luego en un `git add -A` que nadie lee en review, y encima pone ROJO el gate de
+  // publicación — el lock es también fuente hasheada del handler, así que invalida
+  // `dist/handler.build.json` (ERPlora/inventory#46). Así que se guarda antes y se restaura después:
+  // lo que valida no deja rastro.
+  const lockPath = join(handlerDir, 'Cargo.lock');
+  const lockBefore = existsSync(lockPath) ? readFileSync(lockPath) : null;
+
   let cargoOk = false;
   try {
     // `cargo build` sin features de guest: compila el crate como rlib (los tests unitarios hacen
     // lo mismo). Compila el source y sus dependencias; cualquier error de compilación salta aquí.
     const args = ['build', '--manifest-path', cargoToml, '--quiet'];
-    const res = spawnSync('cargo', args, { encoding: 'utf8', timeout: 300000 });
+    const res =
+      typeof runCargo === 'function'
+        ? runCargo(args, { cwd: handlerDir })
+        : spawnSync('cargo', args, { encoding: 'utf8', timeout: 300000 });
     if (res.status === 0) {
       cargoOk = true;
     } else {
@@ -309,10 +337,21 @@ export function checkWasmHandler(dir, manifest, { runCargo = true } = {}) {
         'El dist no se ha verificado contra el source. (module-toolkit#135)',
     );
     return out;
+  } finally {
+    restoreCargoLock(lockPath, lockBefore);
   }
 
   out.checked = cargoOk;
   return out;
+}
+
+/** Devuelve `handler/Cargo.lock` a como estaba (o lo borra si no existía). module-toolkit#31. */
+function restoreCargoLock(lockPath, before) {
+  if (before === null) {
+    if (existsSync(lockPath)) rmSync(lockPath, { force: true });
+    return;
+  }
+  if (!existsSync(lockPath) || !readFileSync(lockPath).equals(before)) writeFileSync(lockPath, before);
 }
 
 /**

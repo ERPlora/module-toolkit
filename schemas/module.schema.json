@@ -1,0 +1,1330 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://erplora.com/schemas/module.schema.json",
+  "title": "ERPlora hub module manifest",
+  "description": "Contrato del módulo (module.json). Incluye el contrato técnico (runtime) + los bloques `marketplace` (clasificación por código) y `billing` (términos comerciales) que SOLO lee el Cloud (ADR-0007). El Hub ignora marketplace/billing.",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "version"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$",
+      "description": "Identificador namespaced del módulo (p. ej. inventory)."
+    },
+    "name": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string",
+      "description": "Descripción corta user-facing del módulo (se muestra al usuario). SIEMPRE en INGLÉS canónico; la app la traduce al idioma del usuario en runtime (no se almacena traducida aquí)."
+    },
+    "icon": {
+      "type": "string",
+      "description": "Nombre del icono del módulo (set Iconify `ion:`, p. ej. `storefront-outline`). El `module-toolkit build` lo hornea a SVG en `dist/icons.json` y el shell lo pinta vía HubIcon (ADR-0036). Solo el nombre aquí; el SVG no se escribe en el manifest."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+",
+      "description": "SemVer."
+    },
+    "agent": {
+      "type": "object",
+      "description": "Resumen del módulo para el ROUTING del asistente (nivel 1): qué tareas resuelve. SIEMPRE en INGLÉS (texto orientado al LLM). El hub lo usa para decidir qué módulo(s) son relevantes antes de exponer sus tools `ai` (nivel 2). ARQUITECTURA.md §9.2.",
+      "required": [
+        "description"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Una frase en INGLÉS describiendo qué tareas resuelve el módulo (verbos). Usada por el router del hub."
+        },
+        "keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Opcional. Palabras clave en INGLÉS para un pre-filtro léxico barato cuando hay muchísimos módulos instalados."
+        }
+      }
+    },
+    "ai_context": {
+      "type": "object",
+      "description": "Conocimiento del módulo para RAG (ARQUITECTURA.md §9.4) — APARCADO / en diseño. Hoy algunos módulos lo usan como { summary, keywords }; pendiente de reconciliar con `agent` (routing) cuando se diseñe el RAG de documentación. Permisivo mientras tanto.",
+      "additionalProperties": true
+    },
+    "depends_on": {
+      "type": "array",
+      "description": "Módulos que este necesita instalados, opcionalmente con versión MÍNIMA (hub#681). Dos formas mezclables: el string plano (`\"taxes\"` — cualquier versión instalada satisface, la forma de todo el catálogo publicado) y `{ \"id\": \"inventory\", \"min_version\": \"1.2.20\" }` para un contrato que nació en una versión concreta (sales#68). El instalador valida el suelo; el topo-orden y las cascadas leen solo el id.",
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "min_version": {
+                "type": "string",
+                "pattern": "^\\d+\\.\\d+\\.\\d+",
+                "description": "Versión mínima de la dependencia que cumple el contrato (suelo, nunca pin)."
+              }
+            }
+          }
+        ]
+      },
+      "default": []
+    },
+    "permissions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "records": {
+      "type": "object",
+      "description": "Mutabilidad DECLARADA por registro (hub#632): qué datos del módulo se pueden editar a posteriori y por qué puerta. `mutable: false` = se corrige, nunca se edita (`reason` con vocabulario CERRADO y `correct_with` apuntando a los commands de corrección); `mutable: true` nombra su command `update` y, opcionalmente, `patch: { read, key }` — que convierte ese update en puerta PARCIAL: el runtime lee el registro, fusiona encima lo enviado (limitado a las claves del schema del update), valida el objeto COMPLETO y ejecuta el SQL sin tocarlo. La validación condicional vive SOLO aquí, a propósito (sin duplicado Rust).",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "mutable"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "mutable": {
+            "type": "boolean",
+            "description": "¿Se puede editar este registro tras crearse? `false` = se corrige, nunca se edita."
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "fiscal",
+              "ledger",
+              "identity",
+              "audit"
+            ],
+            "description": "Por qué es inmutable — vocabulario CERRADO para que sea traducible y explicable por el asistente («una factura emitida no se edita: se rectifica»)."
+          },
+          "correct_with": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Commands que CORRIGEN un registro inmutable (`sales.void`, `invoice.rectify`)."
+          },
+          "update": {
+            "type": "string",
+            "description": "Command de update (objeto completo) del registro mutable."
+          },
+          "patch": {
+            "type": "object",
+            "required": [
+              "read",
+              "key"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "read": {
+                "type": "string",
+                "description": "Query del PROPIO módulo que devuelve el registro actual (`sales.order.get`)."
+              },
+              "key": {
+                "type": "string",
+                "description": "Clave del payload que identifica el registro (`order_id`)."
+              }
+            },
+            "description": "Contrato de update PARCIAL: el runtime ejecuta `read` con `key`, fusiona lo enviado encima y valida el objeto completo. `null` explícito pisa; omitir conserva."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "mutable": {
+                  "const": false
+                }
+              },
+              "required": [
+                "mutable"
+              ]
+            },
+            "then": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "update"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "patch"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "roles": {
+      "type": "array",
+      "default": [],
+      "description": "Business roles the module declares for its vertical (paso 2b, hub#351): restaurant → Waiter · Bartender · Kitchen · Cashier; salon → Receptionist · Stylist; both → Accountant. OPTIONAL: the ~24 published modules do not carry it and its absence invalidates nothing (no republish, no migration). The hub's base catalogue is FROZEN at three keys (`admin`/`manager`/`employee`) because renaming one would cost 24 repos and 24 republications, so a vertical does not rename the base: it adds on top of it. Declaring a role NAMES it; granting is `role_permissions`, and a role's effective permissions are the UNION of what the installed modules grant to that key — so a module may grant to a key another module declared (`sales` gives `waiter` `add_sale` but not `take_payment`). The Hub aggregates the roles of the installed modules into a catalogue and the administrator activates the ones the business needs (hub#352).",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "extends"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "maxLength": 32,
+            "description": "Stable identifier of the role (`waiter`, `shift_lead`). It is the key `role_permissions` grants against and the value stored in `hub_user.role`: an identifier, not a label. It may NOT be one of the hub's base keys (`admin`/`manager`/`employee`, nor the legacy `owner` spelling): a module EXTENDS the base catalogue, it never redefines an entry of it."
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Human name the administrator reads when activating the role. ALWAYS canonical ENGLISH (ADR-0055); the translation travels in `locales/<lang>.json`, like `navigation[].label`."
+          },
+          "extends": {
+            "type": "string",
+            "enum": [
+              "manager",
+              "employee"
+            ],
+            "description": "Base role this one hangs from. It is what keeps the three-key contract intact: every declared role resolves to a base role, so the core gate and the 24 published modules keep working untouched. Only the base roles that do NOT administer the hub: `admin` (and its legacy `owner` spelling) is out on purpose — a `module.zip` is third-party input, and administering the hub comes from the hub itself (`HUB_OWNER_EMAIL`, ADR-0157) and from the floor the account role imposes at every login (hub#347), NEVER from a manifest. The runtime refuses to install a module that tries."
+          }
+        }
+      }
+    },
+    "role_permissions": {
+      "type": "object",
+      "description": "Permissions the module grants to each role key. The three base keys (`admin`/`manager`/`employee`) are the contract the 24 published modules already write against; a module may also grant to a key declared in `roles[]` — its own or another module's, since a role's effective permissions are the union of what the installed modules grant, so no module needs to know every role.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "default": {}
+    },
+    "static_files": {
+      "type": "object",
+      "description": "Carpeta persistente privada del módulo dentro del árbol común `media/modules/`. El manifest declara solo un nombre seguro; el Hub resuelve el backend: disco local en Hub Local y almacenamiento de objetos vía Cloud/S3 en Hub Cloud. Ausente = el módulo no guarda ficheros persistentes.",
+      "required": [
+        "folder"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "folder": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "description": "Nombre de un único segmento bajo `media/modules/` (p. ej. `verifactu`), nunca una ruta."
+        },
+        "user_actions": {
+          "type": "array",
+          "default": [],
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["upload", "rename", "delete"]
+          },
+          "description": "Qué puede hacer el USUARIO con estos ficheros desde la pantalla /files (ADR-0172). Ver y descargar son siempre posibles y no se declaran. Ausente o vacío = solo lectura, que es el default deliberado: lo que genera un módulo suele ser evidencia (los XML de VeriFactu son inalterables por ley). No limita al módulo, que sigue escribiendo por ModuleStorage: distingue «el módulo guarda su XML» de «el cajero puede borrarlo». No hay override de administrador."
+        }
+      }
+    },
+    "navigation": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "component"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string",
+            "description": "Nombre del icono de la entrada (set Iconify `ion:`). Horneado a SVG en `dist/icons.json` por el build (ADR-0036)."
+          },
+          "component": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*-[a-z0-9-]+$",
+            "description": "Nombre del custom element (Web Component) a montar."
+          },
+          "chrome": {
+            "type": "array",
+            "default": [],
+            "items": {
+              "type": "string",
+              "enum": [
+                "fullscreen"
+              ]
+            },
+            "description": "Controles de chrome del shell que esta entrada de navegación pide en la topbar, por nombre (ADR-0048, Nivel 1). El botón y su lógica los pone y maneja el SHELL (no viajan en el módulo) → respeta ADR-0022; el módulo solo opta-in a una capacidad que ya es del shell, no inyecta chrome. Enum CERRADA que crece en el shell: añadir un control nuevo es tocar el shell, no solo el manifest. Hoy soportado: `fullscreen` (Fullscreen API sobre el documento; el botón se muestra solo en la vista que lo pide y solo si el navegador la soporta). El shell lo lee del `module.json` crudo (la API aún no lo re-sirve)."
+          },
+          "actions": {
+            "type": "array",
+            "default": [],
+            "description": "Acciones de topbar de ESTA pestaña (ADR-0048, Nivel 2): el shell las pinta en `slot=\"end\"` y al pulsar reenvía `module-action` al Web Component montado. El manifest declara el botón; el comportamiento vive en el componente. El runtime las parsea desde siempre (`manifest::NavAction`) — el schema las prohibía, así que un módulo que declarase una acción fallaba `erplora validate` sin motivo. Deriva corregida en hub#521, donde el desacuerdo pasó a ser un test.",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "label"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "description": "Identificador de la acción; viaja en el evento `module-action` que recibe el Web Component."
+                },
+                "label": {
+                  "type": "string",
+                  "description": "Texto del botón, INGLÉS canónico (ADR-0055): la traducción viaja en `locales/<lang>.json`."
+                },
+                "icon": {
+                  "type": "string",
+                  "description": "Nombre del icono (set Iconify `ion:`)."
+                },
+                "primary": {
+                  "type": "boolean",
+                  "default": false,
+                  "description": "Botón destacado (color primario)."
+                },
+                "permission": {
+                  "type": "string",
+                  "description": "Permiso para MOSTRAR el botón (show/hide de UI). Rust revalida siempre el command real: esto no autoriza nada."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "provides_slots": {
+      "type": "array",
+      "default": [],
+      "description": "Slots de UI cross-módulo que ESTE módulo rellena en pantallas de OTROS módulos (ADR-0043, tercera vía de composición — de UI). Acoplamiento por NOMBRE de slot (contrato), nunca por import de código; mismo principio que queries/commands/eventos. El `component` lo define el `ui.entry` del propio módulo (viaja en su bundle). El módulo NO declara `depends_on` del host: si el host no expone el slot, el filler simplemente no se monta. El shell lo lee del `module.json` crudo (igual que `navigation`).",
+      "items": {
+        "$ref": "#/$defs/slotProvision"
+      }
+    },
+    "migrations": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sqlite": {
+          "type": "array",
+          "deprecated": true,
+          "description": "DEPRECATED (ADR-0154): el Hub es Postgres-only; el runtime ignora este dialecto. Usa migrations/postgres. Se mantiene opcional solo por compatibilidad con manifests antiguos.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "postgres": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "queries": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "permission"
+        ],
+        "properties": {
+          "permission": {
+            "type": "string"
+          },
+          "sql": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "list": {
+            "$ref": "#/$defs/listSpec"
+          },
+          "ai": {
+            "$ref": "#/$defs/aiTool"
+          },
+          "expose_api": {
+            "type": "boolean",
+            "default": false,
+            "description": "Opt-in: expone esta query en la API pública REST/OpenAPI por módulo (ADR-0057, `architecture/hub/public-api.md`). Doble puerta: además de estar marcada, la API key debe tener el `permission` de la query (lectura del módulo). Por defecto false → la query NO es accesible vía API key aunque la key tuviera el permiso. Espejo del flag `external` de los hooks de salida (ADR-0049)."
+          }
+        }
+      }
+    },
+    "commands": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "permission"
+        ],
+        "properties": {
+          "permission": {
+            "type": "string"
+          },
+          "transaction": {
+            "type": "boolean",
+            "default": false
+          },
+          "sql": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "schema": {
+            "type": "string"
+          },
+          "reads": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "description": "La query entera, sin filtrar. Para catálogos pequeños de confianza (p. ej. `taxes.rules.list`). Nunca `required`: la forma string es siempre graceful."
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["query"],
+                  "properties": {
+                    "query": { "type": "string" },
+                    "params": {
+                      "type": "object",
+                      "additionalProperties": { "type": "string" },
+                      "description": "Parámetros de la query. Cada valor referencia un campo del payload del command (`payload.<campo>`); cualquier otra cosa se pasa como literal. Solo eso: nada de expresiones ni de leer otras reads, para que el manifest siga siendo declarativo y auditable de un vistazo."
+                    },
+                    "required": {
+                      "type": "boolean",
+                      "default": false,
+                      "description": "Opt-in (hub#701): si la query no resuelve, el command se ABORTA con `read_unavailable` en vez de omitirse y dejar al handler degradar. Para lo que no admite adivinar — el impuesto. El defecto sigue siendo graceful: una read común que falla se omite, y cobrar sigue siendo lo último que puede romperse."
+                    }
+                  },
+                  "description": "Query FILTRADA por campos del payload, y opcionalmente OBLIGATORIA (`required`)."
+                }
+              ]
+            },
+            "description": "Lecturas PRE-CARGADAS (ADR-0069): queries (del propio módulo o de sus depends_on) cuyas filas el runtime entrega al handler en `context.reads[\"<query>\"]` antes de invocarlo, con contexto de sistema (mismo hub_id). Existe porque el handler WASM corre en un sandbox y no puede leer la BD: sin esto, solo sabe lo que le cuenta el cliente — y así es como el navegador acababa decidiendo el IVA que se declara a la AEAT. Admite dos formas: un string (la query entera) o `{query, params, required}` (filtrada por el payload). Un parámetro ausente resuelve a NULL y la query devuelve cero filas; una read que falla se OMITE por defecto — cobrar es lo último que puede romperse en un TPV. Una read marcada `required` ABORTA el command (hub#701): para el impuesto, un catálogo vacío no puede ser indistinguible de «no hay reglas»."
+          },
+          "expose_api": {
+            "type": "boolean",
+            "default": false,
+            "description": "Opt-in: expone este command en la API pública REST/OpenAPI por módulo (ADR-0057, `architecture/hub/public-api.md`). Doble puerta: además de estar marcado, la API key debe tener el `permission` del command (escritura del módulo). Por defecto false → el command NO es accesible vía API key aunque la key tuviera el permiso. Espejo del flag `external` de los hooks de salida (ADR-0049)."
+          },
+          "internal": {
+            "type": "boolean",
+            "default": false,
+            "description": "Marca este command como INTERNO (hub#131, hub#145): solo lo invoca el propio runtime (un listener del outbox entregado por el relay, una scheduled task del mismo módulo) — nunca un caller EXTERNO (HTTP `/api/command`, API pública de API keys, asistente/SDK). Aditivo al convenio legacy de prefijo `_` en el último segmento del nombre (p. ej. `cash_register._reverse_sale`), que ya se trata como interno sin necesidad de este campo; úsalo para blindar un command interno que no lleva ese prefijo. Un command interno nunca aparece en el OpenAPI ni en las tools del asistente, aunque se marcara `expose_api`/`ai` por error."
+          },
+          "handler": {
+            "type": "object",
+            "required": [
+              "type",
+              "function"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "wasm",
+                  "native"
+                ]
+              },
+              "file": {
+                "type": "string"
+              },
+              "function": {
+                "type": "string"
+              }
+            },
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "wasm"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "file"
+              ]
+            }
+          },
+          "emit": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "min_affected_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Contrato de mutación (hub#140): mínimo de filas que las sentencias `sql` del command DEBEN afectar (en total) para que el command se considere exitoso y se emitan sus `emit`. Si el recuento real queda por debajo, la transacción se revierte ENTERA y NO se escribe ningún evento en el outbox (ni notificación al WS) — porque el hecho declarado nunca ocurrió. Es OPT-IN: ausente = comportamiento de siempre (emite haya o no mutado), para no romper los módulos publicados ni los commands genuinamente idempotentes. `1` es el caso habitual de un command de transición (confirmar/anular/cerrar) que NO debe emitir si el `WHERE` no casa; `0` declararía explícitamente un no-op idempotente permitido que sí emite. El error estable distingue `not_found` (0 filas) de `conflict` (>0 pero por debajo del mínimo)."
+          },
+          "expect_rows": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["op", "n", "error"],
+            "properties": {
+              "op": { "type": "string", "enum": ["min"] },
+              "n": { "type": "integer", "minimum": 0 },
+              "error": {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
+                "description": "Código de dominio namespaced (`<module>.<snake_case>`) que la UI traduce vía el catálogo i18n del módulo (ADR-0055). El namespace DEBE ser el id del propio módulo (el installer lo valida)."
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 500,
+                "description": "Fallback humano opcional (inglés fuente); no debe contener datos internos. Si se omite, el runtime genera uno genérico."
+              }
+            },
+            "description": "Gate traducible de filas afectadas (hub#139): la versión con código de dominio estable de `min_affected_rows` (no combinables en un mismo command). Si la mutación afecta menos de `n` filas, rollback ENTERO (mutación + outbox) y el caller recibe HTTP 409 con `{code: error, message}` — nunca un `200 ok` con 0 filas ni un evento falso."
+          },
+          "ai": {
+            "$ref": "#/$defs/aiTool"
+          }
+        }
+      }
+    },
+    "events": {
+      "type": "object",
+      "properties": {
+        "listen": {
+          "type": "object",
+          "description": "Eventos a los que reacciona el módulo: evento → command que lo atiende. El evento puede ser de CUALQUIER módulo (`inventory` escucha `sale.completed`), pero el `command` tiene que ser SUYO — dentro de su namespace `<id>.` (hub#659, ADR-0283 §7). Un listener que apunta al command de otro módulo se rechaza AL INSTALAR: reaccionar corriendo algo ajeno es territorio de los flows con grant explícito, no de una línea del manifest. El JSON Schema no puede expresar la regla (depende de `id`), así que la puerta la aplica el runtime en `installer::validate_event_listeners`.",
+          "additionalProperties": {
+            "type": "object",
+            "required": [
+              "command"
+            ],
+            "properties": {
+              "command": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "emits": {
+          "type": "array",
+          "description": "EL CATÁLOGO COMPLETO de eventos que el módulo emite: los `emit` de sus commands declarativos Y los que devuelven sus handlers (WASM/nativo). El hub NO tiene un registro central de eventos — la lista de «cosas que pueden pasar en mi negocio» que ofrece el editor de flujos es la agregación de este campo en los módulos instalados (hub#709), así que lo que no esté aquí no existe para nadie. Un `emit` de command que falte en esta lista se REPORTA al instalar (aviso visible en `/api/modules`, nunca un rechazo: el evento sigue saliendo y lo que se pierde es una línea del catálogo). Es además el allowlist que el runtime comprueba antes de encolar en el outbox un evento devuelto por un HANDLER (hub#240): declararlo pone al módulo en MODO ESTRICTO (solo estos nombres + los `emit` de sus commands pueden salir de sus handlers). Reglas duras que aplican siempre: no emitir en el namespace de otro módulo instalado, y no emitir `*.reminder.due` (disparador de `host.notify`) sin la capability `notify` declarada y concedida.",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "widgets": {
+      "type": "object",
+      "description": "Widgets de dashboard que aporta el módulo (ADR-0054). Clave = id COMPLETO namespaced del widget (p. ej. `sales.today`, `inventory.low_stock`), misma convención que `queries`/`commands`. El shell del Hub recolecta los widgets de TODOS los manifests instalados y los pinta en `<ok-widget-board>`. CERO MOCKS: la vía declarativa (`kind`) SIEMPRE se alimenta de una `query` real del módulo. El Hub solo TRANSPORTA este bloque (el shell fetchea el `module.json` crudo, igual que `navigation`/`provides_slots`); el runtime no ejecuta nada por widget.",
+      "default": {},
+      "additionalProperties": {
+        "$ref": "#/$defs/widget"
+      }
+    },
+    "setup": {
+      "type": "object",
+      "description": "Chequeo de CONFIGURACIÓN del módulo (ADR-0063, extendido por hub#369). El RUNTIME evalúa, para cada módulo instalado y activo, si está configurado: corre `query` (lectura del propio módulo, con los permisos de quien llama), toma la 1ª fila y comprueba `configured_when`. El resultado sale como un ítem de la query core `hub.setup.status`, que el widget de la checklist y el asistente leen (una fuente, dos superficies). Genérico: el Hub no conoce módulos concretos; cada uno se autodeclara. ⚠️ Ya NO es un bloque que el Hub solo transporta: lo parsea el runtime (`crates/runtime/src/manifest.rs`, `SetupDef`). Lo que el módulo NO declara es su importancia: `required` mapea a 🔴 funcional / 🟡 recomendado y el nivel ⛔ bloqueante lo mantiene el core, para que un módulo de terceros no pueda autoproclamarse bloqueante de la venta. Contrato completo en `architecture/hub/setup-status.md`.",
+      "required": [
+        "query",
+        "configured_when",
+        "title",
+        "route"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "boolean",
+          "default": true,
+          "description": "`true` (por defecto) = 🔴 funcional: sin esto el módulo no hace su trabajo. `false` = 🟡 recomendado: el negocio funciona, se nota. NUNCA ⛔ bloqueante — esa lista la mantiene el core. Ojo: `required: false` YA NO se omite de la checklist (antes sí, cuando la única superficie era una alerta); sale como ítem recomendado y el widget lo pliega tras «Ver todo»."
+        },
+        "query": {
+          "type": "string",
+          "description": "Query namespaced que devuelve el estado de configuración (se evalúa la 1ª fila)."
+        },
+        "params": {
+          "type": "object",
+          "description": "Params estáticos para la query."
+        },
+        "configured_when": {
+          "type": "array",
+          "description": "Configurado ⇔ TODOS estos checks pasan sobre la primera fila (sin fila → no configurado).",
+          "items": {
+            "type": "object",
+            "required": [
+              "field"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "field": {
+                "type": "string",
+                "description": "Columna del resultado a evaluar."
+              },
+              "truthy": {
+                "type": "boolean",
+                "description": "Pasa si el campo es verdadero (no vacío/0/false)."
+              },
+              "equals": {
+                "description": "Pasa si el campo es igual a este valor (comparación laxa)."
+              }
+            }
+          }
+        },
+        "title": {
+          "type": "string",
+          "description": "Título de la alerta (p. ej. \"Configura VeriFactu\")."
+        },
+        "description": {
+          "type": "string",
+          "description": "Texto de ayuda corto."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Icono ionicons para la alerta."
+        },
+        "route": {
+          "type": "string",
+          "description": "Ruta de la pantalla de configuración del módulo."
+        },
+        "permission": {
+          "type": "string",
+          "description": "Permiso para CONFIGURARLO (solo se le ofrece el ítem a quien puede actuar). Es deliberadamente más estrecho que el permiso de LEER la query: quien solo mira no recibe una tarea que no puede completar."
+        },
+        "countries": {
+          "type": "array",
+          "description": "Países (ISO-3166-1 alfa-2) donde aplica el ítem. Ausente o vacío = todos. Existe porque el Hub es internacional y no puede tener cableado «VeriFactu no sale fuera de España»: quien lleva una obligación nacional declara dónde aplica. Un hub sin `country_code` no puede responder la pregunta, así que el ítem se omite.",
+          "default": [],
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z]{2}$"
+          }
+        },
+        "order": {
+          "type": "integer",
+          "description": "Puesto del ítem en la checklist. La ESCALA es del core, que reserva los huecos de sus propios ítems (apps=10, datos del negocio=40, equipo=80) y asigna a cada módulo el suyo — ver la tabla de `architecture/hub/setup-status.md`. Ausente = 500, detrás de todo lo que el core colocó. No lo elijas tú: usa el que te asigna la tabla."
+        }
+      }
+    },
+    "settings": {
+      "type": "object",
+      "description": "Pantalla de AJUSTES declarativa del módulo (estilo widgets). El shell pinta un formulario genérico a partir del `schema` (JSON Schema: campos/tipos/`default`/`title`/`enum`), lo carga con la query `get` y lo guarda con el command `set` (ambos del propio módulo, que ya existen). Si `component` está presente, el shell pinta ESE Web Component en vez del form genérico (escape-hatch para ajustes estructurales). El Hub solo TRANSPORTA este bloque (lo lee el shell del `module.json` crudo, igual que `widgets`/`setup`); el runtime no ejecuta nada por settings.",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Título de la sección de ajustes (legible)."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Icono ionicons para la sección/pestaña."
+        },
+        "schema": {
+          "type": "string",
+          "description": "Ruta (relativa al paquete del módulo) del JSON Schema que describe el formulario."
+        },
+        "get": {
+          "type": "string",
+          "description": "Query namespaced del módulo que devuelve los valores actuales (fila singleton). P.ej. `cash_register.settings.get`."
+        },
+        "set": {
+          "type": "string",
+          "description": "Command namespaced del módulo que persiste el snapshot (upsert). P.ej. `cash_register.settings.update`."
+        },
+        "component": {
+          "type": "string",
+          "description": "Escape-hatch: Web Component propio que el shell pinta en vez del form genérico (lo estructural)."
+        }
+      }
+    },
+    "network": {
+      "type": "object",
+      "description": "Capacidad `http.fetch` mediada por el host (ADR-0012, ARQUITECTURA.md §5.5, Opción A). El WASM no tiene red: el runtime hace la llamada saliente, valida el host contra `allow` (allowlist) e inyecta los `secrets` por nombre (el módulo nunca ve su valor).",
+      "additionalProperties": false,
+      "properties": {
+        "allow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Hosts/patrones permitidos para las llamadas salientes (allowlist). Una llamada a un host fuera de la lista se rechaza."
+        },
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Nombres de secretos del hub que el host inyecta en la llamada (cabeceras/auth). El módulo declara el nombre, no el valor."
+        }
+      }
+    },
+    "notify": {
+      "type": "object",
+      "description": "Capacidad `host.notify(channel, payload)` de alto nivel (ADR-0012). El módulo declara QUÉ canales de notificación usa; el runtime implementa el cliente y decide DÓNDE viven los secretos/cuota por canal y por `tier` (tenant=secreto local cifrado; WhatsApp premium=proxy Cloud con check_quota). El envío va por el Outbox: el command emite un evento `*.reminder.due` con la intención `{channel,to,template,vars}` y el listener-host lo entrega con reintentos/dead-letter.",
+      "additionalProperties": false,
+      "properties": {
+        "channels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "email",
+              "sms",
+              "whatsapp"
+            ]
+          },
+          "description": "Canales de alto nivel que necesita el módulo. Conjunto cerrado (añadir uno = tocar el runtime)."
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "description": "Permisos que el módulo SOLICITA al host (ADR-0079, estilo permisos de Android). El core posee los primitivos peligrosos (certificado, red, impresora); el módulo declara qué necesita, el USUARIO los concede explícitamente (toggle en Settings → Permisos) y el host media la operación (el módulo nunca recibe la clave privada). Bloque vacío o ausente = el módulo no pide ningún permiso. NO confundir con `permissions` (RBAC de usuario, otro eje). Consolida los antiguos `network`/`notify` de ADR-0012.",
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Salida HTTP mediada por el host hacia los hosts de `allow` (ADR-0012). El WASM no tiene red: el runtime hace la llamada e inyecta los `secrets` por nombre.",
+          "properties": {
+            "allow": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Hosts/patrones permitidos (allowlist). Fuera de la lista = rechazado."
+            },
+            "secrets": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Nombres de secretos del hub que el host inyecta (el módulo declara el nombre, no el valor)."
+            }
+          }
+        },
+        "certificate": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Acceso al certificado PKCS#12 del negocio para firmar/transmitir (p.ej. VeriFactu y futuros B2B fiscales). El host firma; el módulo NUNCA recibe la clave privada.",
+          "properties": {
+            "purpose": {
+              "type": "string",
+              "description": "Para qué se usa el certificado (texto legible, p.ej. `fiscal-sign`)."
+            }
+          }
+        },
+        "printer": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Enviar a impresora ESC/POS vía el bridge/peripherals (TCP raw a la cola de impresión).",
+          "properties": {}
+        },
+        "notify": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Canales de notificación de alto nivel (ADR-0012).",
+          "properties": {
+            "channels": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "email",
+                  "sms",
+                  "whatsapp"
+                ]
+              },
+              "description": "Canales que necesita el módulo."
+            }
+          }
+        },
+        "manage_flows": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Administrar el KERNEL DE AUTOMATIZACIÓN del hub: leer y escribir flujos, sus grants, sus secretos y su bandeja de aprobación (`/api/hub/flows*`, ADR-0283 §9). La declara el editor visual de flujos y prácticamente nadie más. Es la capability de mayor alcance: un flujo ejecuta commands con `Origin::Automation` bajo los grants que `PUT …/grants` escribe, así que quien administra flujos consigue que el hub actúe SIN NADIE DELANTE. Sigue exigiéndose además la sesión de un humano owner/admin — la capability no la sustituye, se suma (hub#714).",
+          "properties": {}
+        }
+      }
+    },
+    "fiscal_regime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "country",
+        "regime"
+      ],
+      "description": "El régimen fiscal que este módulo IMPLEMENTA (ADR-0273 D6). Solo lo declara quien implementa uno: un módulo de inventario no declara nada. Es la respuesta a la única pregunta del core — «¿hay algún módulo instalado y activo que cumpla el régimen que debe ESTE hub?» —, y el core CUENTA, no elige: puede haber N módulos del mismo régimen en el marketplace. NO es el flag opt-in que ADR-0203 descartó: declararlo no apaga ninguna guarda, es lo que el core exige que exista, así que un módulo que no lo declare simplemente no cuenta como proveedor y el hub se queda bloqueado (fail-closed, misma forma que `capabilities.certificate`).",
+      "properties": {
+        "country": {
+          "type": "string",
+          "pattern": "^[A-Za-z]{2}$",
+          "description": "ISO-3166-1 alpha-2 (`ES`, `FR`…). Es la forma contra la que se compara: `hub_settings.country_code` y el registro de regímenes del core. Texto libre no casaría con nada, que se lee igual que «no hay proveedor»."
+        },
+        "regime": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Clave del régimen (`verifactu`, `facturx`…), la misma del registro de regímenes del core."
+        }
+      }
+    },
+    "scheduled_tasks": {
+      "type": "array",
+      "description": "Tareas programadas del módulo (ADR-0011). Las ejecuta el Hub (no Cloud): se vuelcan a la tabla de sistema `_scheduled_tasks` al instalar y el barrido del relay corre el `command` al vencer el `cron`, sin usuario (contexto de sistema). Idempotentes por diseño (catch-up collapse tras un apagado).",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/scheduledTask"
+      }
+    },
+    "ui": {
+      "type": "object",
+      "required": [
+        "entry"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "entry": {
+          "type": "string",
+          "description": "Ruta al ESM del Web Component compilado (cargado en runtime por el shell)."
+        }
+      }
+    },
+    "marketplace": {
+      "type": "object",
+      "description": "Clasificación de marketplace por CÓDIGO (ADR-0007). El Cloud VALIDA estos códigos contra su taxonomía (Sector/BusinessType/FunctionalUnit) en el sync; un código desconocido rechaza el sync. Los nombres localizados (ES/EN) viven en Cloud. El Hub ignora este bloque.",
+      "additionalProperties": false,
+      "properties": {
+        "functional_unit": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Código de la unidad funcional primaria."
+        },
+        "sectors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "Códigos de sectores compatibles."
+        },
+        "business_types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "description": "Códigos de tipos de negocio compatibles."
+        }
+      }
+    },
+    "billing": {
+      "type": "object",
+      "description": "Términos comerciales del módulo (ADR-0007). SOLO lo lee el Cloud para crear/actualizar productos en Stripe; el Hub lo ignora. Relevante solo para `tier: premium` (free es gratis en todo despliegue; ADR-0032 colapsó basic/essential→free). Precio único con `interval`+`price`, o multi-tier con `tiers`.",
+      "additionalProperties": false,
+      "properties": {
+        "tier": {
+          "type": "string",
+          "enum": [
+            "free",
+            "premium"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "free",
+            "one_time",
+            "subscription"
+          ]
+        },
+        "interval": {
+          "type": "string",
+          "enum": [
+            "month",
+            "year"
+          ],
+          "description": "Intervalo de la suscripción de precio único."
+        },
+        "price": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Precio único en EUR (IVA incl.)."
+        },
+        "trial_days": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 15
+        },
+        "tiers": {
+          "type": "array",
+          "description": "Tiers de pago para módulos premium con API (free + pago con cuota + metered). Si está presente, manda sobre `price`.",
+          "items": {
+            "type": "object",
+            "required": [
+              "slug",
+              "name",
+              "price"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "slug": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$"
+              },
+              "name": {
+                "type": "string"
+              },
+              "price": {
+                "type": "number",
+                "minimum": 0,
+                "description": "EUR/intervalo (IVA incl.). 0 = tier gratis."
+              },
+              "interval": {
+                "type": "string",
+                "enum": [
+                  "month",
+                  "year"
+                ],
+                "default": "month"
+              },
+              "trial_days": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "metered": {
+                "type": "boolean",
+                "default": false,
+                "description": "Si true, cuota base + overage por uso (Stripe Billing Meters)."
+              },
+              "overage_price": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Precio por unidad de exceso (EUR) si `metered`."
+              },
+              "quota": {
+                "type": "object",
+                "description": "Límites incluidos por métrica `{ metrica: limite }` (p. ej. messages_per_month). Al agotar → bloqueo en Cloud (o overage si metered).",
+                "additionalProperties": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "seed": {
+      "description": "Datos de REFERENCIA que el módulo siembra al instalarse (ADR-0147). DML idempotente por hub (WHERE NOT EXISTS por la clave natural), aplicado tras migrar con :hub_id/:now/:current_user_id inyectados. Para lo que todo hub necesita y el usuario no puede aportar — unidades de medida, categorías fiscales—, no para datos de ejemplo.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sqlite": {
+          "type": "array",
+          "deprecated": true,
+          "description": "DEPRECATED (ADR-0154): el Hub es Postgres-only; el runtime ignora este dialecto. Usa seed/postgres. Se mantiene opcional solo por compatibilidad con manifests antiguos.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "postgres": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "compatibility": {
+      "description": "Qué cores pueden ejecutar este módulo (hub#521). Ausente = cualquiera, que es la forma de los 24 manifests publicados y sigue siendo válida. El nombre del bloque NO es nuevo: el SaaS ya leía `compatibility.min_erplora_version` del manifest y lo republicaba en el catálogo como `min_core_version`; lo nuevo es que el HUB por fin lo lee, en vez de instalar a medias algo que no puede ejecutar entero.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "min_erplora_version": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+){0,2}([-+].*)?$",
+          "description": "Core MÁS ANTIGUO que puede ejecutar este módulo. Por debajo, el hub RECHAZA la instalación con un mensaje accionable («esta app necesita una versión más nueva de tu terminal») en vez de instalar un módulo al que le faltarán trozos en silencio."
+        },
+        "max_erplora_version": {
+          "type": "string",
+          "pattern": "^\\d+(\\.\\d+){0,2}([-+].*)?$",
+          "description": "Core más NUEVO contra el que el autor probó. Documental: el hub lo parsea y NO lo aplica. Aplicarlo rechazaría un módulo VIEJO en un hub NUEVO, y que esa dirección funcione es justo lo que permite actualizar el hub sin mover los 24 módulos el mismo día."
+        }
+      }
+    },
+    "protects": {
+      "type": "array",
+      "description": "Guardias de RUTA que este módulo declara sobre la superficie de OTRO módulo (hub#775). El caso canónico es `cash_register`: mientras `enable_cash_register` está on y la ruta de `protected_pos_url` (servida por `sales`) está en juego, ninguna venta puede completarse si `cash_register.current_session` no devuelve ninguna fila (la caja está cerrada). El runtime PARSEA este bloque y lo aplica de forma AUTORITATIVA en el dispatcher de commands (la mitad en la que el shell no se puede confiar): un cliente manipulado, un flow o un `POST /api/command` directo no pueden saltarse el guard. El shell además renderiza `component` (p. ej. `erp-cashregister-open`) en vez de montar el módulo en esa ruta. Cross-módulo a propósito: el módulo que declara el guard no necesita `depends_on` del que protege — protege una RUTA, y el dispatcher saca el módulo protegido de `route_setting`.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "settings_query",
+          "enabled_setting",
+          "route_setting",
+          "guard_query",
+          "expect",
+          "component",
+          "resume_on"
+        ],
+        "properties": {
+          "settings_query": {
+            "type": "string",
+            "description": "Query (del módulo que declara el guard) que devuelve la fila de SETTINGS que lleva `enabled_setting` y `route_setting`. Se resuelve en contexto de sistema: mismo `hub_id`, sin re-check de permiso — el guard es un contrato del módulo, no una acción de usuario (misma regla que `reads`, ADR-0069 §1 regla 2)."
+          },
+          "enabled_setting": {
+            "type": "string",
+            "description": "La columna booleana en esa fila de settings que ARMA el guard. `false` o ausente → el guard está dormido (un hub que no ha activado la caja vende como siempre)."
+          },
+          "route_setting": {
+            "type": "string",
+            "description": "La columna cuyo valor es la RUTA protegida (`/m/sales`). El dispatcher saca de ahí el módulo al que aplica el guard; el shell pinta `component` en vez de montar el módulo en esa ruta."
+          },
+          "guard_query": {
+            "type": "string",
+            "description": "Query (del módulo que declara el guard) cuyas filas deciden si la precondición se cumple. Mismo contexto de sistema que `settings_query`."
+          },
+          "expect": {
+            "type": "string",
+            "enum": ["non_empty"],
+            "description": "Qué debe devolver `guard_query` para que la precondición se cumpla. Hoy solo `non_empty` (hay al menos una sesión abierta)."
+          },
+          "component": {
+            "type": "string",
+            "description": "Web Component del shell a renderizar EN VEZ del módulo protegido mientras la precondición no se cumpla (p. ej. `erp-cashregister-open`). Lo transporta el snapshot del manifest, no lo ejecuta el runtime."
+          },
+          "resume_on": {
+            "type": "string",
+            "description": "Evento que el shell escucha para RE-MONTAR el módulo protegido sin recarga manual (p. ej. `cash_register.session_opened`). Lo transporta el shell, no lo consume el runtime."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "listSpec": {
+      "type": "object",
+      "description": "Marca la query como paginada/lista. Cuando está presente, el runtime envuelve el SELECT base como subconsulta y compone: búsqueda global (LIKE sobre `search`), filtro por columna (`filters`), orden por whitelist (`sort`, interpolado y anti-inyección) y LIMIT/OFFSET; devuelve `{rows,total,limit,offset}` en `data` (ARQUITECTURA.md §4, §8.2). El SQL base NO debe llevar su propio ORDER BY/LIMIT ni `;` final.",
+      "additionalProperties": false,
+      "properties": {
+        "search": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Columnas (de la proyección base) sobre las que aplica el buscador global con LIKE."
+        },
+        "sort": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Whitelist de columnas ordenables. SOLO estas se interpolan en ORDER BY (anti-inyección); cualquier `sort` recibido fuera de la lista cae al `default_sort`."
+        },
+        "default_sort": {
+          "type": "string",
+          "description": "Columna de orden por defecto (debe estar en `sort`)."
+        },
+        "default_dir": {
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ],
+          "default": "asc"
+        },
+        "filters": {
+          "type": "object",
+          "description": "Filtros por columna. Clave = columna de la proyección base; valor = operador. El runtime los bindea con centinela IS NULL (filtro ausente = sin filtrar).",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "eq",
+                  "like",
+                  "range"
+                ],
+                "description": "eq: igualdad (`:f_col`). like: subcadena (`:f_col`). range: rango por `:f_col_from`/`:f_col_to` (números o fechas ISO)."
+              }
+            }
+          }
+        },
+        "page_size": {
+          "type": "integer",
+          "default": 50,
+          "description": "Tamaño de página por defecto si el llamador no envía `limit`."
+        }
+      }
+    },
+    "widget": {
+      "type": "object",
+      "description": "Un widget de dashboard (ADR-0054). Metadatos (título/icono/categoría/tamaño/permiso) + diferenciación por tipo de negocio (`sectors`+`default`) + EXACTAMENTE UNA vía de render: declarativa (`kind`+`query`+`map`/`options`/`params`) o escape hatch (`component`). El shell construye el `WidgetDef` de `ok-widget-board` y, en la vía `kind`, ejecuta la `query` real (cero mocks) y aplica `options`+`map` sobre el componente OutfitKit del `kind`.",
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "Título mostrado en el board y el selector. OBLIGATORIO."
+        },
+        "icon": {
+          "type": "string",
+          "description": "Nombre de icono ionicons para el selector (p. ej. `trending-up-outline`)."
+        },
+        "category": {
+          "type": "string",
+          "description": "Grupo en el selector (p. ej. `Ventas`, `Inventario`)."
+        },
+        "size": {
+          "type": "string",
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ],
+          "default": "md",
+          "description": "Tamaño en la rejilla de 12 columnas: sm=3, md=6, lg=8."
+        },
+        "permission": {
+          "type": "string",
+          "description": "Permiso para VER el widget (se filtra en cliente para mostrar/ocultar; la `query` lo revalida server-side)."
+        },
+        "sectors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "hosteleria",
+              "retail",
+              "gestoria",
+              "rrhh",
+              "general"
+            ]
+          },
+          "description": "Tipos de negocio a los que aplica el widget. Ausente/vacío = todos. Alimenta el preset `Recomendado` derivado del sector del hub."
+        },
+        "default": {
+          "type": "boolean",
+          "default": false,
+          "description": "Sugerido ACTIVO en el preset `Recomendado` cuando el sector del hub coincide con `sectors` (o `sectors` está ausente)."
+        },
+        "refresh_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Refresco EN VIVO (ADR-0054 T1): nombres de eventos de dominio (p. ej. `sale.completed`) cuya emisión debe re-ejecutar la `query` de este widget. El shell se suscribe al canal push ya existente (Outbox→broadcast, SDK `subscribe`) y re-consulta con debounce; un refresco fallido cae a estado muted (nunca dato viejo como fresco). Ausente/vacío = el widget se monta UNA sola vez (comportamiento por defecto)."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "kpi",
+            "stat",
+            "sparkline",
+            "bar-list",
+            "timeline",
+            "chart"
+          ],
+          "description": "Vía DECLARATIVA: tipo de render → componente OutfitKit que construye el shell. Mutuamente excluyente con `component`. Si está presente, `query` es obligatoria."
+        },
+        "query": {
+          "type": "string",
+          "description": "Query YA declarada del módulo que alimenta el widget (vía declarativa). Nombre completo namespaced."
+        },
+        "params": {
+          "type": "object",
+          "description": "Params estáticos pasados a la `query` (opcional)."
+        },
+        "map": {
+          "type": "object",
+          "description": "Mapeo `propWidget → nombreColumna` del resultado de la query. Props válidas según el `kind` (ver `architecture/hub/dashboard/widgets.md`)."
+        },
+        "options": {
+          "type": "object",
+          "description": "Props LITERALES estáticas del componente (label, icon, format, currency, …). El shell parte de `options` y sobreescribe con lo resuelto por `map`."
+        },
+        "component": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*-[a-z0-9-]+$",
+          "description": "Escape hatch: custom element del propio módulo (de su `ui.entry`). Mutuamente excluyente con `kind`. El shell lo carga con la maquinaria de `provides_slots`/`module-loader` y el WC consulta sus datos vía el cliente del Hub."
+        }
+      },
+      "oneOf": [
+        {
+          "title": "Vía declarativa (kind + query)",
+          "required": [
+            "kind",
+            "query"
+          ],
+          "not": {
+            "required": [
+              "component"
+            ]
+          }
+        },
+        {
+          "title": "Escape hatch (component)",
+          "required": [
+            "component"
+          ],
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "kind"
+                ]
+              },
+              {
+                "required": [
+                  "query"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "slotProvision": {
+      "type": "object",
+      "description": "Un slot de UI cross-módulo que el módulo rellena (ADR-0043). Declara QUÉ Web Component monta en un slot namespaced que expone la pantalla de OTRO módulo.",
+      "required": [
+        "slot",
+        "component"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "slot": {
+          "type": "string",
+          "description": "Nombre namespaced del slot del host que se rellena (p. ej. `sales.pos.order_context`, `shell.topbar:<modulo>.<pantalla>`). Contrato por nombre — lo expone la pantalla del host en su código, no su manifest."
+        },
+        "component": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*-[a-z0-9-]+$",
+          "description": "Nombre del custom element (Web Component) del PROPIO módulo (de su `ui.entry`) que se monta en el slot."
+        },
+        "permission": {
+          "type": "string",
+          "description": "Permiso para que el shell muestre el filler (show/hide en cliente; la seguridad real la revalida el runtime al ejecutar queries/commands)."
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Orden cuando varios módulos rellenan el mismo slot (MENOR = primero, ascendente)."
+        },
+        "tab_label": {
+          "type": "string",
+          "description": "Etiqueta de la pestaña cuando el host agrega varios fillers en un modal de pestañas (ADR-0043 B, p. ej. `sales.pos.assign` → 'Mesa' / 'Cliente'). El host la lee vía `loadSlot`; se ignora en slots de montaje directo."
+        },
+        "tab_icon": {
+          "type": "string",
+          "description": "Nombre del icono (Iconify/ionicons) de la pestaña, junto a `tab_label`. Opcional."
+        }
+      }
+    },
+    "aiTool": {
+      "type": "object",
+      "description": "Expone esta operación (query/command) al asistente de IA como tool. permission, schema (input) y sql se HEREDAN de la operación — no se redeclaran aquí; solo la descripción legible. Una operación sin bloque `ai` no se expone a la IA (sigue disponible para la UI). ARQUITECTURA.md §9.2.",
+      "required": [
+        "description"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Qué hace la operación, en lenguaje natural, para que el LLM sepa cuándo invocarla. SIEMPRE en INGLÉS (texto canónico orientado al LLM; el usuario nunca lo ve — la IA responde en el idioma del usuario vía el locale del system prompt, no traduciendo esto)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Nombre opcional que ve el LLM (por defecto = el nombre de la operación, p. ej. inventory.products.list)."
+        }
+      }
+    },
+    "scheduledTask": {
+      "type": "object",
+      "description": "Una tarea programada del módulo (ADR-0011). El runtime la vuelca a `_scheduled_tasks` al instalar (idempotente, clave = módulo + `name`) y ejecuta su `command` al vencer el `cron`, sin usuario.",
+      "required": [
+        "name",
+        "command",
+        "cron"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Nombre único de la tarea DENTRO del módulo (clave de idempotencia junto al module_id)."
+        },
+        "command": {
+          "type": "string",
+          "description": "Command a ejecutar al vencer el cron. Debe ser del PROPIO módulo (mismo aislamiento que el handler WASM); se ejecuta sin usuario (contexto de sistema)."
+        },
+        "cron": {
+          "type": "string",
+          "description": "Expresión cron de 5 campos `min hora dom mes dow` (p. ej. `*/5 * * * *`) o atajo `@hourly`/`@daily`/`@weekly`/`@monthly`/`@yearly`. Por campo: `*`, un valor, un rango `a-b`, una lista `a,b`, un paso `*/N` o `a-b/N`; mes y día de semana admiten nombres (`JAN`…`DEC`, `SUN`…`SAT`). **Se interpreta SIEMPRE en UTC**, no en la zona del negocio (hub#731): el cron de una tarea de módulo lo escribe el programador en el manifest, meses antes de saber dónde vive el hub. El reloj del negocio es cosa de los triggers `cron` de un flujo. Una expresión que el hub no sabe ejecutar hace que la tarea **no se programe** (se avisa por log), en vez de quedar vencida en cada tick."
+        },
+        "payload": {
+          "type": "object",
+          "description": "Payload fijo que recibe el command en cada ejecución (opcional)."
+        },
+        "catch_up": {
+          "type": "string",
+          "enum": [
+            "collapse",
+            "skip"
+          ],
+          "default": "collapse",
+          "description": "Comportamiento tras un apagado: `collapse` ejecuta UNA sola vez el backlog vencido al arrancar; `skip` no ejecuta nada vencido durante el apagado y solo reprograma."
+        }
+      }
+    }
+  }
+}

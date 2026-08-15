@@ -72,10 +72,30 @@ export function collectHandlerSources(handlerDir, out = []) {
   return out;
 }
 
+/**
+ * `Cargo.lock` is NOT evidence of what the binary contains (module-toolkit#31).
+ *
+ * Two reasons, and either one is enough. It is at once an INPUT of this hash and an OUTPUT of
+ * cargo, so any build rewrites a file the gate is hashing. And its contents are not the module's:
+ * the handler resolves the guest-sdk BY PATH into the local hub checkout, so two authors on
+ * different checkouts produce different locks for the same source — `erplora-guest-sdk 0.0.0` →
+ * `1.0.0` the day hub#515 bumped the hub workspace. What it cost, measured: ERPlora/inventory#46
+ * went red on `stamp-sources` with the binary matching its own hash and the Tier-2 logic
+ * materially unchanged (the rebuilt wasm differed by ONE byte) — a merge blocked by metadata.
+ *
+ * The reproducibility of the handler is a real problem and this does not solve it; it is the
+ * published guest-sdk that does (module-toolkit#32). What this does is stop a file nobody edited
+ * from speaking for the binary.
+ */
+const CARGO_LOCK = 'Cargo.lock';
+
+const isCargoLock = (handlerDir, path) => relative(handlerDir, path) === CARGO_LOCK;
+
 /** Newest source of the handler crate: `{ path, mtimeMs }` (`path: null` when there is none). */
 function newestHandlerSource(handlerDir) {
   let newest = { path: null, mtimeMs: 0 };
   for (const path of collectHandlerSources(handlerDir)) {
+    if (isCargoLock(handlerDir, path)) continue; // see CARGO_LOCK: cargo touches it, the author does not
     const { mtimeMs } = statSync(path);
     if (mtimeMs > newest.mtimeMs) newest = { path, mtimeMs };
   }
@@ -85,10 +105,15 @@ function newestHandlerSource(handlerDir) {
 /** Sidecar `erplora build` writes next to the binary; the authoritative freshness evidence. */
 export const WASM_STAMP_FILE = 'dist/handler.build.json';
 
-/** sha256 of the handler crate: relative paths + contents, order-independent. */
-export function hashHandlerSources(handlerDir) {
+/**
+ * sha256 of the handler crate: relative paths + contents, order-independent. `Cargo.lock` is left
+ * out (see `CARGO_LOCK`); `includeLock` reproduces the LEGACY hash, the one the stamps written
+ * before module-toolkit#31 carry.
+ */
+export function hashHandlerSources(handlerDir, { includeLock = false } = {}) {
   const hash = createHash('sha256');
   for (const path of collectHandlerSources(handlerDir).sort()) {
+    if (!includeLock && isCargoLock(handlerDir, path)) continue;
     hash.update(relative(handlerDir, path)).update('\0').update(readFileSync(path)).update('\0');
   }
   return hash.digest('hex');
@@ -185,7 +210,14 @@ function wasmState(dir, file) {
   // 1) The stamp: direct evidence, and the only layer a rebuild can always clear.
   const stamp = readStamp(dir, file);
   if (stamp) {
-    const sourcesMatch = stamp.sources_sha256 === hashHandlerSources(handlerDir);
+    // Either hash counts. The 21 modules with a handler carry a stamp written by the LEGACY one
+    // (lock included), and rejecting them all at once would turn the publish gate red across the
+    // catalog for a change of ours — with no way to update an installed module (ADR-0269). Each
+    // module gains the immunity to the lock with its next build; until then it keeps validating
+    // exactly as it did. Accepting both never hides a source edit: that changes both hashes.
+    const sourcesMatch =
+      stamp.sources_sha256 === hashHandlerSources(handlerDir) ||
+      stamp.sources_sha256 === hashHandlerSources(handlerDir, { includeLock: true });
     const wasmMatches = stamp.wasm_sha256 === createHash('sha256').update(readFileSync(wasmPath)).digest('hex');
     if (sourcesMatch && wasmMatches) return { state: 'fresh', reason: 'stamp', file, wasmPath };
     return { state: 'stale', reason: sourcesMatch ? 'stamp-wasm' : 'stamp-sources', file, wasmPath };

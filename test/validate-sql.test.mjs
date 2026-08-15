@@ -302,6 +302,48 @@ test('PASA: JOIN a tabla propia con prefijo correcto', () => {
   assert.equal(scopeWarns(sql, 'sales').length, 0);
 });
 
+// ── module-toolkit#36: un bind `:from` NO es una cláusula FROM ───────────────────────────
+// `\bFROM\b` casa DENTRO de `:from` porque `:` no es carácter de palabra, así que el escáner
+// leía el token siguiente como nombre de tabla y avisaba de una «tabla `AND`» que no existe.
+// No es rebuscado: `from` es el nombre del campo del payload del evento del core
+// `hub.whatsapp.message_received`, y un listener recibe el payload verbatim — el módulo NO
+// puede renombrarlo. Un aviso que miente sobre su causa se aprende a ignorar, y entonces el
+// aviso de verdad (un cruce de tablas real) cae en el mismo montón.
+for (const word of ['from', 'join', 'into', 'update', 'table']) {
+  test(`PASA: el bind \`:${word}\` no se lee como cláusula SQL (module-toolkit#36)`, () => {
+    const sql = `SELECT id FROM wa_conversation c WHERE c.wa_contact_id = :${word} AND c.is_deleted = 0`;
+    const found = lintSql(sql, '<sql>', { moduleId: 'wa' });
+    assert.deepEqual(
+      found.map((f) => f.kind),
+      [],
+      `el bind :${word} no genera ningún finding`,
+    );
+  });
+}
+
+test('FALLA igual: `::NUMERIC` es un CAST, no un bind — el tipo no portable se sigue viendo', () => {
+  // La contrapartida del enmascarado: `::` abre un cast de Postgres. Tratarlo como parámetro se
+  // comería el nombre del tipo y la regla que existe para cazarlo dejaría de verlo. Un arreglo
+  // que apaga otra puerta no es un arreglo, así que el caso va escrito: sin la excepción de `::`
+  // este CHECK pasa en verde.
+  const e = errors('CREATE TABLE demo_t (qty INTEGER, CHECK ((qty)::NUMERIC > 0))');
+  assert.deepEqual(
+    e.map((f) => f.kind),
+    ['tipo no portable `NUMERIC`'],
+    'el tipo del cast dentro del bloque de columnas sigue siendo error',
+  );
+});
+
+test('el caso real de whatsapp_inbox: `= :from AND …` no inventa una tabla `AND`', () => {
+  // Reproducción literal del aviso reportado en la issue.
+  const sql = [
+    'SELECT c.id FROM whatsapp_inbox_conversation c',
+    'WHERE c.wa_contact_id = :from AND c.is_deleted = 0 LIMIT 1',
+  ].join('\n');
+  const w = scopeWarns(sql, 'whatsapp_inbox');
+  assert.deepEqual(w, [], 'ni tabla `AND` ni ningún otro fantasma');
+});
+
 test('PASA: sin moduleId, la regla solo aplica la allowlist de tablas protegidas', () => {
   // lintSql suelto (sin ctx) no puede juzgar el prefijo, pero sí defiende el core.
   assert.equal(scopeErrs('SELECT * FROM sales_order', undefined).length, 0, 'sin ctx no juzga prefijo');

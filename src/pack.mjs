@@ -117,10 +117,12 @@ export async function publish(moduleDir) {
   console.log(`publish ${manifest.id} v${manifest.version} — NO automatizado por seguridad.
 
 El alta en el marketplace es una acción autenticada contra el Cloud Portal (no la hace el toolkit
-sin confirmación). Flujo (ver memoria 'Cloud module catalog reset + publish flow'):
+sin confirmación). Flujo:
 
   1. erplora pack ${manifest.id}        ${lock ? `(hecho: sha256 ${lock.sha256.slice(0, 12)}…)` : '(pendiente)'}
-  2. Subir el zip a S3 inmutable:  s3://erplora-storage/cloud/modules/${manifest.id}/v${manifest.version}.zip
+  2. Subir el zip al Object Storage, en ruta INMUTABLE create-only:
+     modules/${manifest.id}/v${manifest.version}.zip
+     Reescribir una versión ya subida rompe el SHA256 de los clientes ya desplegados.
   3. Registrar/actualizar en Cloud vía API REST (repos/import o bulk), como vendor del módulo.
      El Cloud valida entitlement, guarda versión + SHA256 y publica si procede.
 
