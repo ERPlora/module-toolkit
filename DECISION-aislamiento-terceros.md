@@ -1,8 +1,11 @@
 # Aislamiento de terceros — el toolkit NO debe exponer el core del Hub
 
 > **Estado: DECISIÓN parcial tomada (2026-06-28) + arquitectura objetivo documentada para "cuando
-> lleguemos allí".** No implementar todavía. El diseño del core / API pública del SDK es columna del
-> humano. Cuando se ejecute, llevar el ADR a `architecture/` + decision-log.
+> lleguemos allí".** No implementar todavía: el gate es la **apertura del marketplace a terceros**,
+> que es una decisión de producto de Ioan y no está en el camino del MVP. Cuando se ejecute, el
+> diseño del core / API pública del SDK se decide como cualquier otro trabajo técnico —código
+> existente + TDD, documentándolo en vez de pidiéndolo (ERPlora/pm#43)— y el ADR va a
+> `architecture/` + decision-log.
 
 ## Requisito de negocio
 
