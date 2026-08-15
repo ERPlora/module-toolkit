@@ -7,6 +7,11 @@
   "bin": {
     "erplora": "bin/erplora.mjs"
   },
+  "files": [
+    "bin",
+    "src",
+    "schemas"
+  ],
   "scripts": {
     "test": "node --test",
     "sync-schema": "cp ../hub/schemas/module.schema.json schemas/module.schema.json",
