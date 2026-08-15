@@ -330,6 +330,70 @@ test('detecta eventos desconocidos (listen y on) — APLAZADOS en fase 1, no err
   assert.equal(deferred.filter((d) => /compleated|destroyed/.test(d)).length, 2, 'pero queda constancia de los dos');
 });
 
+// ── module-toolkit#35: el universo de eventos son las DOS fuentes del manifest ───────────────
+// `commands[].emit` es lo que emite el dispatcher declarativo; `events.emits` es EL CATÁLOGO
+// COMPLETO, incluidos los que devuelve el handler WASM y que no salen de ningún command. Tras
+// hub#709 el catálogo pasó de 11 eventos declarados a 179, y 32 de ellos —`sale.completed`,
+// `order.fired`, los 9 de `kitchen`— viven SOLO en `events.emits`. Mirando una sola fuente, el
+// validador seguía aplazando como «nadie lo declara» justo los eventos más importantes del hub.
+test('el universo de eventos incluye `events.emits`, no solo `commands[].emit` (#35)', () => {
+  const { ws, alpha, beta } = fakeWorkspace();
+  const alphaManifest = JSON.parse(readFileSync(join(alpha, 'module.json'), 'utf8'));
+  // Un evento que emite el handler WASM: declarado en el catálogo, ausente de todo command.
+  alphaManifest.events = { emits: ['alpha.batch.settled'] };
+  writeFileSync(join(alpha, 'module.json'), JSON.stringify(alphaManifest));
+
+  write(beta, 'ui/components/x.ts', `erplora().on('alpha.batch.settled', cb);`);
+  const manifest = readManifest(beta);
+  const { errors, deferred } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(deferred, [], 'lo declara su emisor: no hay nada que aplazar');
+});
+
+test('las dos fuentes se SUMAN: `commands[].emit` sigue contando (#35)', () => {
+  // El cambio amplía lo que el validador conoce; nada de lo que antes pasaba puede volverse
+  // desconocido, o el gate recién desplegado en los 25 repos empieza a mentir por el otro lado.
+  const { ws, beta } = fakeWorkspace();
+  write(beta, 'ui/components/x.ts', `erplora().on('alpha.item.created', cb);`);
+  const manifest = readManifest(beta);
+  const { deferred } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.deepEqual(deferred, [], 'el evento sigue saliendo de commands[].emit');
+});
+
+// ── module-toolkit#37: escuchar un evento del CORE no es un typo ─────────────────────────────
+// `hub.` es el namespace RESERVADO del core (ADR-0192): esos eventos los escribe el runtime en
+// `_event_outbox` y no salen de ningún manifest, así que resolverlos contra lo que emiten los
+// módulos del workspace es preguntarle a la fuente equivocada. El aviso decía «typo o emisión
+// dinámica» de algo que es el patrón recomendado (hub#659/#664), y la fase 3 de ADR-0127 lo
+// volvería un ERROR: el gate rechazaría a todo módulo que reaccione a lo que entra por WhatsApp.
+test('escuchar un evento del CORE (`hub.*`) no se aplaza como typo (#37)', () => {
+  const { ws, beta } = fakeWorkspace();
+  const manifest = readManifest(beta);
+  manifest.events.listen['hub.whatsapp.message_received'] = { command: 'beta.things.create' };
+  const { errors, deferred } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.deepEqual(errors, [], 'el core no es una dependencia declarable');
+  assert.deepEqual(deferred, [], 'ni un aplazado: el namespace del core siempre está');
+});
+
+test('`on()` sobre un evento del CORE tampoco se aplaza (#37)', () => {
+  const { ws, beta } = fakeWorkspace();
+  write(beta, 'ui/components/x.ts', `erplora().on('hub.whatsapp.message_received', cb);`);
+  const manifest = readManifest(beta);
+  const { errors, deferred } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(deferred, []);
+});
+
+test('un evento de MÓDULO que nadie declara se sigue aplazando (#37 no abre la mano)', () => {
+  // El carve-out es del namespace del core, no de los eventos en general: la puerta que cazaba
+  // los typos de los módulos tiene que seguir cazándolos.
+  const { ws, beta } = fakeWorkspace();
+  write(beta, 'ui/components/x.ts', `erplora().on('alpha.item.compleated', cb);`);
+  const manifest = readManifest(beta);
+  const { deferred } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.equal(deferred.length, 1, 'el typo de un evento de módulo sigue quedando por escrito');
+});
+
 test('loadSlot lleva el prefijo del PROPIO módulo (el host define sus puntos de extensión)', () => {
   const errs = validateBeta(`await erplora().loadSlot('alpha.detail.actions');`);
   assert.equal(errs.length, 1);

@@ -131,6 +131,28 @@ function maskLiteralsAndComments(sql) {
       }
       continue;
     }
+    // Cast de Postgres `::tipo`. Va ANTES del caso del bind: `qty::NUMERIC` no es un parámetro,
+    // y enmascararlo escondería el nombre del tipo a la regla que existe para cazarlo.
+    if (c === ':' && c2 === ':') {
+      i += 2;
+      continue;
+    }
+    // Parámetro con nombre `:name` (module-toolkit#36). Es un HUECO, no SQL analizable: las
+    // reglas anclan con `\b`, y `:` no es carácter de palabra, así que `\bFROM\b` casaba DENTRO
+    // de `:from` y el token siguiente se reportaba como nombre de tabla («tabla `AND`»). Mismo
+    // criterio que literales y comentarios: lo que no es SQL analizable no llega a las reglas.
+    // Le pasa a los cinco nombres que abren cláusula, y `from` no es rebuscado — es un campo del
+    // payload del evento del core `hub.whatsapp.message_received`, que un listener recibe
+    // verbatim y por tanto NO puede renombrar.
+    if (c === ':' && c2 !== undefined && /[A-Za-z_]/.test(c2)) {
+      blank(i); // los dos puntos
+      i++;
+      while (i < n && /[A-Za-z0-9_]/.test(chars[i])) {
+        blank(i);
+        i++;
+      }
+      continue;
+    }
     // Literal de cadena '...'  (con '' como comilla escapada interna)
     if (c === "'") {
       blank(i); // la comilla de apertura
