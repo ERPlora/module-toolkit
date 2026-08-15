@@ -25,7 +25,7 @@ aporta las dependencias y la configuración de build.
 | `erplora g view\|command\|query <id> <n>` | ✅ | Añade piezas dentro de un módulo existente. |
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
 | `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe) **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
-| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). |
+| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un canal de `host.notify` sin transporte y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*). |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
 | `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
 | `erplora publish <id\|dir>` | 📋 guía | Imprime el flujo de publicación al marketplace (no automatizado: auth + confirmación). |
@@ -104,6 +104,33 @@ regla léxica plausible puede ver.
   tipo JSON del caller). Medido sobre los 24 módulos: **0 errores, 6 warnings**.
 - Un fallo **estructural** (columna ambigua, tabla propia inexistente, sintaxis) es error aunque
   haya binds sin declarar: ningún caller puede arreglarlo.
+
+## Dos guardas del contrato del runtime (hub#689 y hub#459)
+
+Las dos comparten la misma forma: el runtime **ya** se niega en su sitio, pero se niega delante de
+un cliente. `validate` (y por tanto `pack`/`publish`) mueve el descubrimiento al único momento en
+que aún es barato.
+
+**Canales de `host.notify` sin transporte — ERROR** (`src/validate-notify-channels.mjs`, hub#689).
+ADR-0012 anuncia `email`/`sms`/`whatsapp` y el schema los admite, pero el SaaS solo hace de proxy de
+email y whatsapp (ADR-0283 §5) y el hub no guarda credencial de SMS propia: `Channel::Sms` devuelve
+error en el envío. Un manifest que declare `sms` —en `capabilities.notify.channels` o en el bloque
+`notify` legacy— se rechaza. La lista es **positiva** (`SUPPORTED_NOTIFY_CHANNELS`): el día que haya
+transporte de SMS se mueve una entrada, y un canal inventado (`telegram`) cae por el mismo camino.
+Es error y no aviso porque hoy no lo declara ningún módulo publicado: no rompe a nadie.
+
+**El techo de permisos de un handler — WARNING** (`src/validate-handler-permissions.mjs`, hub#459
+paso 3). `commands::validate_operation` resuelve una op de handler a SQL sin mirar el permiso del
+command destino, así que un command de cajero puede alcanzar por handler el SQL de uno de encargado
+sin que nadie pida el PIN. El gate de verdad va en el runtime y es una migración de catálogo; aquí
+solo se **avisa**, para que el autor realinee su módulo antes de que el gate exista. Se parte de la
+función que el manifest enruta, se recorre el grafo de llamadas local del `handler/` y se comparan
+los permisos de los commands que ese camino nombra literalmente, rol a rol (`role_permissions`).
+
+> Medido sobre los 25 módulos del workspace: **3 cruces reales** (los tres en `appointments`, hacia
+> `_insert_history`). El barrido a mano de hub#459 contaba 84 porque comparaba el fuente ENTERO del
+> handler contra cada command con handler; repetido así aquí da 80 — los otros 77 son caminos que
+> ese command no recorre. La reachability por función es lo que separa una cosa de la otra.
 
 ## El gate de CI de los repos de módulo (ERPlora/pm#107)
 

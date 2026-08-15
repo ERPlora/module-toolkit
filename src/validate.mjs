@@ -11,6 +11,8 @@ import { checkContracts } from './contracts.mjs';
 import { checkPgCompat } from './validate-pg.mjs';
 import { checkPrepare } from './validate-prepare.mjs';
 import { checkWasmArtifact } from './wasm.mjs';
+import { checkNotifyChannels } from './validate-notify-channels.mjs';
+import { checkHandlerPermissionCeiling } from './validate-handler-permissions.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -86,6 +88,9 @@ export async function validate(moduleDir, { pg = false } = {}) {
   }
   // ADR-0259 D6 (hub#555): el régimen fiscal que el módulo dice implementar.
   errs.push(...checkFiscalRegime(manifest));
+  // hub#689: un canal de `host.notify` sin transporte se publica hoy tal cual y muere en el primer
+  // envío real. La puerta barata es esta, no la producción.
+  errs.push(...checkNotifyChannels(manifest));
   // La clasificación/pricing a nivel raíz queda obsoleta: va dentro de `marketplace`/`billing`.
   for (const moved of ['sectors', 'business_types', 'functional_unit', 'pricing']) {
     if (moved in manifest) errs.push(`'${moved}' a nivel raíz: muévelo a 'marketplace'/'billing' (ADR-0007)`);
@@ -160,6 +165,17 @@ export async function validate(moduleDir, { pg = false } = {}) {
   if (contracts.errors.length) {
     throw new Error('contratos de interoperabilidad rotos (ADR-0127):\n  - ' + contracts.errors.join('\n  - '));
   }
+
+  // hub#459 (paso 3): AVISO, nunca error. `commands::validate_operation` resuelve una op de handler
+  // a SQL sin mirar el permiso del command destino, así que el permiso de un command con handler NO
+  // es hoy el techo de lo que su cadena de ops toca — y con la elevación por PIN viva (hub#361) eso
+  // es una puerta trasera al «nivel encargado» abierta desde el manifest. El gate de verdad (la
+  // comprobación dentro de `validate_operation`) rompe 84 cruces en 12 módulos publicados: es una
+  // migración de catálogo. Mientras llega, el autor ve el cruce aquí y realinea módulo a módulo.
+  // Va ANTES de las comprobaciones del binario a propósito: solo mira manifest + source, y un aviso
+  // que solo llega cuando el `dist/handler.wasm` ya está al día no acompaña a quien está editando.
+  const ceiling = checkHandlerPermissionCeiling(dir, manifest);
+  for (const w of ceiling.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
 
   // module-toolkit#26: the BINARY about to be packed must match both the source and the manifest.
   // Two cheap checks (no `cargo`, which is why they run BEFORE the verification build below): that
