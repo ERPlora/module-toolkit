@@ -7,7 +7,10 @@
 //   2. the manifest schema (`schemas/module.schema.json`), carried VENDORED — byte for byte —
 //      because the gate of the 25 module repos runs with no checkout of the hub,
 //   3. the severity policy for unknown manifest keys (`manifest.rs::refuses_unknown_fields` and
-//      `RETIRED_FIELDS`), so the author's door and the install door say the same thing.
+//      `RETIRED_FIELDS`), so the author's door and the install door say the same thing,
+//   4. the capabilities of the core's reserved `hub.` namespace
+//      (`hub_users.rs::CORE_QUERIES`), which the contract gate rejects a module for consuming
+//      when it does not know them.
 //
 // None of them was out of sync the day this was written, and that is exactly when the alarm goes
 // on: whoever adds the twelfth bridge function in Rust has no way of learning there is a second
@@ -25,6 +28,7 @@ import { join, dirname } from 'node:path';
 import { BRIDGE_FUNCTIONS } from '../src/validate-sql.mjs';
 import { VENDORED_MANIFEST_SCHEMA_PATH } from '../src/manifest-schema.mjs';
 import { REFUSED_PATHS, RETIRED_FIELDS } from '../src/validate-manifest-keys.mjs';
+import { CORE_OPERATIONS } from '../src/contracts.mjs';
 
 const TOOLKIT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** The hub checkout, when it sits alongside (or wherever `ERPLORA_HUB_DIR` says). */
@@ -84,5 +88,27 @@ test('the vendored schema is byte for byte the hub one (#40)', (t) => {
     readFileSync(VENDORED_MANIFEST_SCHEMA_PATH, 'utf8'),
     readFileSync(canonical, 'utf8'),
     'schemas/module.schema.json moved on in the hub — resync it with `npm run sync-schema`',
+  );
+});
+
+/** The runtime's `CORE_QUERIES` → the fully-qualified names, in order. */
+function coreQueriesOfTheRuntime(rust) {
+  const block = /const CORE_QUERIES:\s*&\[&str\]\s*=\s*\n?\s*&\[([\s\S]*?)\]\s*;/.exec(rust);
+  assert.ok(block, 'CORE_QUERIES is no longer declared like this in hub_users.rs — update the reader');
+  return [...block[1].matchAll(/"([^"]+)"/g)].map((m) => `hub.${m[1]}`);
+}
+
+test('the core capabilities the gate accepts are EXACTLY the runtime\'s (#297)', (t) => {
+  // The fourth hand-copied mirror, and the one that had already drifted the day this alarm went on:
+  // `hub.setup.status` and `hub.approvals.list` had been live in the runtime for weeks while the
+  // gate still called them typos. This is the expensive direction of the drift — the module that
+  // consumes a real core query is told it does not exist, and the author has no way of learning
+  // that the list of capabilities has a second home.
+  const rs = join(HUB, 'crates', 'runtime', 'src', 'hub_users.rs');
+  if (!existsSync(rs)) return t.skip('ERPlora/hub is not in this checkout');
+  assert.deepEqual(
+    CORE_OPERATIONS.queries,
+    coreQueriesOfTheRuntime(readFileSync(rs, 'utf8')),
+    'the runtime gained or lost a core query — mirror it in CORE_OPERATIONS (src/contracts.mjs)',
   );
 });

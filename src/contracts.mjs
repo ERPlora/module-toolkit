@@ -236,10 +236,25 @@ export function loadUniverse(modulesDir) {
  *
  * La lista es el espejo de `CORE_QUERIES` en `hub/crates/runtime/src/hub_users.rs`. Si el runtime
  * gana una capacidad de core nueva, se añade aquí — si no, el gate la rechaza como typo.
+ *
+ * ⚠️ **Copiada a mano, y ya se había desincronizado** (hub#297): `setup.status` y `approvals.list`
+ * llevaban semanas vivas en el runtime mientras este gate las seguía llamando typo. Es la dirección
+ * cara de la deriva — al módulo que consume una query real del core se le dice que no existe—, y
+ * quien añade la query en Rust no tiene forma de enterarse de que hay un segundo sitio. Desde
+ * hub#297 hay alarma: `test/canonical-mirrors.test.mjs` lee `CORE_QUERIES` del checkout del hub y
+ * exige que esta lista sea exactamente esa (se salta sola cuando el hub no está al lado, que es el
+ * caso del runner del gate).
  */
 const CORE_NAMESPACE = 'hub';
-const CORE_OPERATIONS = {
-  queries: ['hub.users.list', 'hub.roles.list'],
+export const CORE_OPERATIONS = {
+  queries: [
+    'hub.users.list',
+    'hub.roles.list',
+    'hub.setup.status',
+    'hub.approvals.list',
+    // hub#297 — el techo de la simplificada como DATO: el core RESPONDE, el TPV DECIDE.
+    'hub.fiscal.limits',
+  ],
   commands: [],
 };
 
