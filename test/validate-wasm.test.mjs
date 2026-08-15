@@ -10,7 +10,7 @@
 // (build of inventory/sales, which have a real handler/).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkWasmHandler } from '../src/validate.mjs';
@@ -97,4 +97,54 @@ test('a path dependency that DOES exist is not mistaken for a missing checkout',
   const r = checkWasmHandler(dir, manifest, { runCargo: false });
   assert.notEqual(r.unverified, true, 'the dependency is right there: nothing to complain about');
   assert.deepEqual(r.warnings, []);
+});
+
+// ── module-toolkit#31: a `validate` must not leave the module's Cargo.lock rewritten ─────────
+// `validate` only READS, and yet it was mutating a versioned file: the verification build resolves
+// the guest-sdk BY PATH into the LOCAL hub checkout, so cargo rewrites `handler/Cargo.lock` with
+// whatever version that checkout carries (`erplora-guest-sdk 0.0.0` → `1.0.0` after hub#515). The
+// lock then slips into a `git add -A`, nobody reads it in review, and — because it is also hashed
+// as a handler source — it invalidates `dist/handler.build.json` and turns the publish gate RED on
+// a change of metadata (ERPlora/inventory#46, run 31595026396).
+
+test('the verification build leaves handler/Cargo.lock exactly as it found it (#31)', () => {
+  const { dir, manifest } = mod(
+    {
+      'commands/create.sql': 'INSERT INTO t (x) VALUES (1);',
+      'handler/Cargo.toml': '[package]\nname = "m-handler"\nversion = "0.1.0"\nedition = "2021"\n',
+      'handler/src/lib.rs': 'pub fn create() {}\n',
+      'handler/Cargo.lock': 'version = 4\n\n[[package]]\nname = "erplora-guest-sdk"\nversion = "0.0.0"\n',
+    },
+    wasmManifest,
+  );
+  const lock = join(dir, 'handler', 'Cargo.lock');
+  const before = readFileSync(lock, 'utf8');
+  // A cargo that succeeds and, like the real one, rewrites the lock with the local hub's version.
+  const runCargo = () => {
+    writeFileSync(lock, before.replace('0.0.0', '1.0.0'));
+    return { status: 0, stdout: '', stderr: '' };
+  };
+
+  const r = checkWasmHandler(dir, manifest, { runCargo });
+  assert.equal(r.checked, true, 'it did compile: the check still runs');
+  assert.equal(readFileSync(lock, 'utf8'), before, 'and the versioned file comes back untouched');
+});
+
+test('a module with no lock does not get one invented for it (#31)', () => {
+  const { dir, manifest } = mod(
+    {
+      'commands/create.sql': 'INSERT INTO t (x) VALUES (1);',
+      'handler/Cargo.toml': '[package]\nname = "m-handler"\nversion = "0.1.0"\nedition = "2021"\n',
+      'handler/src/lib.rs': 'pub fn create() {}\n',
+    },
+    wasmManifest,
+  );
+  const lock = join(dir, 'handler', 'Cargo.lock');
+  const runCargo = () => {
+    writeFileSync(lock, 'version = 4\n'); // cargo creates it on the first build
+    return { status: 0, stdout: '', stderr: '' };
+  };
+
+  checkWasmHandler(dir, manifest, { runCargo });
+  assert.equal(existsSync(lock), false, 'what did not exist before validate does not exist after');
 });

@@ -7,7 +7,7 @@
 // bloque nuevo del contrato se conoce en cuanto se sincroniza el schema. Lo que sigue escrito aquí
 // son las reglas de FORMATO y de negocio que el schema no expresa (códigos de taxonomía, enums de
 // billing, bloques movidos de sitio por el ADR-0007).
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { validateSql } from './validate-sql.mjs';
@@ -306,13 +306,25 @@ export function checkWasmHandler(dir, manifest, { runCargo = true } = {}) {
   }
   if (!runCargo) return out;
 
-  // Reusa el target compartido del workspace si existe; si no, uno del propio módulo.
+  // module-toolkit#31: `validate` COMPRUEBA, no modifica. Pero la verificación de aquí abajo es un
+  // `cargo build`, y cargo reescribe `handler/Cargo.lock` con lo que resuelva el checkout LOCAL del
+  // hub (el guest-sdk entra por RUTA): `erplora-guest-sdk 0.0.0` → `1.0.0` tras hub#515. Ese lock
+  // se cuela luego en un `git add -A` que nadie lee en review, y encima pone ROJO el gate de
+  // publicación — el lock es también fuente hasheada del handler, así que invalida
+  // `dist/handler.build.json` (ERPlora/inventory#46). Así que se guarda antes y se restaura después:
+  // lo que valida no deja rastro.
+  const lockPath = join(handlerDir, 'Cargo.lock');
+  const lockBefore = existsSync(lockPath) ? readFileSync(lockPath) : null;
+
   let cargoOk = false;
   try {
     // `cargo build` sin features de guest: compila el crate como rlib (los tests unitarios hacen
     // lo mismo). Compila el source y sus dependencias; cualquier error de compilación salta aquí.
     const args = ['build', '--manifest-path', cargoToml, '--quiet'];
-    const res = spawnSync('cargo', args, { encoding: 'utf8', timeout: 300000 });
+    const res =
+      typeof runCargo === 'function'
+        ? runCargo(args, { cwd: handlerDir })
+        : spawnSync('cargo', args, { encoding: 'utf8', timeout: 300000 });
     if (res.status === 0) {
       cargoOk = true;
     } else {
@@ -325,10 +337,21 @@ export function checkWasmHandler(dir, manifest, { runCargo = true } = {}) {
         'El dist no se ha verificado contra el source. (module-toolkit#135)',
     );
     return out;
+  } finally {
+    restoreCargoLock(lockPath, lockBefore);
   }
 
   out.checked = cargoOk;
   return out;
+}
+
+/** Devuelve `handler/Cargo.lock` a como estaba (o lo borra si no existía). module-toolkit#31. */
+function restoreCargoLock(lockPath, before) {
+  if (before === null) {
+    if (existsSync(lockPath)) rmSync(lockPath, { force: true });
+    return;
+  }
+  if (!existsSync(lockPath) || !readFileSync(lockPath).equals(before)) writeFileSync(lockPath, before);
 }
 
 /**
