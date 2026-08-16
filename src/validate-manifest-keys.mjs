@@ -122,13 +122,46 @@ export function checkManifestKeys(manifest, schema = loadManifestSchema()) {
   return { errors, warnings };
 }
 
+// A string the schema constrains (`pattern`, `maxLength`, `minLength`) is judged HERE, against the
+// schema — never against a regex copied into this file, which is the drift #30/#40 removed.
+//
+// Why it is an error and not a warning: these shapes are the ones the RUNTIME enforces. It refuses
+// a `static_files.folder` that walks out of `media/modules/` at install time
+// (`module_static_files.rs`), so a manifest that passes here and fails there does not fail on the
+// author's machine — it fails on a customer's hub, after publishing.
+function checkScalar(value, node, displayPath, ctx) {
+  if (typeof value !== 'string') return;
+  for (const v of variants(node, ctx.root)) {
+    if (v.type !== 'string') continue;
+    if (v.pattern && !new RegExp(v.pattern).test(value)) {
+      ctx.errors.push(
+        `${displayPath}: valor inválido \`${value}\` — el contrato exige \`${v.pattern}\`. ` +
+          'El runtime aplica esta misma forma, así que un manifest que pase aquí y no allí ' +
+          'falla en el hub de un cliente, no en tu máquina.',
+      );
+      return;
+    }
+    if (v.maxLength !== undefined && value.length > v.maxLength) {
+      ctx.errors.push(`${displayPath}: \`${value}\` supera el máximo de ${v.maxLength} caracteres del contrato.`);
+      return;
+    }
+    if (v.minLength !== undefined && value.length < v.minLength) {
+      ctx.errors.push(`${displayPath}: \`${value}\` no llega al mínimo de ${v.minLength} caracteres del contrato.`);
+      return;
+    }
+  }
+}
+
 function walk(value, node, contractPath, displayPath, ctx) {
   if (value === null || typeof value !== 'object') return;
 
   if (Array.isArray(value)) {
     const items = variants(node, ctx.root).find((v) => v.items)?.items;
     if (!items) return;
-    value.forEach((item, i) => walk(item, items, `${contractPath}[]`, `${displayPath}[${i}]`, ctx));
+    value.forEach((item, i) => {
+      checkScalar(item, items, `${displayPath}[${i}]`, ctx);
+      walk(item, items, `${contractPath}[]`, `${displayPath}[${i}]`, ctx);
+    });
     return;
   }
 
@@ -158,6 +191,7 @@ function walk(value, node, contractPath, displayPath, ctx) {
 
   for (const [k, sub] of Object.entries(value)) {
     if (known.has(k)) {
+      checkScalar(sub, known.get(k), joinDisplay(displayPath, k), ctx);
       walk(sub, known.get(k), contractPath ? `${contractPath}.${k}` : k, joinDisplay(displayPath, k), ctx);
       continue;
     }
