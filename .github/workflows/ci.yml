@@ -75,21 +75,24 @@ jobs:
           ln -sfn "$deps/node_modules/typescript" node_modules/typescript
 
       - name: Start the scratch Postgres
+        env:
+          # One container per job, never a shared name (module-toolkit#43): `ci-runner-1` runs two
+          # jobs at once and keeps Docker state between them, so a fixed name meant one job's
+          # `docker rm -f` killed the other's Postgres. Only OUR name is ever removed.
+          PG_CONTAINER: erplora-test-pg-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          # `docker rm -f` FIRST. A hosted job gets a fresh VM; a self-hosted one does not, so the
-          # SECOND run would die on "the container name is already in use" — and a container that
-          # survived would drag the previous run's databases into this one.
-          docker rm -f erplora-test-pg-5433 >/dev/null 2>&1 || true
-          docker run -d --name erplora-test-pg-5433 -e POSTGRES_PASSWORD=postgres postgres:18
+          docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
+          docker run -d --name "$PG_CONTAINER" -e POSTGRES_PASSWORD=postgres postgres:18
+          echo "ERPLORA_TEST_PG_CONTAINER=$PG_CONTAINER" >> "$GITHUB_ENV"
           for _ in $(seq 1 60); do
-            if docker exec erplora-test-pg-5433 pg_isready -U postgres >/dev/null 2>&1; then
-              echo "→ postgres ready"
+            if docker exec "$PG_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
+              echo "→ postgres ready in $PG_CONTAINER"
               exit 0
             fi
             sleep 1
           done
-          echo "::error::the scratch Postgres never became ready"
+          echo "::error::the scratch Postgres ($PG_CONTAINER) never became ready"
           exit 1
 
       # The PREPARE suites SKIP themselves when there is no container; the step above is what makes
@@ -104,8 +107,9 @@ jobs:
           test/canonical-mirrors.test.mjs
 
       # Nobody tidies up after a job on a self-hosted runner: without this, a Postgres stays holding
-      # memory on the machine until the next run reclaims the name. Best-effort on purpose — the
-      # `docker rm -f` before `docker run` is what actually guarantees a clean start.
+      # memory on the machine. Only OUR container — never the other slot's. Best-effort on purpose.
       - name: Stop the scratch Postgres
         if: always()
-        run: docker rm -f erplora-test-pg-5433 >/dev/null 2>&1 || true
+        env:
+          PG_CONTAINER: erplora-test-pg-${{ github.run_id }}-${{ github.run_attempt }}
+        run: docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true

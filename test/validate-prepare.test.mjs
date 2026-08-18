@@ -282,6 +282,89 @@ test('without Docker it SKIPS and says so — it never passes in false', async (
   assert.match(out.reason, /erplora-container-that-does-not-exist/);
 });
 
+// module-toolkit#43. On `ci-runner-1` with two slots, the OTHER job's `docker rm -f` killed the
+// scratch Postgres between `createdb` and the migrations. psql then died with the connection loss
+// on stderr — no `ERROR:` line, only the `\warn` marker — and the gate reported "la migración
+// (desconocida) no aplica en Postgres: ###erplora-0" against `kitchen`, whose SQL was fine. An
+// infrastructure failure MUST come out as "nothing was verified", never as a module defect.
+//
+// The exec seam is faked here on purpose: the race cannot be reproduced deterministically with a
+// real container, and what is under test is the CLASSIFICATION of psql's exit, not Docker.
+function fakeDockerThatDiesAt(step, stderr) {
+  return async (cmd, args) => {
+    const sub = args.includes('pg_isready') ? 'pg_isready'
+      : args.includes('createdb') ? 'createdb'
+      : args.includes('dropdb') ? 'dropdb'
+      : 'psql';
+    if (sub === step) return { code: 1, stdout: '', stderr };
+    return { code: 0, stdout: '', stderr: '' };
+  };
+}
+
+test('#43: the container dying under the migrations is reported as INFRA, not as a broken migration', async () => {
+  const { dir, manifest } = mod({
+    'migrations/postgres/001.sql': 'CREATE TABLE demo_t (id TEXT PRIMARY KEY);',
+    'queries/q.sql': 'SELECT id FROM demo_t;',
+  }, {
+    id: 'demo',
+    migrations: { postgres: ['migrations/postgres/001.sql'] },
+    queries: { 'demo.q': { sql: 'queries/q.sql' } },
+  });
+  // Exactly what psql leaves on stderr when the server goes away mid-script: the marker, then the
+  // connection loss. Not one line starts with `ERROR:`.
+  const stderr =
+    '###erplora-0\n' +
+    'server closed the connection unexpectedly\n' +
+    '\tThis probably means the server terminated abnormally\n' +
+    '\tbefore or while processing the request.\n' +
+    'connection to server was lost\n';
+  const out = await checkPrepare(dir, manifest, {
+    container: 'erplora-test-pg-run-1',
+    exec: fakeDockerThatDiesAt('psql', stderr),
+  });
+  assert.equal(out.skipped, true, 'nothing was verified');
+  assert.equal(out.errors.length, 0, 'no error is pinned on the module');
+  assert.doesNotMatch(out.reason ?? '', /migraci/);
+  assert.doesNotMatch(out.reason ?? '', /###erplora/);
+  assert.match(out.reason, /erplora-test-pg-run-1/);
+  assert.match(out.reason, /server closed the connection unexpectedly/);
+});
+
+test('#43: the container dying under the PREPAREs is reported as INFRA too', async () => {
+  const { dir, manifest } = mod({
+    'queries/q.sql': 'SELECT 1;',
+  }, { id: 'demo', queries: { 'demo.q': { sql: 'queries/q.sql' } } });
+  const stderr = 'Error response from daemon: No such container: erplora-test-pg-run-1\n';
+  const out = await checkPrepare(dir, manifest, {
+    container: 'erplora-test-pg-run-1',
+    exec: fakeDockerThatDiesAt('psql', stderr),
+  });
+  assert.equal(out.skipped, true);
+  assert.equal(out.errors.length, 0);
+  assert.equal(out.prepared, 0, 'a dead session must not count as prepared statements');
+  assert.match(out.reason, /No such container/);
+});
+
+test('#43: a REAL migration error still comes out as the module\'s error, with the file named', async () => {
+  const { dir, manifest } = mod({
+    'migrations/postgres/001.sql': 'CREATE TABLE demo_t (id TEXT PRIMARY KEY);',
+    'queries/q.sql': 'SELECT id FROM demo_t;',
+  }, {
+    id: 'demo',
+    migrations: { postgres: ['migrations/postgres/001.sql'] },
+    queries: { 'demo.q': { sql: 'queries/q.sql' } },
+  });
+  const stderr = '###erplora-0\nERROR:  syntax error at or near "TABEL"\nLINE 1: CREATE TABEL demo_t\n';
+  const out = await checkPrepare(dir, manifest, {
+    container: 'erplora-test-pg-run-1',
+    exec: fakeDockerThatDiesAt('psql', stderr),
+  });
+  assert.equal(out.skipped, false);
+  assert.equal(out.errors.length, 1);
+  assert.match(out.errors[0], /001\.sql/);
+  assert.match(out.errors[0], /syntax error/);
+});
+
 test('`validate --pg` FAILS when it could not check anything', async () => {
   // The flag is opt-in: whoever typed it (or wrote it into a CI job) asked for this door to be
   // opened. Printing a warning and exiting 0 would turn "nobody checked" into "green", which is the
