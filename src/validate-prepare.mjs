@@ -316,19 +316,42 @@ function run(cmd, args, input) {
 }
 
 /** Is there a reachable Postgres in the container? Never throws: "no" is a legitimate answer. */
-export async function pgAvailable(container = defaultContainer()) {
-  const r = await run('docker', ['exec', container, 'pg_isready', '-U', 'postgres']);
+export async function pgAvailable(container = defaultContainer(), exec = run) {
+  const r = await exec('docker', ['exec', container, 'pg_isready', '-U', 'postgres']);
   return r.code === 0;
 }
 
-function psql(container, db, sql, { stopOnError = true } = {}) {
+function psql(exec, container, db, sql, { stopOnError = true } = {}) {
   const args = ['exec', '-i', container, 'psql', '-U', 'postgres', '-d', db, '-q', '-X'];
   if (stopOnError) args.push('-v', 'ON_ERROR_STOP=1');
-  return run('docker', args, sql);
+  return exec('docker', args, sql);
 }
+
+const hasPgError = (stderr) => stderr.split('\n').some((l) => l.startsWith('ERROR:'));
 
 const pgError = (stderr) =>
   stderr.split('\n').filter((l) => l.startsWith('ERROR:')).join(' ').trim() || stderr.trim().split('\n')[0] || '';
+
+/**
+ * A psql session that exits non-zero WITHOUT a single `ERROR:` line did not fail on SQL: the
+ * transport died under it — the container was removed by another job (module-toolkit#43: two
+ * slots on `ci-runner-1`), the server closed the connection, Docker itself refused. Postgres
+ * never judged the module, so it must be reported as "nothing was verified", not as a defect.
+ */
+const transportFailure = (r) => r.code !== 0 && !hasPgError(r.stderr);
+
+const transportReason = (container, r) => {
+  const detail = r.stderr
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !/^###erplora-\d+$/.test(l))
+    .join(' ');
+  return (
+    `the psql session against container \`${container}\` died before Postgres judged the SQL ` +
+    '(container removed by another job, or stopped?): NOTHING was verified — this is an ' +
+    `infrastructure failure, not a module defect. Docker/psql said: ${detail || '(no output)'}`
+  );
+};
 
 // Everything goes to Postgres in ONE session per module: a `docker exec` costs about a second and a
 // module declares dozens of statements, which is the difference between a gate the 24 repos can run
@@ -381,10 +404,10 @@ function declaredStatements(dir, value) {
  * was verified (no Docker / no container) — the caller must say so out loud rather than count it as
  * a pass.
  */
-export async function checkPrepare(dir, manifest, { container = defaultContainer() } = {}) {
+export async function checkPrepare(dir, manifest, { container = defaultContainer(), exec = run } = {}) {
   const out = { skipped: false, reason: null, prepared: 0, errors: [], warnings: [], results: [] };
 
-  if (!(await pgAvailable(container))) {
+  if (!(await pgAvailable(container, exec))) {
     out.skipped = true;
     out.reason =
       `no hay un Postgres accesible en el contenedor \`${container}\` (docker ausente o contenedor parado): ` +
@@ -395,7 +418,7 @@ export async function checkPrepare(dir, manifest, { container = defaultContainer
   }
 
   const db = `erplora_validate_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
-  const created = await run('docker', ['exec', container, 'createdb', '-U', 'postgres', db]);
+  const created = await exec('docker', ['exec', container, 'createdb', '-U', 'postgres', db]);
   if (created.code !== 0) {
     out.skipped = true;
     out.reason = `no se pudo crear la BD de scratch en \`${container}\`: ${created.stderr.trim()}`;
@@ -415,7 +438,12 @@ export async function checkPrepare(dir, manifest, { container = defaultContainer
     }
     if (migrations.length) {
       const script = migrations.map((m, i) => `\\warn ${MARK(i)}\n${m.sql}\n`).join('\n');
-      const r = await psql(container, db, script);
+      const r = await psql(exec, container, db, script);
+      if (transportFailure(r)) {
+        out.skipped = true;
+        out.reason = transportReason(container, r);
+        return out;
+      }
       if (r.code !== 0) {
         const segments = segmentsByMarker(r.stderr, migrations.length);
         const failed = segments.findIndex((s) => s.includes('ERROR:'));
@@ -444,7 +472,12 @@ export async function checkPrepare(dir, manifest, { container = defaultContainer
     const script = statements
       .map((s, i) => `\\warn ${MARK(i)}\n${prepareHeader(`s${i}`, s.types)} ${stripTrailingSemicolon(s.sql)};\n`)
       .join('\n');
-    const r = await psql(container, db, script, { stopOnError: false });
+    const r = await psql(exec, container, db, script, { stopOnError: false });
+    if (transportFailure(r)) {
+      out.skipped = true;
+      out.reason = transportReason(container, r);
+      return out;
+    }
     const segments = segmentsByMarker(r.stderr, statements.length);
 
     statements.forEach(({ key, file, types, names }, i) => {
@@ -479,7 +512,7 @@ export async function checkPrepare(dir, manifest, { container = defaultContainer
       out.results.push({ key, file, ok: false, error: err });
     });
   } finally {
-    await run('docker', ['exec', container, 'dropdb', '-U', 'postgres', '--force', db]);
+    await exec('docker', ['exec', container, 'dropdb', '-U', 'postgres', '--force', db]);
   }
   return out;
 }
