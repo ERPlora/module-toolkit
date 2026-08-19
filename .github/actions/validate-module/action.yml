@@ -14,12 +14,27 @@
 # on its own, at the version this repo declares. If the validator ever grows another dependency the
 # gate dies with ERR_MODULE_NOT_FOUND, loudly; it never degrades into a green.
 #
-# WHAT IS AND IS NOT VERIFIED. Manifest, portable SQL, migrations, JSON schemas, ADR-0127
+# WHAT IS AND IS NOT VERIFIED. Manifest, portable SQL, migrations (including the two rules the
+# runtime's `migration_guard` applies on install — module-toolkit#51), JSON schemas, ADR-0127
 # contracts, bundle CSP, `dist/handler.wasm` freshness against the Rust source, and — with
-# `pg: true` — a real `PREPARE` of every declared statement against Postgres. The one thing left
-# out is compiling the handler to wasm32: the 21 modules with `handler/` depend on the hub's
-# `guest-sdk` BY RELATIVE PATH, and there is no checkout of ERPlora/hub here. The validator says so
-# out loud ("handler WASM SIN VERIFICAR"); it does not blame the module and it does not pretend.
+# `pg: true` — a real `PREPARE` of every declared statement against Postgres. Since
+# module-toolkit#50 it ALSO runs the batteries the module itself carries (`tests/*.contract.test.py`
+# and `tests/*.postgres.test.py`), auto-detected: 20 of them across `services`, `staff` and
+# `schedules` that until then nobody ran.
+#
+# Three things stay out, and they are NAMED rather than faked:
+#
+#   1. compiling the handler to wasm32 and `cargo test` of `handler/` — the 21 modules with a
+#      handler depend on the hub's `guest-sdk` BY RELATIVE PATH and there is no checkout of
+#      ERPlora/hub here; fetching one means a read token for a private repo living in 25 repos,
+#      which is a security decision, not a CI detail. The validator says it out loud
+#      ("handler WASM SIN VERIFICAR");
+#   2. the vitest component tests — the `.test.ts` files DO live in the module repo, but vitest,
+#      `happy-dom`, `@erplora/outfitkit` and `@erplora/module-sdk` are devDependencies of
+#      `modules-workspace`, and the last two are `file:` paths into sibling checkouts that do not
+#      exist on a runner;
+#   3. nothing else. A battery that skips ITSELF (every `*.postgres.test.py` exits 0 when it cannot
+#      reach Postgres) is reported as a FAILURE here, never as a pass.
 name: Validate an ERPlora module
 description: Runs `erplora validate` (manifest + SQL + contracts, optionally PREPARE against Postgres) on a module checkout.
 
@@ -120,6 +135,56 @@ runs:
         flags=()
         if [ "${{ inputs.pg }}" = "true" ]; then flags+=(--pg); fi
         node "$ERPLORA_TOOLKIT/bin/erplora.mjs" validate "${{ inputs.path }}" "${flags[@]}"
+
+    # ── The module's OWN batteries (module-toolkit#50) ───────────────────────────────────────────
+    #
+    # `services`, `staff` and `schedules` carry 20 batteries between them — contract checks and
+    # real-Postgres checks — that until now NOBODY ran: the gate stopped at `erplora validate`. They
+    # were written, they passed locally, and a change that broke one merged green.
+    #
+    # Auto-detected: a module with no `tests/*.test.py` gets these three steps as no-ops.
+    - name: Detect the module's own batteries
+      id: batteries
+      shell: bash
+      run: |
+        set -euo pipefail
+        dir="${{ inputs.path }}"
+        n=$(ls "$dir"/tests/*.contract.test.py "$dir"/tests/*.postgres.test.py 2>/dev/null | wc -l | tr -d ' ')
+        echo "count=$n" >> "$GITHUB_OUTPUT"
+        echo "→ $n battery file(s) in $dir/tests"
+
+    # Only when there is something to run: 22 of the 25 modules carry none, and neither
+    # `setup-python` nor the venv should cost them a second.
+    - uses: actions/setup-python@v5
+      if: steps.batteries.outputs.count != '0'
+      with:
+        python-version: '3.12'
+
+    - name: Python for the batteries (a venv with jsonschema)
+      if: steps.batteries.outputs.count != '0'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # `tests/schemas.contract.test.py` NEEDS `jsonschema` and REFUSES to skip without it
+        # («skipping would turn a validation test into a green light for nothing»). A venv is the
+        # deterministic way to hand it one without touching the 25 module repos and without
+        # depending on whatever the self-hosted runner happens to carry — which is nothing: it is a
+        # bare Ubuntu.
+        venv="$RUNNER_TEMP/erplora-batteries"
+        python3 -m venv "$venv"
+        "$venv/bin/pip" install --quiet --disable-pip-version-check jsonschema
+        echo "ERPLORA_PYTHON=$venv/bin/python" >> "$GITHUB_ENV"
+
+    - name: erplora test (the module's own batteries)
+      if: steps.batteries.outputs.count != '0'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # `ERPLORA_TEST_PG_CONTAINER` was exported by the Postgres step above; with `pg: false`
+        # there is none, and the Postgres batteries are reported as NOT RUN rather than as passed.
+        # That distinction is the whole point: every `*.postgres.test.py` exits 0 when it cannot
+        # reach the container, so "green" and "did not run" look identical from the outside.
+        node "$ERPLORA_TOOLKIT/bin/erplora.mjs" test "${{ inputs.path }}"
 
     # Nobody tidies up after a job on a self-hosted runner: without this a Postgres per gate run
     # would stay holding memory on the machine. Only OUR container (the one this job named), so a

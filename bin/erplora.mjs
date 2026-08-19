@@ -7,6 +7,7 @@
 //   erplora build <dir>        compila el WC a dist/<id>.esm.js
 //   erplora validate <dir> [--pg]  valida manifest + CSP del bundle + contratos (ADR-0127);
 //                              con --pg, PREPARA cada SQL contra un Postgres efímero (#32)
+//   erplora test <dir>         corre las baterías propias del módulo (contrato + Postgres)
 //   erplora contracts <dir>    (re)genera .erplora/contracts.json
 //   erplora pack|sign|publish  empaquetado/firma/publicación al marketplace (§7.4)
 //
@@ -45,6 +46,9 @@ const usage = () => {
   build <dir>                    compila el WebComponent → dist/<id>.esm.js
   validate <dir> [--pg]          valida el manifest + CSP del bundle + contratos (ADR-0127);
                                  con --pg, además PREPARA cada SQL contra un Postgres efímero
+  test <dir>                     corre las baterías propias del módulo (tests/*.contract.test.py
+                                 y tests/*.postgres.test.py; estas últimas necesitan el Postgres
+                                 de \`ERPLORA_TEST_PG_CONTAINER\`)
   contracts <dir>                (re)genera .erplora/contracts.json (superficie consumida)
   pack <dir>                     module.zip + manifest.lock + SHA256
   sign <dir>                     SHA256 + firma ed25519 (\`<zip>.sig\`, MODULE_SIGNING_KEY)
@@ -82,6 +86,39 @@ try {
       need(rest[0], 'falta la ruta del módulo');
       await validate(target(rest[0]), { pg: flags.has('--pg') });
       break;
+    case 'test': {
+      // module-toolkit#50: the batteries the module ALREADY carries. Statically imported like
+      // `validate` — it pulls nothing but node builtins, and the gate runs it on a runner where
+      // `npm install` is impossible.
+      need(rest[0], 'falta la ruta del módulo');
+      const dir = target(rest[0]);
+      const { readFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const { runBatteries } = await import('../src/run-batteries.mjs');
+      const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
+      // The container the gate started. Empty string = none, same as unset.
+      const container = process.env.ERPLORA_TEST_PG_CONTAINER || null;
+      // `tests/schemas.contract.test.py` NEEDS `jsonschema` and REFUSES to skip without it
+      // («skipping would turn a validation test into a green light for nothing»), so the gate hands
+      // over the python of a venv that has it. Choosing the interpreter is what lets it do that
+      // without touching the 25 module repos.
+      const python = process.env.ERPLORA_PYTHON || 'python3';
+      const { results, errors, notRun } = runBatteries(dir, manifest, { container, python });
+      for (const r of results.filter((x) => x.ran)) console.log(`  ✓ ${r.file}`);
+      // Never a silent pass: what did not run is named, every time.
+      for (const n of notRun) console.warn(`  ⚠ ${n}`);
+      if (errors.length) {
+        throw new Error(`baterías del módulo (module-toolkit#50):\n  - ${errors.join('\n  - ')}`);
+      }
+      const ran = results.filter((x) => x.ran).length;
+      console.log(
+        ran || notRun.length
+          ? `✓ test ${manifest.id}: ${ran} batería(s) en verde` +
+              (notRun.length ? `, ${notRun.length} sin correr` : '')
+          : `✓ test ${manifest.id}: sin baterías propias (0 baterías en tests/)`,
+      );
+      break;
+    }
     case 'contracts': {
       need(rest[0], 'falta la ruta del módulo');
       const dir = target(rest[0]);
