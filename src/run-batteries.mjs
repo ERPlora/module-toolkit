@@ -28,25 +28,121 @@
 //
 // Both are the same shape of gap as the wasm build the validator already refuses to fake, and they
 // are reported the same way: named, not silently skipped.
-import { existsSync, readdirSync } from 'node:fs';
+// 🔴 AND THE SECOND TRAP, module-toolkit#55: RECOGNISING a battery by two exact suffixes.
+// The first version of this file matched `tests/*.contract.test.py` and `tests/*.postgres.test.py`
+// and nothing else, in `tests/` and without recursion. A sweep on 2026-08-19 found **20 files in 7
+// modules** that no name matched and therefore NOBODY ran: six `.pg.test.py` in `customers`, three
+// in `reservations`, one in `pricing`, one in `tasks`, two more in `whatsapp_inbox`; four in
+// `cash_register` with no family suffix at all (`auto_close.test.py`…) that DO need Postgres; and
+// two bash batteries in `taxes`. Written, passing on the author's machine, invisible to the gate —
+// the exact hole this file was created to close, reopened by a naming convention that nothing
+// enforced. `appointments` "fixed" it by renaming its own files, which does not scale: the next
+// file born with another name is invisible again.
+//
+// So a battery is recognised by WHAT IT IS — an executable check under `tests/` — and the family
+// (does it need the Postgres container?) is decided by the name OR by the content. And anything
+// left under `tests/` that will never be executed is reported by `strayTestFiles` and FAILS the
+// gate, because a test nobody runs is worse than no test: it buys the confidence without the check.
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
-/** Suffix → kind. A battery is recognised by its name, like the module's own README says. */
-export const BATTERY_KINDS = {
-  contract: '.contract.test.py',
-  postgres: '.postgres.test.py',
-};
+/** A check is a battery if it is named like one. Both interpreters the modules actually use. */
+export const BATTERY_RE = /\.test\.(py|sh)$/;
+
+/**
+ * The name says "I need Postgres". Both spellings are in the tree and neither is going away:
+ * `.postgres.test.py` (services, staff, tables…) and `.pg.test.py` (customers, reservations,
+ * pricing, tasks, whatsapp_inbox). Renaming 20 files across 7 repos to agree on one is a change
+ * that breaks the day somebody types the other one.
+ */
+export const PG_NAME_RE = /\.(postgres|pg)\.test\.(py|sh)$/;
+
+/**
+ * The content says it even when the name does not. `cash_register/tests/auto_close.test.py` reads
+ * `CASH_REGISTER_TEST_PG_CONTAINER` and builds a scratch database from the module's migrations,
+ * with nothing in its name to show for it. Misfiled as a contract battery it would run WITHOUT a
+ * container, skip itself, and — by the rule above — be reported as a failure. Reading the file is
+ * how the classification stops depending on whoever named it.
+ */
+export const PG_CONTENT_RE = /TEST_PG_CONTAINER|erplora-test-pg/;
+
+/** Directories under `tests/` that hold no checks, only leftovers. */
+const IGNORED_DIRS = new Set(['__pycache__', 'node_modules', '.venv', 'venv', '.pytest_cache']);
+
+/** Plumbing that is legitimately not a battery and must not be reported as a stray. */
+const PLUMBING = new Set(['__init__.py', 'conftest.py']);
+
+/** Every file under `tests/`, relative to the module dir, sorted, `__pycache__` and friends out. */
+function testFiles(dir) {
+  const root = join(dir, 'tests');
+  if (!existsSync(root)) return [];
+  const out = [];
+  const walk = (abs, rel) => {
+    for (const entry of readdirSync(abs).sort()) {
+      const child = join(abs, entry);
+      if (statSync(child).isDirectory()) {
+        if (IGNORED_DIRS.has(entry) || entry.startsWith('.')) continue;
+        walk(child, `${rel}/${entry}`);
+      } else {
+        out.push(`${rel}/${entry}`);
+      }
+    }
+  };
+  walk(root, 'tests');
+  return out;
+}
+
+/** Does this battery need the Postgres container — by its name, or by what it reads? */
+function needsPostgres(dir, file) {
+  if (PG_NAME_RE.test(file)) return true;
+  try {
+    return PG_CONTENT_RE.test(readFileSync(join(dir, file), 'utf8'));
+  } catch {
+    return false;
+  }
+}
 
 /** The batteries the module carries, by kind, relative to the module dir and sorted. */
 export function discoverBatteries(dir) {
-  const testsDir = join(dir, 'tests');
-  const files = existsSync(testsDir) ? readdirSync(testsDir).sort() : [];
-  const out = {};
-  for (const [kind, suffix] of Object.entries(BATTERY_KINDS)) {
-    out[kind] = files.filter((f) => f.endsWith(suffix)).map((f) => `tests/${f}`);
+  const out = { contract: [], postgres: [] };
+  for (const file of testFiles(dir)) {
+    if (!BATTERY_RE.test(file)) continue;
+    out[needsPostgres(dir, file) ? 'postgres' : 'contract'].push(file);
   }
   return out;
+}
+
+/**
+ * Executable files under `tests/` that NOTHING will run: not a battery by name, and not imported by
+ * one either. This is the alarm that stops the relapse — widening the pattern fixes the 20 files
+ * that exist today, it does not stop the 21st from being born with a name nobody thought of.
+ *
+ * A harness is not a stray: `tests/pg_harness.py` (services, staff, schedules) never runs on its
+ * own, it runs INSIDE the battery that imports it. "Imported" is answered by looking for the name
+ * in the batteries' own source, which is how both spellings work — `import pg_harness` and the
+ * `spec_from_file_location(..., "messages_ingest.pg.test.py")` that `whatsapp_inbox` uses to borrow
+ * its sibling's helpers.
+ */
+export function strayTestFiles(dir) {
+  const files = testFiles(dir);
+  const batteries = files.filter((f) => BATTERY_RE.test(f));
+  const candidates = files.filter(
+    (f) => !BATTERY_RE.test(f) && /\.(py|sh)$/.test(f) && !PLUMBING.has(basename(f)),
+  );
+  if (!candidates.length) return [];
+  const sources = batteries.map((f) => {
+    try {
+      return readFileSync(join(dir, f), 'utf8');
+    } catch {
+      return '';
+    }
+  });
+  return candidates.filter((f) => {
+    const name = basename(f);
+    const stem = name.replace(/\.(py|sh)$/, '');
+    return !sources.some((s) => s.includes(name) || s.includes(stem));
+  });
 }
 
 /**
@@ -77,22 +173,37 @@ export function looksSkipped(output) {
  * run and are listed in `notRun`: reporting them as passed would be the exact lie this file exists
  * to prevent.
  */
-export function runBatteries(dir, manifest, { container = null, python = 'python3' } = {}) {
+export function runBatteries(dir, manifest, { container = null, python = 'python3', bash = 'bash' } = {}) {
   const results = [];
   const errors = [];
   const notRun = [];
 
   const found = discoverBatteries(dir);
   const total = Object.values(found).reduce((a, l) => a + l.length, 0);
+
+  // Before anything else, and ALSO when the module carries no battery at all: a lone invisible
+  // check sitting in `tests/` would otherwise hide behind the early return below.
+  for (const stray of strayTestFiles(dir)) {
+    errors.push(
+      `${stray}: está en \`tests/\` y NADIE lo va a ejecutar — no se llama \`*.test.py\`/` +
+        '`*.test.sh` ni lo importa ninguna batería. Un test invisible es peor que no tener test: ' +
+        'da la confianza sin hacer la comprobación. Renómbralo a `<algo>.test.py` (o ' +
+        '`<algo>.pg.test.py` si necesita Postgres), o bórralo si ya no prueba nada',
+    );
+  }
+
   if (!total) return { results, errors, notRun };
 
-  const probe = spawnSync(python, ['--version'], { encoding: 'utf8' });
-  if (probe.status !== 0) {
-    errors.push(
-      `no hay intérprete de Python (\`${python}\`): ${total} batería(s) del módulo NO se han ` +
-        'corrido. Una batería que no corre no puede salir en verde',
-    );
-    return { results, errors, notRun };
+  const needsPython = Object.values(found).flat().some((f) => f.endsWith('.py'));
+  if (needsPython) {
+    const probe = spawnSync(python, ['--version'], { encoding: 'utf8' });
+    if (probe.status !== 0) {
+      errors.push(
+        `no hay intérprete de Python (\`${python}\`): ${total} batería(s) del módulo NO se han ` +
+          'corrido. Una batería que no corre no puede salir en verde',
+      );
+      return { results, errors, notRun };
+    }
   }
 
   for (const [kind, files] of Object.entries(found)) {
@@ -108,7 +219,10 @@ export function runBatteries(dir, manifest, { container = null, python = 'python
         ...process.env,
         ...(kind === 'postgres' ? pgContainerVars(manifest.id, container) : {}),
       };
-      const r = spawnSync(python, [file], { cwd: dir, env, encoding: 'utf8' });
+      // The interpreter follows the extension, never the file's own `+x` bit: a battery committed
+      // without it (`taxes/tests/cashier_role.contract.test.py`) has to run just the same.
+      const interpreter = file.endsWith('.sh') ? bash : python;
+      const r = spawnSync(interpreter, [file], { cwd: dir, env, encoding: 'utf8' });
       const output = `${r.stdout ?? ''}${r.stderr ?? ''}`;
       const ran = r.status === 0 && !looksSkipped(output);
       results.push({ file, kind, ran, code: r.status, output });

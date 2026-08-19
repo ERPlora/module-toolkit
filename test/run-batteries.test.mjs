@@ -21,6 +21,7 @@ import {
   looksSkipped,
   pgContainerVars,
   runBatteries,
+  strayTestFiles,
 } from '../src/run-batteries.mjs';
 
 /** Is there a real python3 here? The batteries are python; nothing is faked to pretend otherwise. */
@@ -141,5 +142,141 @@ test('un módulo sin baterías no dice nada y no falla', () => {
   assert.deepEqual(errors, []);
   assert.deepEqual(results, []);
   assert.deepEqual(notRun, []);
+  m.clean();
+});
+
+// ── 🔴 module-toolkit#55: a battery is one because of WHAT IT IS, not what it is called ──────
+//
+// The two exact suffixes of #50 left 20 files across 7 modules invisible — `.pg.test.py` in
+// `customers`/`reservations`/`pricing`/`tasks`/`whatsapp_inbox`, no family suffix at all in
+// `cash_register`, and two bash batteries in `taxes`. They existed, they passed on the author's
+// machine, and a change that broke one merged green: the same hole #50 was written to close,
+// reopened by a naming convention nobody could enforce.
+
+test('discoverBatteries: `.pg.test.py` is a Postgres battery, like `.postgres.test.py`', () => {
+  const m = mod({
+    'tests/anonymize.pg.test.py': GREEN,
+    'tests/engine.postgres.test.py': GREEN,
+  });
+  assert.deepEqual(discoverBatteries(m.dir), {
+    contract: [],
+    postgres: ['tests/anonymize.pg.test.py', 'tests/engine.postgres.test.py'],
+  });
+  m.clean();
+});
+
+test('discoverBatteries: a `*.test.py` with NO family suffix is still a battery', () => {
+  const m = mod({ 'tests/blind_count.test.py': GREEN });
+  assert.deepEqual(discoverBatteries(m.dir), {
+    contract: ['tests/blind_count.test.py'],
+    postgres: [],
+  });
+  m.clean();
+});
+
+test('discoverBatteries: the CONTENT decides when the name does not say it', () => {
+  // `cash_register/tests/auto_close.test.py`: no `.pg.`/`.postgres.` anywhere in the name, and it
+  // reads `CASH_REGISTER_TEST_PG_CONTAINER`. Classified as contract it would run with no container
+  // handed over, skip itself, and — with the guarantee of #50 — be reported as a FAILURE.
+  const m = mod(
+    { 'tests/auto_close.test.py': 'import os\nCONTAINER = os.environ["DEMO_TEST_PG_CONTAINER"]\n' },
+    'demo',
+  );
+  assert.deepEqual(discoverBatteries(m.dir), {
+    contract: [],
+    postgres: ['tests/auto_close.test.py'],
+  });
+  m.clean();
+});
+
+test('discoverBatteries: bash batteries count too (`taxes` ships two)', () => {
+  const m = mod({ 'tests/natural-key.postgres.test.sh': '#!/usr/bin/env bash\nexit 0\n' });
+  assert.deepEqual(discoverBatteries(m.dir), {
+    contract: [],
+    postgres: ['tests/natural-key.postgres.test.sh'],
+  });
+  m.clean();
+});
+
+test('discoverBatteries: looks into subdirectories, and never into `__pycache__`', () => {
+  const m = mod({
+    'tests/pg/engine.postgres.test.py': GREEN,
+    'tests/__pycache__/engine.postgres.test.py': GREEN,
+  });
+  assert.deepEqual(discoverBatteries(m.dir), {
+    contract: [],
+    postgres: ['tests/pg/engine.postgres.test.py'],
+  });
+  m.clean();
+});
+
+test('PASA: una batería `.sh` se corre de verdad', () => {
+  const m = mod({ 'tests/shape.postgres.test.sh': '#!/usr/bin/env bash\necho "✓ ok"\n' });
+  const { errors, results } = runBatteries(m.dir, m.manifest, { container: 'pg-x' });
+  assert.deepEqual(errors, []);
+  assert.equal(results.filter((r) => r.ran).length, 1);
+  m.clean();
+});
+
+test('FALLA: una batería `.sh` en rojo nombra el fichero', () => {
+  const m = mod({ 'tests/shape.postgres.test.sh': '#!/usr/bin/env bash\nexit 3\n' });
+  const { errors } = runBatteries(m.dir, m.manifest, { container: 'pg-x' });
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /shape\.postgres\.test\.sh/);
+  m.clean();
+});
+
+// ── 🔴 The alarm that stops the relapse ──────────────────────────────────────────────────────
+//
+// Widening the pattern fixes today's 20 files; it does not stop the 21st from being born with a
+// name nobody thought of. So anything under `tests/` that will NOT be executed has to be said out
+// loud. A harness — a `.py` another battery imports — is not a stray: it runs inside the battery.
+
+test('strayTestFiles: a file under tests/ that nothing will ever run is reported', () => {
+  const m = mod({
+    'tests/engine.postgres.test.py': GREEN,
+    'tests/forgotten_check.py': 'import sys\nsys.exit(1)\n',
+  });
+  assert.deepEqual(strayTestFiles(m.dir), ['tests/forgotten_check.py']);
+  m.clean();
+});
+
+test('strayTestFiles: a harness imported by a battery is NOT a stray', () => {
+  const m = mod({
+    'tests/pg_harness.py': 'def connect():\n    pass\n',
+    'tests/engine.postgres.test.py': 'import pg_harness\nprint("✓")\n',
+  });
+  assert.deepEqual(strayTestFiles(m.dir), []);
+  m.clean();
+});
+
+test('strayTestFiles: `__init__.py`, `conftest.py` and `__pycache__` are plumbing, not strays', () => {
+  const m = mod({
+    'tests/engine.postgres.test.py': GREEN,
+    'tests/__init__.py': '',
+    'tests/conftest.py': '# pytest plumbing\n',
+    'tests/__pycache__/whatever.py': '# byte-compiled\n',
+  });
+  assert.deepEqual(strayTestFiles(m.dir), []);
+  m.clean();
+});
+
+test('runBatteries: a stray FAILS the gate, and says its name', () => {
+  const m = mod({
+    'tests/engine.postgres.test.py': GREEN,
+    'tests/forgotten_check.py': GREEN,
+  });
+  const { errors } = runBatteries(m.dir, m.manifest, { container: 'pg-x' });
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /forgotten_check\.py/);
+  m.clean();
+});
+
+test('runBatteries: un `tests/` con SOLO un huérfano tampoco pasa en silencio', () => {
+  // The early return for «no batteries» is exactly where a lone invisible test would hide.
+  const m = mod({ 'tests/forgotten_check.py': GREEN });
+  const { errors } = runBatteries(m.dir, m.manifest, { container: 'pg-x' });
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /forgotten_check\.py/);
   m.clean();
 });

@@ -8,6 +8,7 @@
 //   erplora validate <dir> [--pg]  valida manifest + CSP del bundle + contratos (ADR-0127);
 //                              con --pg, PREPARA cada SQL contra un Postgres efímero (#32)
 //   erplora test <dir>         corre las baterías propias del módulo (contrato + Postgres)
+//                              `--list` las enumera sin correrlas (lo que usa el gate compartido)
 //   erplora contracts <dir>    (re)genera .erplora/contracts.json
 //   erplora pack|sign|publish  empaquetado/firma/publicación al marketplace (§7.4)
 //
@@ -46,9 +47,11 @@ const usage = () => {
   build <dir>                    compila el WebComponent → dist/<id>.esm.js
   validate <dir> [--pg]          valida el manifest + CSP del bundle + contratos (ADR-0127);
                                  con --pg, además PREPARA cada SQL contra un Postgres efímero
-  test <dir>                     corre las baterías propias del módulo (tests/*.contract.test.py
-                                 y tests/*.postgres.test.py; estas últimas necesitan el Postgres
-                                 de \`ERPLORA_TEST_PG_CONTAINER\`)
+  test <dir> [--list]            corre las baterías propias del módulo (cualquier
+                                 tests/**/*.test.py|.sh; las que necesitan Postgres —por nombre
+                                 \`.pg.\`/\`.postgres.\` o porque leen el contenedor— usan el de
+                                 \`ERPLORA_TEST_PG_CONTAINER\`). Falla si en tests/ queda un
+                                 .py/.sh que nadie va a ejecutar. \`--list\` solo las enumera
   contracts <dir>                (re)genera .erplora/contracts.json (superficie consumida)
   pack <dir>                     module.zip + manifest.lock + SHA256
   sign <dir>                     SHA256 + firma ed25519 (\`<zip>.sig\`, MODULE_SIGNING_KEY)
@@ -94,7 +97,14 @@ try {
       const dir = target(rest[0]);
       const { readFileSync } = await import('node:fs');
       const { join } = await import('node:path');
-      const { runBatteries } = await import('../src/run-batteries.mjs');
+      const { discoverBatteries, runBatteries } = await import('../src/run-batteries.mjs');
+      // `--list`: what WOULD run, one path per line, and nothing else on stdout. The shared gate
+      // asks the toolkit instead of re-implementing the discovery rule in YAML — which is how the
+      // gate's own `ls` of two suffixes ended up disagreeing with the toolkit (module-toolkit#55).
+      if (flags.has('--list')) {
+        for (const f of Object.values(discoverBatteries(dir)).flat().sort()) console.log(f);
+        break;
+      }
       const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
       // The container the gate started. Empty string = none, same as unset.
       const container = process.env.ERPLORA_TEST_PG_CONTAINER || null;
