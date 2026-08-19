@@ -34,8 +34,8 @@ on:
 jobs:
   validate:
     # `erplora validate` AND, since module-toolkit#50, `erplora test` — the batteries the module
-    # itself carries (`tests/*.contract.test.py`, `tests/*.postgres.test.py`), auto-detected, so a
-    # module without them sees no change.
+    # itself carries (any `tests/**/*.test.py` or `*.test.sh` since #55), auto-detected, so a module
+    # without them sees no change.
     name: erplora validate + test
     # The organization's own runner when `CI_RUNNER_LABEL` is set, the hosted image when it is not.
     # `vars` here resolves against the CALLING repository, so a module repo picks the runner up from

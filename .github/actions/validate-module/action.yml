@@ -18,9 +18,12 @@
 # runtime's `migration_guard` applies on install — module-toolkit#51), JSON schemas, ADR-0127
 # contracts, bundle CSP, `dist/handler.wasm` freshness against the Rust source, and — with
 # `pg: true` — a real `PREPARE` of every declared statement against Postgres. Since
-# module-toolkit#50 it ALSO runs the batteries the module itself carries (`tests/*.contract.test.py`
-# and `tests/*.postgres.test.py`), auto-detected: 20 of them across `services`, `staff` and
-# `schedules` that until then nobody ran.
+# module-toolkit#50 it ALSO runs the batteries the module itself carries, auto-detected: 20 of them
+# across `services`, `staff` and `schedules` that until then nobody ran — and since #55 ANY
+# `tests/**/*.test.py|.sh`, because recognising a battery by two exact suffixes left another 20
+# files in 7 modules invisible (`customers` and three more spell it `.pg.`, `cash_register` uses no
+# family suffix at all, `taxes` writes two of its batteries in bash). A `.py`/`.sh` left in `tests/`
+# that nothing will execute FAILS the gate by name: a test nobody runs is worse than no test.
 #
 # Three things stay out, and they are NAMED rather than faked:
 #
@@ -136,26 +139,28 @@ runs:
         if [ "${{ inputs.pg }}" = "true" ]; then flags+=(--pg); fi
         node "$ERPLORA_TOOLKIT/bin/erplora.mjs" validate "${{ inputs.path }}" "${flags[@]}"
 
-    # ── The module's OWN batteries (module-toolkit#50) ───────────────────────────────────────────
+    # ── The module's OWN batteries (module-toolkit#50, widened by #55) ───────────────────────────
     #
-    # `services`, `staff` and `schedules` carry 20 batteries between them — contract checks and
-    # real-Postgres checks — that until now NOBODY ran: the gate stopped at `erplora validate`. They
-    # were written, they passed locally, and a change that broke one merged green.
+    # Modules carry batteries — contract checks and real-Postgres checks — that until #50 NOBODY
+    # ran: the gate stopped at `erplora validate`. They were written, they passed locally, and a
+    # change that broke one merged green. #55 is the same hole one layer down: the discovery only
+    # matched two exact suffixes, so 20 more files in 7 modules stayed invisible.
     #
-    # Auto-detected: a module with no `tests/*.test.py` gets these three steps as no-ops.
+    # Auto-detected: a module with no battery gets the Python setup as a no-op.
     - name: Detect the module's own batteries
       id: batteries
       shell: bash
       run: |
         set -euo pipefail
-        dir="${{ inputs.path }}"
-        # `|| true` is load-bearing: with `set -euo pipefail`, `ls` exiting 2 because NOTHING
-        # matches makes the whole substitution fail and the step die — which is the case of 22 of
-        # the 25 modules, the ones that carry no batteries at all. "Has no tests" must read as
-        # count=0, never as a red gate.
-        n=$( { ls "$dir"/tests/*.contract.test.py "$dir"/tests/*.postgres.test.py 2>/dev/null || true; } | wc -l | tr -d ' ')
+        # 🔴 module-toolkit#55: this used to be an `ls` of the two exact suffixes — a SECOND
+        # implementation of the discovery rule, written in YAML, that drifted from the toolkit's
+        # the moment somebody named a file `.pg.test.py`. It asks the toolkit now, so there is one
+        # rule and the gate cannot disagree with the command it is about to run.
+        files=$(node "$ERPLORA_TOOLKIT/bin/erplora.mjs" test "${{ inputs.path }}" --list)
+        n=$(printf '%s' "$files" | grep -c . || true)
         echo "count=$n" >> "$GITHUB_OUTPUT"
-        echo "→ $n battery file(s) in $dir/tests"
+        echo "→ $n battery file(s) in ${{ inputs.path }}/tests"
+        printf '%s\n' "$files"
 
     # Only when there is something to run: 22 of the 25 modules carry none, and neither
     # `setup-python` nor the venv should cost them a second.
@@ -179,8 +184,11 @@ runs:
         "$venv/bin/pip" install --quiet --disable-pip-version-check jsonschema
         echo "ERPLORA_PYTHON=$venv/bin/python" >> "$GITHUB_ENV"
 
+    # ALWAYS, with no `if:` — including on the modules that carry no battery at all. Without the
+    # container the Postgres batteries cost nothing (they are reported as NOT RUN, not run), and a
+    # `tests/` holding nothing but an invisible check is precisely the case a `count != 0` guard
+    # would skip: it has zero batteries by definition (module-toolkit#55).
     - name: erplora test (the module's own batteries)
-      if: steps.batteries.outputs.count != '0'
       shell: bash
       run: |
         set -euo pipefail

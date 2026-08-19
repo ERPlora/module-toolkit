@@ -55,6 +55,40 @@ test('sin contenedor, las de Postgres se declaran NO CORRIDAS (no pasan por buen
   m.clean();
 });
 
+// ── module-toolkit#55 ────────────────────────────────────────────────────────────────────────
+
+test('`--list` enumerates what WILL run, one path per line', () => {
+  // The composite action used to detect batteries with its own `ls` of the two suffixes — a second
+  // implementation of the discovery rule, in YAML, guaranteed to drift from this one. It asks the
+  // toolkit now, and this is the door it asks through.
+  const m = mod({
+    'tests/manifest.contract.test.py': 'import sys\n',
+    'tests/anonymize.pg.test.py': 'import sys\n',
+    'tests/pg_harness.py': '# imported by anonymize.pg.test.py\n',
+  });
+  const r = spawnSync(process.execPath, [BIN, 'test', m.dir, '--list'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  const lines = r.stdout.trim().split('\n').filter(Boolean).sort();
+  assert.deepEqual(lines, ['tests/anonymize.pg.test.py', 'tests/manifest.contract.test.py']);
+  m.clean();
+});
+
+test('`--list` de un módulo sin baterías no imprime nada y sale en 0', () => {
+  const m = mod({});
+  const r = spawnSync(process.execPath, [BIN, 'test', m.dir, '--list'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.equal(r.stdout.trim(), '');
+  m.clean();
+});
+
+test('un test que NADIE va a ejecutar tumba el comando', () => {
+  const m = mod({ 'tests/forgotten_check.py': 'import sys\nsys.exit(0)\n' });
+  const r = run(m.dir);
+  assert.equal(r.status, 1, 'un test invisible es peor que no tener test');
+  assert.match(r.stdout + r.stderr, /forgotten_check\.py/);
+  m.clean();
+});
+
 test('la CLI honra `ERPLORA_PYTHON` (el gate corre un venv con jsonschema)', { skip: !PYTHON && 'no hay python3' }, () => {
   // `tests/schemas.contract.test.py` de `services`, `staff` y `schedules` NECESITA `jsonschema` y
   // se NIEGA a saltarse («skipping would turn a validation test into a green light for nothing»),
