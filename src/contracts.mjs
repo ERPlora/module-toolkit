@@ -258,11 +258,23 @@ export const CORE_OPERATIONS = {
   commands: [],
 };
 
+/** Ids de un `depends_on` en cualquiera de sus dos formas (string u objeto `{ id, min_version }`). */
+export function dependencyIds(declared) {
+  const out = [];
+  for (const d of declared ?? []) {
+    if (typeof d === 'string' && d.trim()) out.push(d.trim());
+    else if (d && typeof d === 'object' && typeof d.id === 'string' && d.id.trim()) out.push(d.id.trim());
+  }
+  return out;
+}
+
 export function crossValidateFull(manifest, contracts, universe) {
   const errors = [];
   const deferred = [];
   const me = manifest.id;
-  const deps = new Set(manifest.depends_on ?? []);
+  // hub#681: `depends_on` admite string plano u objeto `{ id, min_version }` (suelo de versión).
+  // El contrato de interoperabilidad va por ID; el suelo lo valida el instalador del hub.
+  const deps = new Set(dependencyIds(manifest.depends_on));
   const missingDeps = new Set([...deps].filter((d) => !universe.has(d)));
   for (const d of missingDeps) deferred.push(`depends_on \`${d}\` no está en el workspace: su contrato se comprobará en la publicación/instalación`);
 
