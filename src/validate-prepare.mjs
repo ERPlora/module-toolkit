@@ -39,6 +39,7 @@ import { spawn } from 'node:child_process';
 import { join, isAbsolute } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { BRIDGE_FUNCTIONS } from './validate-sql.mjs';
+import { migrationFiles } from './validate-migrations.mjs';
 
 /** Container to talk to, read at CALL time so a caller (or a test) can point it elsewhere. */
 export const defaultContainer = () => process.env.ERPLORA_TEST_PG_CONTAINER || 'erplora-test-pg-5433';
@@ -428,7 +429,7 @@ export async function checkPrepare(dir, manifest, { container = defaultContainer
   try {
     // 1) The scratch schema: the module's own migrations, in order, in one session.
     const migrations = [];
-    for (const rel of manifest?.migrations?.postgres ?? []) {
+    for (const rel of migrationFiles(manifest)) {
       const sql = readRel(dir, rel);
       if (sql == null) {
         out.errors.push(`migración declarada y ausente del disco: ${rel}`);

@@ -12,6 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { validateSql } from './validate-sql.mjs';
 import { checkMigrations } from './validate-migrations.mjs';
+import { checkMigrationGuard } from './validate-migration-guard.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 import { checkContracts } from './contracts.mjs';
 import { checkPgCompat } from './validate-pg.mjs';
@@ -173,6 +174,22 @@ export async function validate(moduleDir, { pg = false } = {}) {
   for (const w of parity.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (parity.errors.length) {
     throw new Error('migraciones inconsistentes:\n  - ' + parity.errors.join('\n  - '));
+  }
+
+  // module-toolkit#51: las DOS reglas que el runtime le exige a una migración en el momento de
+  // aplicarla (`migration_guard.rs`) — la tabla es del módulo, y el SQL coincide con el `kind`
+  // declarado. Hasta ahora esta puerta no miraba NINGUNA de las dos: el 19/08 cuatro módulos
+  // publicaron en verde y el hub rechazó su migración, lo que deja el módulo sin instalar en hubs
+  // nuevos y revertido en los que ya lo tenían — y `customers` arrastró a los cuatro que dependen
+  // de él. Se comprueba aquí, antes de publicar, porque es la única defensa que NO depende de qué
+  // imagen corra cada hub: el arreglo del splitter (hub#1027) vive en `develop` y en ningún tag.
+  const guard = checkMigrationGuard(dir, manifest);
+  for (const w of guard.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (guard.errors.length) {
+    throw new Error(
+      'migraciones que el hub RECHAZARÍA al instalar (module-toolkit#51):\n  - ' +
+        guard.errors.join('\n  - '),
+    );
   }
 
   // ADR-0007 en la PUERTA DE ENTRADA: un importe declarado `number` en el schema de un comando deja

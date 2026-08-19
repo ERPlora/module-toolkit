@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
-import { checkMigrations } from '../src/validate-migrations.mjs';
+import { checkMigrations, migrationEntries } from '../src/validate-migrations.mjs';
 
 /**
  * Módulo temporal: `files` = rutas relativas a crear; `manifestExtra` = bloque(s) del manifest
@@ -134,4 +134,85 @@ test('ignora ficheros no-.sql dentro de migrations/postgres/', () => {
   assert.deepEqual(errors, []);
   assert.deepEqual(warnings, []);
   m.clean();
+});
+
+// ── La forma objeto `{ file, kind, since }` (module-toolkit#51) ──────────────────────
+//
+// El runtime la acepta desde hub#542 (`MigrationEntry::Declared`) y es la ÚNICA forma de declarar
+// un `contract` — o sea, de hacer un `DROP` legítimo. Aquí asumía strings (`join(dir, rel)`,
+// `declared.includes(rel)`), así que declararla ROMPÍA `erplora validate`: por eso ningún módulo
+// publicado la usa, y por eso en `cash_register#45` hubo que RETIRAR los `DROP` en vez de
+// declararlos. Un contrato que solo existe en el runtime no lo puede usar nadie.
+
+test('PASA: forma objeto { file, kind, since } declarada y presente en disco', () => {
+  const m = mod(['migrations/postgres/001_init.sql'], {
+    migrations: {
+      postgres: [{ file: 'migrations/postgres/001_init.sql', kind: 'contract', since: '1.2.0' }],
+    },
+  });
+  const { errors, warnings } = checkMigrations(m.dir, m.manifest);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(warnings, []);
+  m.clean();
+});
+
+test('PASA: strings y objetos MEZCLADOS en la misma lista', () => {
+  const m = mod(
+    ['migrations/postgres/001_init.sql', 'migrations/postgres/002_drop.sql'],
+    {
+      migrations: {
+        postgres: [
+          'migrations/postgres/001_init.sql',
+          { file: 'migrations/postgres/002_drop.sql', kind: 'contract' },
+        ],
+      },
+    },
+  );
+  const { errors } = checkMigrations(m.dir, m.manifest);
+  assert.deepEqual(errors, []);
+  m.clean();
+});
+
+test('FALLA: forma objeto que apunta a un fichero inexistente', () => {
+  const m = mod(['migrations/postgres/001_init.sql'], {
+    migrations: {
+      postgres: [
+        'migrations/postgres/001_init.sql',
+        { file: 'migrations/postgres/002_missing.sql', kind: 'expand' },
+      ],
+    },
+  });
+  const { errors } = checkMigrations(m.dir, m.manifest);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /002_missing\.sql/);
+  m.clean();
+});
+
+test('FALLA: entrada objeto sin `file`', () => {
+  const m = mod(['migrations/postgres/001_init.sql'], {
+    migrations: {
+      postgres: ['migrations/postgres/001_init.sql', { kind: 'contract', since: '1.0.0' }],
+    },
+  });
+  const { errors } = checkMigrations(m.dir, m.manifest);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /file/);
+  m.clean();
+});
+
+test('migrationEntries: normaliza string → { file, kind: expand }', () => {
+  assert.deepEqual(
+    migrationEntries({
+      migrations: {
+        postgres: [
+          'migrations/postgres/001_init.sql',
+          { file: 'migrations/postgres/002_drop.sql', kind: 'contract', since: '1.2.0' },
+        ],
+      },
+    }),
+    [
+      { file: 'migrations/postgres/001_init.sql', kind: 'expand', since: null },
+      { file: 'migrations/postgres/002_drop.sql', kind: 'contract', since: '1.2.0' },
+    ],
+  );
 });
