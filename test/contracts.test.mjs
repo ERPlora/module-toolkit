@@ -246,6 +246,22 @@ test('un evento DECLARADO por el emisor sí valida en verde (sin aplazamiento)',
   assert.deepEqual(deferred.filter((d) => d.includes('alpha.item.created')), []);
 });
 
+// hub#681 / saas#1535 / sales#111 — `depends_on` admite la forma objeto `{ id, min_version }` (un
+// SUELO de versión). El contrato de interoperabilidad se comprueba por ID: una dependencia declarada
+// así es tan dependencia como el string plano — si no, un módulo que declara su suelo pasaba a
+// «llamada a un módulo que no está en depends_on» y el gate lo tiraba.
+test('la forma objeto {id, min_version} de depends_on cuenta como dependencia declarada', () => {
+  const { ws, beta } = fakeWorkspace();
+  const manifestPath = join(beta, 'module.json');
+  const m = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  m.depends_on = [{ id: 'alpha', min_version: '1.2.0' }];
+  writeFileSync(manifestPath, JSON.stringify(m));
+  write(beta, 'ui/components/x.ts', `await erplora().query('alpha.items.list');`);
+  const manifest = readManifest(beta);
+  const { errors } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.deepEqual(errors, []);
+});
+
 test('caza el nombre PROPIO inexistente (typo contra uno mismo)', () => {
   const errs = validateBeta(`await erplora().query('beta.thing.list');`); // singular: no existe
   assert.equal(errs.length, 1);
