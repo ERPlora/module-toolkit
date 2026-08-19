@@ -41,3 +41,43 @@ test('FALLA: el bloque tiene que ser un objeto con las dos claves', () => {
   assert.equal(checkFiscalRegime(mod({ country: 'ES' })).length, 1);
   assert.equal(checkFiscalRegime(mod({ regime: 'verifactu' })).length, 1);
 });
+
+// ── El TECHO de la simplificada lo declara el módulo del país (ERPlora/hub#1010) ──────────────
+//
+// La v51 del core sembró `ES/verifactu → 3.000,00 €` desde una migración de sistema, dejando al
+// runtime sabiendo el número de un país concreto. Quien lo conoce es el módulo que implementa el
+// régimen —y se actualiza solo en cada arranque—, así que la ley puede moverlo sin tocar el
+// runtime ni migrar nada. El campo es OPCIONAL: no declararlo no dice «cero», dice «yo no muevo
+// ese número», y el core deja la fila vigente como estaba.
+
+test('un proveedor puede declarar el techo de su régimen, en céntimos', () => {
+  assert.deepEqual(
+    checkFiscalRegime(mod({ country: 'ES', regime: 'verifactu', simplified_invoice_max_cents: 300000 })),
+    [],
+  );
+});
+
+test('el techo, si se declara, es un entero de céntimos no negativo', () => {
+  const errs = checkFiscalRegime(
+    mod({ country: 'ES', regime: 'verifactu', simplified_invoice_max_cents: -1 }),
+  );
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /simplified_invoice_max_cents/);
+
+  const decimals = checkFiscalRegime(
+    mod({ country: 'ES', regime: 'verifactu', simplified_invoice_max_cents: 3000.5 }),
+  );
+  assert.equal(decimals.length, 1);
+  assert.match(decimals[0], /céntimos/);
+});
+
+test('un techo en EUROS es el error que hay que cazar: 3000 no son 3.000,00 €', () => {
+  // El fallo de dedo más caro posible: pasa la validación de tipo y capa el TPV a 30,00 €.
+  // No se puede distinguir con certeza… salvo por el orden de magnitud de una simplificada, que
+  // en ningún país es de dos dígitos de euro.
+  const errs = checkFiscalRegime(
+    mod({ country: 'ES', regime: 'verifactu', simplified_invoice_max_cents: 3000 }),
+  );
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /céntimos/);
+});
