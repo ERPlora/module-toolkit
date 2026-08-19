@@ -160,9 +160,27 @@ export function pgContainerVars(moduleId, container) {
   };
 }
 
-/** Does this output say the battery skipped itself instead of running? */
+/**
+ * Does this output say the battery skipped ITSELF instead of running?
+ *
+ * 🔴 Anchored at column 0, and that is the whole rule (module-toolkit#57). The batteries print two
+ * different things with the same word, and the indentation is what tells them apart — deliberately,
+ * because one is a verdict and the other is a line inside a section:
+ *
+ *   `SKIPPED: no Postgres in container …`        column 0 — the WHOLE battery skipped, nothing was
+ *                                                 verified, and it is the only thing it printed.
+ *                                                 This is the green-that-proves-nothing of #50.
+ *   `  SKIPPED: cargo metadata --locked (no …)`  indented under its `·` heading — ONE sub-check of
+ *                                                 a battery that ran and passed everything else.
+ *
+ * The first version wrote `^\s*SKIPPED:` and the `\s*` swallowed the indentation, so it read the
+ * second as the first: on any checkout without `hub/` beside the module — which is EVERY CI run —
+ * `staff` and `schedules` failed their gate on a `manifest.contract.test.py` whose last line reads
+ * «✓ manifest.contract: all checks passed». A false red costs the same as a false green in the end:
+ * it is how a gate stops being read.
+ */
 export function looksSkipped(output) {
-  return /^\s*SKIPPED:/m.test(output);
+  return /^SKIPPED:/m.test(output);
 }
 
 /**

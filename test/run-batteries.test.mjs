@@ -84,6 +84,40 @@ test('looksSkipped: reconoce el «SKIPPED» del harness', () => {
   assert.equal(looksSkipped('✓ engine.postgres: all checks passed'), false);
 });
 
+// 🔴 module-toolkit#57 — and the SECOND half of the same question: skipped WHAT?
+//
+// The batteries print two different things with the same word, and the difference is the
+// indentation, on purpose:
+//
+//   `SKIPPED: no Postgres in container …`         at column 0 — the WHOLE battery skipped itself,
+//                                                  nothing was verified. This is the lie #50 exists
+//                                                  to catch.
+//   `  SKIPPED: cargo metadata --locked (no …)`   indented under its `·` section — ONE sub-check of
+//                                                  a battery that ran and passed everything else.
+//
+// The first regex swallowed the indentation (`^\s*SKIPPED:`), so it read the second as the first.
+// Measured on a runner-shaped checkout (no `hub/` next to the module, which is EVERY CI run):
+// `staff` and `schedules` fail their gate on `manifest.contract.test.py` — a battery whose last
+// line is «✓ manifest.contract: all checks passed». A false red is not a smaller problem than a
+// false green: it is what teaches everybody to merge past this gate.
+test('looksSkipped: un sub-chequeo saltado (indentado) NO es la batería saltándose sola', () => {
+  const partial = [
+    '· the WASM build: fresh, and pinned by a lockfile',
+    '  ok: dist/handler.wasm is the binary build.json describes',
+    '  SKIPPED: cargo metadata --locked (no guest-sdk checkout at /x/hub/crates/guest-sdk)',
+    '✓ manifest.contract: all checks passed',
+  ].join('\n');
+  assert.equal(looksSkipped(partial), false);
+});
+
+test('looksSkipped: la batería que se salta ENTERA sigue detectándose (control de positivo)', () => {
+  // Exactly what `tasks/tests/insert_task.pg.test.py` prints, and its whole output.
+  assert.equal(
+    looksSkipped('SKIPPED: no Postgres in container nope (nothing was verified)\n'),
+    true,
+  );
+});
+
 test('una batería que se SALTA sola es un FALLO, no un verde', { skip: !PYTHON && 'no hay python3' }, () => {
   const m = mod({ 'tests/engine.postgres.test.py': SKIPS_ITSELF });
   const { errors } = runBatteries(m.dir, m.manifest, { container: 'pg-x' });
