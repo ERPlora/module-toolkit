@@ -149,7 +149,11 @@ runs:
       run: |
         set -euo pipefail
         dir="${{ inputs.path }}"
-        n=$(ls "$dir"/tests/*.contract.test.py "$dir"/tests/*.postgres.test.py 2>/dev/null | wc -l | tr -d ' ')
+        # `|| true` is load-bearing: with `set -euo pipefail`, `ls` exiting 2 because NOTHING
+        # matches makes the whole substitution fail and the step die — which is the case of 22 of
+        # the 25 modules, the ones that carry no batteries at all. "Has no tests" must read as
+        # count=0, never as a red gate.
+        n=$( { ls "$dir"/tests/*.contract.test.py "$dir"/tests/*.postgres.test.py 2>/dev/null || true; } | wc -l | tr -d ' ')
         echo "count=$n" >> "$GITHUB_OUTPUT"
         echo "→ $n battery file(s) in $dir/tests"
 
