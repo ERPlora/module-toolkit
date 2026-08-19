@@ -65,6 +65,27 @@ export function checkFiscalRegime(manifest) {
         'no declara nada aunque lo parezca',
     );
   }
+  // El TECHO de la simplificada (hub#1010): OPCIONAL, y en CÉNTIMOS. No declararlo no dice «cero»,
+  // dice «yo no muevo ese número»; el core deja la fila vigente como estaba.
+  const max = f.simplified_invoice_max_cents;
+  if (max !== undefined && max !== null) {
+    if (typeof max !== 'number' || !Number.isInteger(max) || max < 0) {
+      errs.push(
+        `fiscal_regime.simplified_invoice_max_cents inválido: ${JSON.stringify(max)} — se espera un ` +
+          'entero de céntimos no negativo (3.000,00 € = 300000)',
+      );
+    } else if (max > 0 && max < 100_000) {
+      // El fallo de dedo caro: escribirlo en EUROS. `3000` pasa cualquier validación de tipo y capa
+      // el TPV a 30,00 €, que es una simplificada que ningún país legisla. Un techo de verdad por
+      // debajo de 1.000,00 € no existe hoy en ningún régimen, así que la ambigüedad se resuelve
+      // avisando en vez de dejar pasar un límite que rompería la caja en silencio.
+      errs.push(
+        `fiscal_regime.simplified_invoice_max_cents = ${max}: ¿está en EUROS? El campo va en ` +
+          'céntimos (3.000,00 € = 300000), y un techo por debajo de 1.000,00 € no lo legisla ' +
+          'ningún régimen — declarado así, el TPV bloquearía ventas legítimas',
+      );
+    }
+  }
   return errs;
 }
 

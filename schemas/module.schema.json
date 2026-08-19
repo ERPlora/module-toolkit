@@ -808,8 +808,21 @@
           "type": "string",
           "minLength": 1,
           "description": "Clave del régimen (`verifactu`, `facturx`…), la misma del registro de regímenes del core."
+        },
+        "simplified_invoice_max_cents": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Techo de la factura simplificada de ESTE régimen, en CÉNTIMOS (3.000,00 € = 300000) — hub#1010. OPCIONAL: no declararlo no dice «cero», dice «yo no muevo ese número», y el core deja el valor vigente. Quien conoce el límite es el módulo del país, que se actualiza en cada arranque; así la ley puede moverlo sin tocar el runtime ni migrar nada. La fila y la query siguen siendo del core (ADR-0357): la respuesta no puede depender de que un módulo esté instalado."
         }
       }
+    },
+    "installation_bound_data": {
+      "type": "boolean",
+      "default": false,
+      "description": "Los datos de este módulo pertenecen a la INSTALACIÓN que los creó (hub#380, generaliza ADR-0202 §4.2). El import de un bundle de OTRO hub descarta la sección de este módulo diciéndolo (`installation_bound_data`); el MISMO hub restaurando su copia la recupera (ADR-0113 §1). Lo declara quien encadena registros contra el anterior bajo un identificador de instalación —VeriFactu (`NumeroInstalacion` = `hub_id`), TicketBai, NF525—: aplicados en otro hub, el siguiente registro encadenaría con uno que la autoridad fiscal nunca recibió para esa instalación. Es PORTABILIDAD, no secreto: las filas se exportan igual (un hub tiene que poder respaldarse), simplemente no aterrizan en otro sitio. Ausente = portable, que es la forma de todos los manifests publicados.",
+      "examples": [
+        true
+      ]
     },
     "scheduled_tasks": {
       "type": "array",
