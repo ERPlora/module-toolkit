@@ -1291,7 +1291,17 @@
       ],
       "additionalProperties": false,
       "properties": {
-        "description": {
+                "risk": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "destructive",
+            "bulk_destructive"
+          ],
+          "default": "normal",
+          "description": "Cuánto daño hace esta operación si la ejecuta el asistente (hub#1042). Vocabulario CERRADO, como el `reason` de ADR-0331, para que el core aplique una política SIN conocer el dominio. `destructive` = borra o anula UN registro de forma que el usuario no puede deshacer solo. `bulk_destructive` = alcanza a un CONJUNTO cuyo tamaño el usuario no ve al confirmar. Lo declara el MÓDULO y no se infiere del nombre a propósito: `delete` en un nombre no significa nada portable (`sales.void` es destructivo y no lo dice), y un core que lo adivinara decidiría por el módulo cuánto vale su propio dato. Ausente = `normal`."
+        },
+"description": {
           "type": "string",
           "description": "Qué hace la operación, en lenguaje natural, para que el LLM sepa cuándo invocarla. SIEMPRE en INGLÉS (texto canónico orientado al LLM; el usuario nunca lo ve — la IA responde en el idioma del usuario vía el locale del system prompt, no traduciendo esto)."
         },
