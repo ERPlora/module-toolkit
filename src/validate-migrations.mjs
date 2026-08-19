@@ -21,13 +21,63 @@ export const DIALECTS = ['postgres'];
 // Dialectos deprecados: sus restos generan WARNING (no ERROR) durante la transición a 0154.
 export const DEPRECATED_DIALECTS = ['sqlite'];
 
+/** El `kind` que se asume cuando la entrada es una ruta pelada — el 95% de los casos. */
+export const DEFAULT_MIGRATION_KIND = 'expand';
+
+/**
+ * Las migraciones declaradas de un dialecto, NORMALIZADAS a `{ file, kind, since }`.
+ *
+ * El runtime acepta dos formas (`MigrationEntry`, hub#542): la ruta pelada —que se lee `expand`— y
+ * la forma objeto `{ file, kind, since }`, que es la ÚNICA manera de declarar un `contract`, o sea
+ * de hacer un `DROP` legítimo. El toolkit asumía strings en todas partes (`join(dir, rel)`,
+ * `declared.includes(rel)`), así que usar la forma objeto ROMPÍA `erplora validate` — y por eso hoy
+ * ningún módulo publicado la usa: en `cash_register#45` hubo que RETIRAR los `DROP` en vez de
+ * declararlos. Un contrato que solo existe en el runtime no lo puede usar nadie.
+ *
+ * Una entrada malformada se devuelve tal cual (`file: undefined`) para que el caller la reporte:
+ * tragársela aquí la convertiría en un fichero que nadie valida.
+ */
+export function migrationEntries(manifest, dialect = 'postgres') {
+  return (manifest?.migrations?.[dialect] ?? []).map((entry) => {
+    if (typeof entry === 'string') {
+      return { file: entry, kind: DEFAULT_MIGRATION_KIND, since: null };
+    }
+    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      return {
+        file: typeof entry.file === 'string' ? entry.file : undefined,
+        kind: entry.kind ?? DEFAULT_MIGRATION_KIND,
+        since: entry.since ?? null,
+      };
+    }
+    return { file: undefined, kind: DEFAULT_MIGRATION_KIND, since: null };
+  });
+}
+
+/** Solo las rutas, para quien no necesita el `kind` (lint de SQL, PREPARE, empaquetado). */
+export function migrationFiles(manifest, dialect = 'postgres') {
+  return migrationEntries(manifest, dialect)
+    .map((e) => e.file)
+    .filter((f) => typeof f === 'string' && f);
+}
+
 /** Devuelve `{ errors, warnings }` (arrays de strings); no lanza — eso lo decide `validate`. */
 export function checkMigrations(dir, manifest) {
   const errors = [];
   const warnings = [];
 
   for (const dialect of DIALECTS) {
-    const declared = manifest.migrations?.[dialect] ?? [];
+    const entries = migrationEntries(manifest, dialect);
+    const declared = [];
+    for (const entry of entries) {
+      if (typeof entry.file !== 'string' || !entry.file) {
+        errors.push(
+          `migrations.${dialect}: entrada sin \`file\` — una migración se declara como ruta ` +
+            '("migrations/postgres/001_init.sql") o como objeto { file, kind, since }',
+        );
+        continue;
+      }
+      declared.push(entry.file);
+    }
     const dialectDir = join(dir, 'migrations', dialect);
     const disk = existsSync(dialectDir)
       ? readdirSync(dialectDir)

@@ -29,6 +29,7 @@ import { BRIDGE_FUNCTIONS } from '../src/validate-sql.mjs';
 import { VENDORED_MANIFEST_SCHEMA_PATH } from '../src/manifest-schema.mjs';
 import { REFUSED_PATHS, RETIRED_FIELDS } from '../src/validate-manifest-keys.mjs';
 import { CORE_OPERATIONS } from '../src/contracts.mjs';
+import { GRANDFATHERED } from '../src/validate-migration-guard.mjs';
 
 const TOOLKIT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** The hub checkout, when it sits alongside (or wherever `ERPLORA_HUB_DIR` says). */
@@ -110,5 +111,29 @@ test('the core capabilities the gate accepts are EXACTLY the runtime\'s (#297)',
     CORE_OPERATIONS.queries,
     coreQueriesOfTheRuntime(readFileSync(rs, 'utf8')),
     'the runtime gained or lost a core query — mirror it in CORE_OPERATIONS (src/contracts.mjs)',
+  );
+});
+
+/** The runtime's `GRANDFATHERED` → the `(module, file)` pairs, in order. */
+function grandfatheredOfTheRuntime(rust) {
+  const block = /pub const GRANDFATHERED:[\s\S]*?=\s*&\[([\s\S]*?)\n\]\s*;/.exec(rust);
+  assert.ok(block, 'GRANDFATHERED is no longer declared like this in migration_guard.rs — update the reader');
+  return [...block[1].matchAll(/\(\s*"([^"]+)",\s*"([^"]+)"\s*\)/g)].map((m) => [m[1], m[2]]);
+}
+
+test('the grandfathered migrations are EXACTLY the runtime\'s (#51)', (t) => {
+  // The fifth mirror, and the one whose divergence is the most expensive in BOTH directions. Short
+  // here and the gate turns 9 published modules red without anyone touching them; long here and the
+  // gate waves through a file the hub will refuse on install — which is the failure that cost the
+  // 19/08 (four modules published green and did not install).
+  //
+  // 🔴 And it may only SHRINK on both sides at once: "grandfather it" is not a way to keep
+  // publishing what the contract forbids.
+  const rs = join(HUB, 'crates', 'runtime', 'src', 'migration_guard.rs');
+  if (!existsSync(rs)) return t.skip('ERPlora/hub is not in this checkout');
+  assert.deepEqual(
+    GRANDFATHERED.map(([m, f]) => [m, f]),
+    grandfatheredOfTheRuntime(readFileSync(rs, 'utf8')),
+    'the runtime changed its grandfathered list — mirror it in src/validate-migration-guard.mjs',
   );
 });

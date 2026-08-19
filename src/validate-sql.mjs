@@ -15,6 +15,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join, isAbsolute } from 'node:path';
+import { migrationFiles } from './validate-migrations.mjs';
 
 // ─────────────────────────────────────────────────────────────────────────────────────────
 // SET PORTABLE — espejo del shim del runtime (hub/crates/db/src/lib.rs: `BRIDGE_FUNCTIONS` y
@@ -573,10 +574,11 @@ export function collectModuleSql(dir, manifest) {
   const entries = [];
 
   // Migraciones: { postgres: [...] } — dialecto único (ADR-0154). SQLite quedó deprecado;
-  // sus ficheros (si aún existen en transición) no se lintan.
-  const migs = manifest.migrations || {};
+  // sus ficheros (si aún existen en transición) no se lintan. Las entradas pueden venir como ruta
+  // o como `{ file, kind, since }` (module-toolkit#51): `migrationFiles` normaliza las dos, y sin
+  // eso una migración declarada `contract` se saltaba el lint entero en silencio.
   for (const dialect of ['postgres']) {
-    for (const rel of migs[dialect] || []) {
+    for (const rel of migrationFiles(manifest, dialect)) {
       const sql = readSqlFile(dir, rel);
       if (sql != null) entries.push({ sql, source: rel });
     }
