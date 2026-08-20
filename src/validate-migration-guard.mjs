@@ -151,6 +151,66 @@ export function splitStatements(sql) {
 }
 
 /**
+ * Splits the way the DEPLOYED fleet's guard splits: on every `;`, respecting string literals but
+ * NOT comments. This is `migration_guard.rs::split_statements` as it exists in `v1.1.0`…`v1.1.7`
+ * (`v1.1.8` already carries the fix — its file is byte for byte the one on `develop`).
+ */
+function legacySplitStatements(sql) {
+  const out = [];
+  let current = '';
+  let inString = false;
+  for (let i = 0; i < sql.length; i += 1) {
+    const ch = sql[i];
+    if (inString) {
+      current += ch;
+      if (ch === "'") inString = false;
+      continue;
+    }
+    if (ch === "'") {
+      inString = true;
+      current += ch;
+    } else if (ch === ';') {
+      if (current.trim()) out.push(current.trim());
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim()) out.push(current.trim());
+  return out;
+}
+
+/**
+ * The tables an older hub would think this file touches BECAUSE a `;` inside a comment cut a
+ * statement in half — and only those (#70).
+ *
+ * 🔴 THE PRECISION HERE IS THE WHOLE POINT, and the first version of this check got it wrong.
+ * Flagging every `;` inside a comment sounds right and is not: measured over the 123 migrations
+ * published by the module repos, **82** carry one and **none** of them breaks anything. Shipping
+ * that rule would have turned ~20 module repos red for a hazard they do not have — the expensive
+ * direction, the one that keeps correct modules from ever publishing.
+ *
+ * What actually breaks is narrower. The migration is EXECUTED whole (`migrations.rs`:
+ * `Plan::AsWritten => db.execute_batch(&sql)`), and Postgres understands `--` perfectly, so the
+ * `;` never breaks execution. The split is used only by the GUARD, to check table scope. So the
+ * file is rejected only when the half-statement left after the cut happens to read as a statement
+ * touching a table that is not the module's — which is exactly how `printing/002_jobs.sql` was
+ * rejected for «touching `is`», a word out of the prose «-- read); this table is …».
+ *
+ * Reported only when the CORRECT splitter does not see the same problem: what is wrong regardless
+ * of the comment is somebody else's error message, not this one's.
+ */
+export function tablesInventedByCommentSplit(moduleId, sql) {
+  const offending = (split) =>
+    split(sql)
+      .flatMap((statement) => tablesTouched(statement))
+      .filter((t) => t.startsWith('hub_') || t.startsWith('_') || !t.startsWith(`${moduleId}_`));
+
+  const correct = new Set(offending(splitStatements));
+  return [...new Set(offending(legacySplitStatements).filter((t) => !correct.has(t)))];
+}
+
+/**
  * The table names the statement touches. Deliberately SIMPLE: it recognises the shapes a migration
  * really uses and, in doubt, invents nothing — what it does not recognise does not block, because a
  * false positive here leaves a module uninstalled.
@@ -232,15 +292,32 @@ export function checkMigrationSql(moduleId, filename, sql, kind = 'expand') {
   // contract cannot be applied retroactively without breaking exactly what it protects.
   if (isGrandfathered(moduleId, filename)) return [];
 
+  const errors = [];
+  // Checked on the RAW file, before anything is split: this is not about what the SQL MEANS, it is
+  // about an older hub being unable to cut the file correctly (#70).
+  const invented = tablesInventedByCommentSplit(moduleId, sql);
+  if (invented.length) {
+    errors.push(
+      `${filename}: un \`;\` dentro de un comentario parte el fichero en dos para los hubs pineados a ` +
+        `\`v1.1.0\`…\`v1.1.7\`, y el trozo que queda se lee como una sentencia que toca ` +
+        `${invented.map((t) => `\`${t}\``).join(', ')} — que no es del módulo. Esos hubs RECHAZAN la ` +
+        'instalación entera (es como se rechazó `printing/002_jobs.sql` por «tocar `is`», una palabra ' +
+        'de la prosa). `v1.1.8` ya lo parte bien, pero un módulo publicado hoy tiene que instalarse ' +
+        'en los hubs que YA están ahí fuera. Quita el `;` del comentario (un `.` o un guion sirven).',
+    );
+  }
+
   for (const statement of splitStatements(sql)) {
     for (const table of tablesTouched(statement)) {
       if (table.startsWith('hub_') || table.startsWith('_')) {
         return [
+          ...errors,
           `${filename}: la migración toca \`${table}\`: \`hub_*\` y \`_*\` son del sistema, no de un módulo`,
         ];
       }
       if (!table.startsWith(`${moduleId}_`)) {
         return [
+          ...errors,
           `${filename}: la migración toca \`${table}\`, que no pertenece a \`${moduleId}\`. ` +
             `Una tabla de módulo empieza por \`${moduleId}_\``,
         ];
@@ -251,6 +328,7 @@ export function checkMigrationSql(moduleId, filename, sql, kind = 'expand') {
       const found = destructiveVerb(statement);
       if (found) {
         return [
+          ...errors,
           `${filename}: la migración se declara \`expand\` pero contiene \`${found}\`. ` +
             'Si es intencionado, declárala `contract` en el manifest ' +
             `(\`{ "file": "${filename}", "kind": "contract", "since": "<versión>" }\`); si no, sobra`,
@@ -260,13 +338,14 @@ export function checkMigrationSql(moduleId, filename, sql, kind = 'expand') {
       const found = ddlVerb(statement);
       if (found) {
         return [
+          ...errors,
           `${filename}: la migración se declara \`backfill\` pero contiene \`${found}\`. ` +
             'Un backfill es DML idempotente sobre tablas propias; si cambia el esquema, es un `expand`',
         ];
       }
     }
   }
-  return [];
+  return errors;
 }
 
 /**

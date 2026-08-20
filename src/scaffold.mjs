@@ -260,7 +260,9 @@ function moduleManifest(id, entity, comp) {
 
 function initMigration(id, entity, dialect) {
   return `-- ${id}: esquema inicial (${dialect}). El runtime añade hub_id + is_deleted/deleted_at +
--- created_by/updated_by/created_at/updated_at por contrato; aquí solo el dominio.
+-- created_by/updated_by/created_at/updated_at por contrato. Aquí solo el dominio.
+-- OJO: ningun punto y coma dentro de un comentario. Los hubs pineados a tags parten el
+-- fichero por ahi y rechazan el modulo ENTERO al instalar (module-toolkit#70, hub#1027).
 CREATE TABLE IF NOT EXISTS ${id}_${entity} (
   id          TEXT PRIMARY KEY,
   hub_id      TEXT NOT NULL,

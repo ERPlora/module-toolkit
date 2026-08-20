@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import {
   GRANDFATHERED,
   checkMigrationSql,
+  tablesInventedByCommentSplit,
   checkMigrationGuard,
   splitStatements,
   stripComments,
@@ -55,13 +56,31 @@ function mod(files, manifestExtra) {
 // matters most: a false positive here does not annoy anyone, it leaves a published module
 // uninstalled — which is worse than the problem this check comes to solve.
 
+// 🔴 NOTA (#70). Estos tres fixtures son copias CONGELADAS de las versiones ROTAS que se publicaron
+// el 18-19/08 — los ficheros de `origin/main` de esos módulos ya no llevan el `;` (comprobado: 0
+// líneas). Lo que vigilan sigue vigente y es lo caro: que el `;` del comentario NO haga al guard
+// inventarse una tabla (`is`, `create`) y rechazar una migración correcta.
+//
+// Lo que cambia es que ahora el fichero SÍ produce un error — el de compatibilidad — porque los
+// hubs pineados a tags lo rechazan de verdad. Así que la aserción se afina en vez de relajarse:
+// el ÚNICO error admisible es el del `;`, y ni uno solo sobre tablas. Un `deepEqual(errors, [])`
+// aquí volvería a ser un test que no prueba nada.
+/** Los errores que NO son la regla de compatibilidad del `;` en comentario (#70). */
+function errorsOtherThanSemicolonInComment(errors) {
+  return errors.filter((e) => !/dentro de un comentario/i.test(e));
+}
 test('customers/003: a `;` inside a `--` comment is prose, not the end of a statement', () => {
   const errors = guard(
     'customers',
     'migrations/postgres/003_purchase_ledger.sql',
     fixture('customers_003_purchase_ledger.sql'),
   );
-  assert.deepEqual(errors, [], 'la migración publicada es correcta: el `;` está dentro de un `--`');
+  assert.deepEqual(
+    errorsOtherThanSemicolonInComment(errors),
+    [],
+    'el `;` está dentro de un `--`: no puede generar NINGÚN error de tabla',
+  );
+  assert.equal(errors.length, 1, 'y sí el de compatibilidad (#70): la flota pineada la rechaza');
 });
 
 test('printing/002: neither a `;` nor an apostrophe inside a comment opens anything', () => {
@@ -70,7 +89,12 @@ test('printing/002: neither a `;` nor an apostrophe inside a comment opens anyth
     'migrations/postgres/002_jobs.sql',
     fixture('printing_002_jobs.sql'),
   );
-  assert.deepEqual(errors, [], 'el hub la rechazó por «toca `is`» y era prosa de un comentario');
+  assert.deepEqual(
+    errorsOtherThanSemicolonInComment(errors),
+    [],
+    'el hub la rechazó por «toca `is`» y era prosa de un comentario',
+  );
+  assert.match(errors[0], /dentro de un comentario/i, 'queda el de compatibilidad (#70)');
 });
 
 test('tables/010: two `;` inside one `--` comment do not split anything either', () => {
@@ -79,7 +103,12 @@ test('tables/010: two `;` inside one `--` comment do not split anything either',
     'migrations/postgres/010_settings.sql',
     fixture('tables_010_settings.sql'),
   );
-  assert.deepEqual(errors, [], 'el hub la rechazó por «toca `create`» y era prosa');
+  assert.deepEqual(
+    errorsOtherThanSemicolonInComment(errors),
+    [],
+    'el hub la rechazó por «toca `create`» y era prosa',
+  );
+  assert.match(errors[0], /dentro de un comentario/i, 'queda el de compatibilidad (#70)');
 });
 
 test('cash_register/006 (versión previa): un `expand` con DROP COLUMN se RECHAZA', () => {
@@ -271,4 +300,114 @@ test('checkMigrationGuard: sin migraciones no dice nada', () => {
   const m = mod({}, {});
   assert.deepEqual(checkMigrationGuard(m.dir, m.manifest), { errors: [], warnings: [] });
   m.clean();
+});
+
+// ── Un `;` dentro de un comentario: la regla es de COMPATIBILIDAD, no de sintaxis (#70) ────────
+//
+// `splitStatements` ya trata un `;` dentro de `-- …` o `/* … */` como prosa, y hace bien: es lo que
+// hace el runtime EN `develop` (`migration_guard.rs`, hub#1027). Pero los hubs de ahí fuera no
+// corren `develop`: la flota va pineada a TAGS, y `v1.1.3`…`v1.1.8` NO llevan ese arreglo. En
+// todos ellos el `;` parte la sentencia, el trozo pierde su `--`, la prosa se lee como SQL y el
+// módulo se RECHAZA ENTERO al instalar.
+//
+// Por eso esto no puede juzgarse con el runtime que nosotros tenemos delante: se juzga con el que
+// tiene el CLIENTE. Un módulo que se publica hoy tiene que instalarse en los hubs que YA están
+// desplegados, y un `;` en un comentario se lo impide en todos ellos.
+//
+// El caso que lo destapó es el peor posible: lo metía la PLANTILLA del propio generador
+// (`scaffold.mjs`), así que TODO módulo nuevo nacía sin poder instalarse, y `erplora validate`
+// daba verde y exit 0.
+test('un `;` en un comentario SOLO es error si el trozo inventa una tabla ajena (#70)', () => {
+  // La forma que rompe de verdad, y la única: el `;` corta, el trozo pierde su `--`, y lo que
+  // queda se lee como una sentencia sobre una tabla que no es del módulo. Es exactamente como el
+  // hub rechazó `printing/002_jobs.sql` por «tocar `is`» — una palabra de la prosa.
+  const sql = ['-- ojo al leer(); this table is the ledger', 'CREATE TABLE IF NOT EXISTS demo_x (id uuid);'].join('\n');
+  const errors = checkMigrationSql('demo', '001_init.sql', sql);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /dentro de un comentario/i);
+  assert.match(errors[0], /v1\.1\.7/, 'y dice a QUÉ hubs afecta');
+});
+
+test('un `;` en un comentario INOFENSIVO no bloquea a nadie (#70)', () => {
+  // 🔴 El control que evita la catástrofe cara. La primera versión de esta regla marcaba TODO `;`
+  // dentro de un comentario: 82 de las 123 migraciones publicadas lo llevan y NINGUNA rompe nada,
+  // así que habría puesto en rojo ~20 repos de módulo por un peligro que no tienen.
+  //
+  // Aquí el trozo que queda tras el corte sigue apuntando a una tabla del propio módulo, que es lo
+  // que pasa en la inmensa mayoría de los casos — la plantilla del generador incluida.
+  const sql = ['-- el runtime añade hub_id + audit por contrato; aquí solo el dominio.', 'CREATE TABLE IF NOT EXISTS demo_items (id uuid);'].join('\n');
+  assert.deepEqual(checkMigrationSql('demo', '001_init.sql', sql), []);
+});
+
+test('la regla DISCRIMINA: caza los tres rotos y nombra la tabla que cada hub inventó (#70)', () => {
+  // Control POSITIVO sobre los tres ficheros que un hub rechazó de verdad. Y no basta con que dé
+  // error: tiene que nombrar la MISMA palabra que salió en el rechazo original, o estaría acertando
+  // por casualidad.
+  const casos = [
+    ['customers', 'customers_003_purchase_ledger.sql', 'it'],
+    ['printing', 'printing_002_jobs.sql', 'is'],
+    ['tables', 'tables_010_settings.sql', 'create'],
+  ];
+  for (const [mod, file, palabra] of casos) {
+    assert.deepEqual(
+      tablesInventedByCommentSplit(mod, fixture(file)),
+      [palabra],
+      `${mod}: el hub lo rechazó por «tocar \`${palabra}\`», que era prosa de un comentario`,
+    );
+  }
+});
+
+test('control NEGATIVO: ninguna migración publicada HOY cae en la regla (#70)', () => {
+  // Los tres de arriba son copias CONGELADAS de las versiones rotas; en `origin/main` de esos
+  // repos ya no llevan el `;`. Medido el 2026-08-20 sobre las 123 migraciones publicadas por los
+  // 25 módulos: 82 llevan un `;` dentro de un comentario y NINGUNA cae en esta regla.
+  //
+  // Ese número es la razón de que la regla sea estrecha. Marcar todo `;` en comentario habría
+  // puesto en rojo ~20 repos de módulo por un peligro que no tienen — y un gate que bloquea a
+  // quien hace las cosas bien deja de ser un gate y pasa a ser un obstáculo.
+  const inofensiva = [
+    '-- el runtime añade hub_id + audit por contrato; aquí solo el dominio.',
+    'CREATE TABLE IF NOT EXISTS demo_items (id uuid PRIMARY KEY);',
+  ].join('\n');
+  assert.deepEqual(tablesInventedByCommentSplit('demo', inofensiva), []);
+  assert.deepEqual(checkMigrationSql('demo', '001_init.sql', inofensiva), []);
+});
+
+test('un comentario SIN `;` no molesta a nadie (#70)', () => {
+  const sql = ['-- items del dominio, sin nada raro', 'CREATE TABLE IF NOT EXISTS demo_b (id uuid);'].join('\n');
+  assert.deepEqual(checkMigrationSql('demo', '001_init.sql', sql), []);
+});
+
+test('un `;` dentro de un LITERAL no es un comentario: no puede dar falso positivo (#70)', () => {
+  // `'a;b'` es DATO. Confundirlo con prosa dejaría fuera migraciones perfectamente correctas, que
+  // es el error caro cuando el gate bloquea 25 repos a la vez.
+  const sql = "INSERT INTO demo_c (v) VALUES ('a;b');";
+  assert.deepEqual(checkMigrationSql('demo', '001_init.sql', sql), []);
+});
+
+test('lo que ESCRIBE el generador pasa su propia regla (#70)', async () => {
+  // El control que cierra el círculo, y se hace sobre el ARTEFACTO, no sobre un trozo del fuente
+  // sacado con una regex: la primera versión de este test recortaba el fragmento equivocado de
+  // `scaffold.mjs` y pasaba en verde con la plantilla ROTA delante. Un test que no puede fallar no
+  // vigila nada.
+  //
+  // Sin esto, arreglar la plantilla hoy no impide que alguien vuelva a meter un `;` mañana — y el
+  // castigo lo cobra el cliente, no el CI: `erplora validate` daba OK y exit 0.
+  const { generate } = await import('../src/scaffold.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'erplora-scaffold-70-'));
+  const cwd = process.cwd();
+  try {
+    process.chdir(dir);
+    await generate('module', 'probe70');
+    const sql = readFileSync(join(dir, 'probe70', 'migrations', 'postgres', '001_init.sql'), 'utf8');
+    assert.match(sql, /CREATE TABLE/, 'el generador escribió algo reconocible');
+    assert.deepEqual(
+      checkMigrationSql('probe70', '001_init.sql', sql),
+      [],
+      'el módulo recién generado no se instalaría en ningún hub de la flota',
+    );
+  } finally {
+    process.chdir(cwd);
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
