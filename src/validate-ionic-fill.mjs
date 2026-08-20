@@ -50,36 +50,37 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * controls a file has today are tolerated, one more is not. A brand-new component inherits nothing.
  *
  * 🔴 This list may only SHRINK, and a test fails the moment it grows. It is emptied by the sweep
- * (ERPlora/pm), module by module — not by adding a line here.
+ * (ERPlora/pm#152), module by module — not by adding a line here. What comes out is never a count
+ * edited down to fit: it is a module whose `ui/` declares `mode="md"` on every control, so the entry
+ * stops covering anything. Trimming a number to match a half-done fix grandfathers the broken half.
+ *
+ * WHERE THE SWEEP IS — 170 dead controls left, in 27 files across 14 modules. It started at 275 in
+ * 45 files across 22 the day the check landed.
+ *
+ *   done, and out of the list  customers · inventory · kitchen · pricing · printing · staff ·
+ *                              tasks · whatsapp_inbox   (105 controls, 18 files)
+ *   still owing, worst first   taxes 18 · invoice 16 · online_booking 16 · reservations 16 ·
+ *                              services 16 · tables 15 · cash_register 14 · schedules 14 ·
+ *                              tickets 14 · appointments 9 · payment_gateways 8 ·
+ *                              invoice_series 6 · payments 5 · cart_checkout 3
+ *
+ * `sales`, `verifactu` and `flows` were never here: their `fill` sits on `ion-button`, where it paints.
  */
 export const FILL_GRANDFATHERED = [
   // Measured on 2026-08-20 over `origin/main` of the 25 module repos — what is PUBLISHED, not what
-  // happens to be in a checkout other workers are editing. 275 dead controls in 45 files across 22
-  // modules; `sales`, `verifactu` and `flows` carry `fill` only on `ion-button`, where it is real.
+  // happens to be in a checkout other workers are editing.
   ['appointments', 'ui/components/erp-appointments-list/erp-appointments-list.ts', 9],
   ['cart_checkout', 'ui/components/erp-cart-checkout-carts/erp-cart-checkout-carts.ts', 3],
   ['cash_register', 'ui/components/erp-cashregister-dashboard/erp-cashregister-dashboard.ts', 11],
   ['cash_register', 'ui/components/erp-cashregister-open/erp-cashregister-open.ts', 3],
-  ['customers', 'ui/components/erp-customers-fields/erp-customers-fields.ts', 4],
-  ['customers', 'ui/components/erp-customers-groups/erp-customers-groups.ts', 4],
-  ['customers', 'ui/components/erp-customers-list/erp-customers-list.ts', 11],
-  ['customers', 'ui/components/erp-customers-pos-search/erp-customers-pos-search.ts', 2],
-  ['customers', 'ui/components/erp-customers-tags/erp-customers-tags.ts', 2],
-  ['inventory', 'ui/components/erp-inventory-categories/erp-inventory-categories.ts', 3],
-  ['inventory', 'ui/components/erp-inventory-products/erp-inventory-products.ts', 19],
   ['invoice', 'ui/components/erp-invoice-list/erp-invoice-list.ts', 10],
   ['invoice', 'ui/components/erp-invoice-settings/erp-invoice-settings.ts', 6],
   ['invoice_series', 'ui/components/erp-invoice-series-list/erp-invoice-series-list.ts', 6],
-  ['kitchen', 'ui/components/erp-kitchen-orders-active/erp-kitchen-orders-active.ts', 2],
-  ['kitchen', 'ui/components/erp-kitchen-orders-stations/erp-kitchen-orders-stations.ts', 8],
   ['online_booking', 'ui/components/erp-online-booking-list/erp-online-booking-list.ts', 6],
   ['online_booking', 'ui/components/erp-online-booking-settings/erp-online-booking-settings.ts', 10],
   ['payment_gateways', 'ui/components/erp-payment-gateways-gateways/erp-payment-gateways-gateways.ts', 3],
   ['payment_gateways', 'ui/components/erp-payment-gateways-transactions/erp-payment-gateways-transactions.ts', 5],
   ['payments', 'ui/components/erp-payments-list/erp-payments-list.ts', 5],
-  ['pricing', 'ui/components/erp-pricing-lists/erp-pricing-lists.ts', 4],
-  ['printing', 'ui/components/erp-printing-routing/erp-printing-routing.ts', 2],
-  ['printing', 'ui/components/erp-printing-settings/erp-printing-settings.ts', 2],
   ['reservations', 'ui/components/erp-reservations-availability/erp-reservations-availability.ts', 6],
   ['reservations', 'ui/components/erp-reservations-list/erp-reservations-list.ts', 5],
   ['reservations', 'ui/components/erp-reservations-waitlist/erp-reservations-waitlist.ts', 5],
@@ -87,20 +88,14 @@ export const FILL_GRANDFATHERED = [
   ['services', 'ui/components/erp-services-categories/erp-services-categories.ts', 3],
   ['services', 'ui/components/erp-services-list/erp-services-list.ts', 5],
   ['services', 'ui/components/erp-services-packages/erp-services-packages.ts', 8],
-  ['staff', 'ui/components/erp-staff-members/erp-staff-members.ts', 18],
-  ['staff', 'ui/components/erp-staff-roles/erp-staff-roles.ts', 3],
-  ['staff', 'ui/components/erp-staff-schedules/erp-staff-schedules.ts', 8],
   ['tables', 'ui/components/erp-tables-canvas/erp-tables-canvas.ts', 9],
   ['tables', 'ui/components/erp-tables-floor-plan/erp-tables-floor-plan.ts', 3],
   ['tables', 'ui/components/erp-tables-zones/erp-tables-zones.ts', 3],
-  ['tasks', 'ui/components/erp-tasks-list/erp-tasks-list.ts', 6],
-  ['tasks', 'ui/components/erp-tasks-projects/erp-tasks-projects.ts', 3],
   ['taxes', 'ui/components/erp-taxes-aliases/erp-taxes-aliases.ts', 3],
   ['taxes', 'ui/components/erp-taxes-categories/erp-taxes-categories.ts', 3],
   ['taxes', 'ui/components/erp-taxes-rules/erp-taxes-rules.ts', 12],
   ['tickets', 'ui/components/erp-tickets-list/erp-tickets-list.ts', 10],
   ['tickets', 'ui/components/erp-tickets-sla/erp-tickets-sla.ts', 4],
-  ['whatsapp_inbox', 'ui/components/erp-whatsapp-inbox-templates/erp-whatsapp-inbox-templates.ts', 4],
 ];
 
 /** How many dead controls `file` of `moduleId` is allowed to keep. 0 = none. */

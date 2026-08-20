@@ -151,8 +151,8 @@ La defensa ya existía **por duplicado y en los dos sitios equivocados**: el hub
 código (`apps/web/src/theme/ionic-fill-needs-md.test.ts`) y el Cloud también
 (`saas/tests/unit/test_ionic_fill_needs_md.py`, saas#1080), pero ninguna de las dos puertas mira los
 **módulos**, que es donde vive la mayor parte de los formularios que rellena el comerciante. Medido
-sobre `origin/main` de los 25 repos: **275 de 298 controles** declaran `fill` y **ninguno** declara
-`mode="md"`.
+sobre `origin/main` de los 25 repos el día que aterrizó: **275 de 298 controles** declaraban `fill`
+y **ninguno** declaraba `mode="md"`.
 
 **No es una copia del escáner del hub.** El hub lee `.vue`, donde una etiqueta acaba en el primer
 `>`. Una plantilla Lit no: `@ionChange=${(e: any) => this.patch({ id: e.target.value })}` mete `>` y
@@ -164,7 +164,13 @@ aquí pone en rojo el gate de un módulo correcto, que es peor que el bug que se
 algo que no tiene que ver con lo que cada uno estaba publicando — y un gate que bloquea todo se
 apaga, no se obedece. Así que el pase es **por fichero Y por número** (`FILL_GRANDFATHERED`): los
 controles que un fichero tiene hoy se toleran, **uno más no**, y un componente nuevo no hereda nada.
-La lista **solo puede encoger**; la vacía el barrido de ERPlora/pm, módulo a módulo.
+La lista **solo puede encoger**; la vacía el barrido de ERPlora/pm#152, módulo a módulo.
+
+De 275 controles en 45 ficheros (22 módulos) va por **170 en 27 ficheros (14 módulos)**. `customers`,
+`inventory`, `kitchen`, `pricing`, `printing`, `staff`, `tasks` y `whatsapp_inbox` están limpios y
+**fuera de la lista**: lo que se toleraba ahora es error, así que una recaída se ve. Un módulo sale
+cuando **todo** su `ui/` declara `mode="md"` — nunca bajando el número para que encaje un arreglo a
+medias, que es como se abuelaría la mitad que sigue rota.
 
 **Con alarma sobre su propia premisa.** `test/validate-ionic-fill.test.mjs` lo comprueba contra la
 dependencia (no contra una copia): el día que Ionic pinte `fill` en `ios`, falla y dice que la

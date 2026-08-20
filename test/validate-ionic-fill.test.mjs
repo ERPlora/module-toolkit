@@ -217,9 +217,12 @@ test('the pass is per FILE, not per module: a new component inherits nothing', (
 });
 
 test('the grandfathered list may only SHRINK', () => {
+  // These two ceilings are the ratchet itself, and they come DOWN with every module the sweep
+  // finishes — never up. Lowering them is the last step of a sweep PR, right after deleting the
+  // entries; a PR that adds a line has to raise them, which is what makes the addition visible.
   const total = FILL_GRANDFATHERED.reduce((n, [, , count]) => n + count, 0);
   assert.ok(
-    FILL_GRANDFATHERED.length <= 45 && total <= 275,
+    FILL_GRANDFATHERED.length <= 27 && total <= 170,
     `the list GREW (${FILL_GRANDFATHERED.length} files / ${total} controls). Nothing gets added: it is ` +
       'the sweep of ERPlora/pm that empties it, one module at a time.',
   );
@@ -229,11 +232,25 @@ test('the grandfathered list may only SHRINK', () => {
   }
 });
 
+test('a module the sweep already FIXED is out of the list, and stays out', () => {
+  // The eight of the first sweep (ERPlora/pm#152). Each one declares `mode="md"` on every control of
+  // its `ui/` at `origin/main` — verified module by module before the entries came out.
+  //
+  // Deleting the lines is only half of it: while a module keeps its allowance, a regression that
+  // brings the dead `fill` back passes the gate in silence, and the sweep would have bought nothing.
+  // Naming them here is what turns "we fixed it" into something that fails if it comes undone.
+  const swept = ['customers', 'inventory', 'kitchen', 'pricing', 'printing', 'staff', 'tasks', 'whatsapp_inbox'];
+  const listed = new Set(FILL_GRANDFATHERED.map(([id]) => id));
+  for (const id of swept) {
+    assert.ok(!listed.has(id), `${id} was swept clean: its grandfathering is a free pass for a regression now`);
+  }
+});
+
 test('the list matches what the 25 repos really ship — otherwise it guards nothing', () => {
   // The positive control of the list itself: every entry names a module that exists. A typo in an id
   // or a path is a silent free pass, which is the one failure mode grandfathering has.
   const ids = new Set(FILL_GRANDFATHERED.map(([id]) => id));
-  assert.ok(ids.size >= 20, `only ${ids.size} modules listed: the sweep that built this list missed most of them`);
+  assert.ok(ids.size >= 14, `only ${ids.size} modules listed: the sweep that built this list missed most of them`);
   for (const [, file] of FILL_GRANDFATHERED) {
     assert.match(file, /^ui\/.*\.(ts|js)$/, `a grandfathered path outside ui/: ${file}`);
   }
