@@ -15,6 +15,7 @@ import { resolve, join, extname } from 'node:path';
 import { assertCspSafe } from './validate.mjs';
 import { erploraResolvePlugin } from './resolve-plugin.mjs';
 import { generateIcons } from './icons.mjs';
+import { stampOutfitkit, OUTFITKIT_STAMP } from './outfitkit-stamp.mjs';
 import { buildWasmHandler } from './wasm.mjs';
 
 // Flags clásicos de decoradores para los `@state()/@property()` de Lit (igual que Vite).
@@ -75,6 +76,17 @@ export async function build(moduleDir, { wasm = {} } = {}) {
   console.log(`✓ icons ${id}: dist/icons.json (${icons.count} iconos)${
     icons.missing.length ? ` ⚠ sin resolver en ion:: ${icons.missing.join(', ')}` : ''}`);
 
+
+  // El SELLO de OutfitKit (ERPlora/hub#1024): con qué versión se horneó este bundle. En un hub real
+  // el shell define sus `ok-*` primero y el `define()` horneado —que está guardado— pierde en
+  // silencio, así que el módulo corre con una OutfitKit que no es la suya y nadie lo compara. El
+  // sello no arregla esa deriva: la hace visible (el shell avisa cuando descarta una copia distinta).
+  const okVersion = stampOutfitkit(dir);
+  console.log(
+    okVersion
+      ? `✓ outfitkit ${id}: dist/${OUTFITKIT_STAMP} (horneada ${okVersion})`
+      : `⚠ outfitkit ${id}: sin versión resoluble — el bundle va SIN sello y el shell no podrá avisar de una deriva`,
+  );
   return outfile;
 }
 
