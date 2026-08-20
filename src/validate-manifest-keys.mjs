@@ -150,6 +150,41 @@ function checkScalar(value, node, displayPath, ctx) {
       return;
     }
   }
+  checkClosedVocabulary(value, node, displayPath, ctx);
+}
+
+// A CLOSED vocabulary (`enum`) is a different question from a known key, and until #62 only the
+// second one was asked: a manifest carrying `ai.risk: "catastrophic"` passed this gate green and
+// the failure surfaced on INSTALL, with the module already published (ERPlora/hub#1066).
+//
+// 🔴 The risk here is the FALSE POSITIVE, not the false negative. This door blocks 25 repositories
+// at once, so an enum read too eagerly locks out manifests that were right. Two rules keep it
+// honest, and both err towards silence:
+//
+//   1. the vocabularies of EVERY branch that applies to this node are UNIONED, never evaluated one
+//      by one — the same direction `variants` already takes for keys ("it never invents an unknown
+//      that is not one");
+//   2. a branch that admits a string with NO enum switches the check off for that node entirely. If
+//      the contract leaves a free alternative, the value is not outside anything.
+function checkClosedVocabulary(value, node, displayPath, ctx) {
+  const vocabulary = new Set();
+  for (const v of variants(node, ctx.root)) {
+    if (v.type !== undefined && v.type !== 'string') continue;
+    // An unconstrained string is an escape hatch the contract itself offers.
+    if (!v.enum) {
+      if (v.type === 'string') return;
+      continue;
+    }
+    for (const allowed of v.enum) vocabulary.add(allowed);
+  }
+  if (vocabulary.size === 0 || vocabulary.has(value)) return;
+
+  ctx.errors.push(
+    `${displayPath}: valor \`${value}\` fuera del vocabulario del contrato — admite: ` +
+      `${[...vocabulary].join(', ')}. Es un vocabulario CERRADO: el runtime solo sabe atender ` +
+      'esos, así que un valor inventado no falla en tu máquina, falla al INSTALAR el módulo ' +
+      'ya publicado (hub#1066).',
+  );
 }
 
 function walk(value, node, contractPath, displayPath, ctx) {

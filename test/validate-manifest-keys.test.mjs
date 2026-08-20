@@ -59,7 +59,7 @@ test('an open map (`commands`, `queries`, `widgets`) admits ANY operation name',
   const { errors, warnings } = checkManifestKeys({
     ...base(),
     queries: { 'demo.whatever.at.all': { sql: 'q.sql' } },
-    widgets: { 'demo.widget': { title: 'X', kind: 'metric', query: 'demo.whatever.at.all' } },
+    widgets: { 'demo.widget': { title: 'X', kind: 'kpi', query: 'demo.whatever.at.all' } },
   });
   assert.deepEqual([...errors, ...warnings], [], 'the map key is the name, not a field');
 });
@@ -124,4 +124,70 @@ test('where the schema says nothing, the validator does not invent either', () =
     ],
   });
   assert.deepEqual([...errors, ...warnings], []);
+});
+
+// ── Closed vocabularies: the VALUE, not just the key (module-toolkit#62) ──────────────────────
+//
+// «La clave existe» y «el valor es uno de los que el core sabe atender» son preguntas distintas, y
+// hasta aquí solo se hacía la primera. Un manifest con `ai.risk: "catastrophic"` pasaba el gate en
+// verde y el fallo aparecía en la INSTALACIÓN, con el módulo ya publicado (ERPlora/hub#1066).
+//
+// Es el mismo argumento que ya justifica `pattern`/`maxLength` unas líneas más arriba: estas
+// formas las aplica el RUNTIME, así que un manifest que pase aquí y falle allí no falla en la
+// máquina del autor — falla en el hub de un cliente.
+//
+// 🔴 EL RIESGO DE ESTA COMPROBACIÓN ES EL FALSO POSITIVO, no el falso negativo: esta puerta bloquea
+// 25 repos a la vez, y un enum leído de más deja fuera manifests correctos. Por eso se unen los
+// vocabularios de TODAS las ramas que aplican al mismo nodo (`anyOf`/`oneOf`/`allOf`), y una rama
+// que admita una cadena SIN enum desactiva la comprobación entera para ese nodo: si el contrato
+// deja una alternativa libre, el valor no es inválido.
+test('un valor fuera del vocabulario CERRADO es un error (#62, hub#1066)', () => {
+  const { errors } = checkManifestKeys({
+    id: 'demo',
+    name: 'Demo',
+    version: '1.0.0',
+    records: { invoice: { mutable: false, reason: 'apocalyptic' } },
+  });
+  assert.equal(errors.length, 1, 'el gate tiene que verlo');
+  assert.match(errors[0], /records\.invoice\.reason/);
+  assert.match(errors[0], /apocalyptic/);
+  assert.match(errors[0], /fiscal/, 'y decir cuáles SÍ admite el contrato');
+});
+
+test('el vocabulario cerrado se aplica también dentro de una operación (#62)', () => {
+  const { errors } = checkManifestKeys({
+    id: 'demo',
+    name: 'Demo',
+    version: '1.0.0',
+    commands: {
+      wipe: { permission: 'x', sql: 'SELECT 1', ai: { description: 'd', risk: 'catastrophic' } },
+    },
+  });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /risk/);
+  assert.match(errors[0], /catastrophic/);
+});
+
+test('un valor que SÍ está en el vocabulario pasa (#62)', () => {
+  for (const reason of ['fiscal', 'ledger', 'identity', 'audit']) {
+    const { errors } = checkManifestKeys({
+      id: 'demo',
+      name: 'Demo',
+      version: '1.0.0',
+      records: { invoice: { mutable: false, reason } },
+    });
+    assert.deepEqual(errors, [], `\`${reason}\` es del contrato y no puede dar error`);
+  }
+});
+
+test('una rama del contrato SIN enum desactiva la comprobación: nunca un falso positivo (#62)', () => {
+  // `depends_on[]` es `anyOf: [string, {id, min_version}]`. La rama string no lleva enum, así que
+  // ningún valor de ahí puede declararse fuera de vocabulario.
+  const { errors } = checkManifestKeys({
+    id: 'demo',
+    name: 'Demo',
+    version: '1.0.0',
+    depends_on: ['taxes', { id: 'inventory', min_version: '1.2.20' }],
+  });
+  assert.deepEqual(errors, [], 'una alternativa libre en el contrato no puede volverse un error');
 });
