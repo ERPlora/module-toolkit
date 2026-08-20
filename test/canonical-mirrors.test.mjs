@@ -10,7 +10,10 @@
 //      `RETIRED_FIELDS`), so the author's door and the install door say the same thing,
 //   4. the capabilities of the core's reserved `hub.` namespace
 //      (`hub_users.rs::CORE_QUERIES`), which the contract gate rejects a module for consuming
-//      when it does not know them.
+//      when it does not know them,
+//   5. the PREMISE of the `fill`/`mode="md"` guard — that the shell pins Ionic to `ios`
+//      (`apps/web/src/main.ts`, ADR-0143). This one is the opposite of the others: it does not
+//      guard a divergence, it guards the guard's own reason to exist.
 //
 // None of them was out of sync the day this was written, and that is exactly when the alarm goes
 // on: whoever adds the twelfth bridge function in Rust has no way of learning there is a second
@@ -22,7 +25,7 @@
 // a machine where the whole monorepo IS checked out.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { BRIDGE_FUNCTIONS } from '../src/validate-sql.mjs';
@@ -30,6 +33,7 @@ import { VENDORED_MANIFEST_SCHEMA_PATH } from '../src/manifest-schema.mjs';
 import { REFUSED_PATHS, RETIRED_FIELDS } from '../src/validate-manifest-keys.mjs';
 import { CORE_OPERATIONS } from '../src/contracts.mjs';
 import { GRANDFATHERED } from '../src/validate-migration-guard.mjs';
+import { controlsWithDeadFill } from '../src/validate-ionic-fill.mjs';
 
 const TOOLKIT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** The hub checkout, when it sits alongside (or wherever `ERPLORA_HUB_DIR` says). */
@@ -136,4 +140,50 @@ test('the grandfathered migrations are EXACTLY the runtime\'s (#51)', (t) => {
     grandfatheredOfTheRuntime(readFileSync(rs, 'utf8')),
     'the runtime changed its grandfathered list — mirror it in src/validate-migration-guard.mjs',
   );
+});
+
+test('the shell still pins Ionic to `ios` — the premise of the `fill` guard (hub#760)', (t) => {
+  // The sixth mirror, and the only one whose failure means DELETE THE CHECK rather than sync it.
+  // `checkIonicFill` exists for one reason: with `mode: 'ios'` pinned, Ionic paints no `fill` on a
+  // form control, so the attribute is a silent no-op and the field renders invisible. The day the
+  // shell drops that pin — or moves to `md` — the guard would keep 25 repos writing `mode="md"` on
+  // every input for a problem that no longer exists. A check that outlives its cause is worse than
+  // no check: it teaches people that the gate asks for things that do not matter.
+  //
+  // The Hub carries its own copy of this same assertion (`apps/web/src/theme/
+  // ionic-fill-needs-md.test.ts`), which is what makes it a MIRROR and not a duplicate: that one
+  // runs where the change happens, this one runs where the 25 module repos are gated.
+  const main = join(HUB, 'apps', 'web', 'src', 'main.ts');
+  if (!existsSync(main)) return t.skip('ERPlora/hub is not in this checkout');
+  assert.match(
+    readFileSync(main, 'utf8'),
+    /use\(IonicVue,\s*\{[^}]*mode:\s*'ios'/,
+    'the shell no longer pins `ios`: `fill` now paints on its own and src/validate-ionic-fill.mjs ' +
+      'is dead weight — delete it and drop the check from validate.mjs',
+  );
+});
+
+test('the guard reads the Hub\'s OWN screens the same way the Hub does (hub#760)', (t) => {
+  // The positive control of the scanner, against a corpus nobody wrote for it. The Hub's `.vue`
+  // views are the one place where a set of controls is known to be CLEAN — its own guard keeps them
+  // that way. If this port ever reported an offence there, the two doors would be saying different
+  // things about the same markup, and the module authors would be the ones paying for it.
+  const views = join(HUB, 'apps', 'web', 'src');
+  if (!existsSync(views)) return t.skip('ERPlora/hub is not in this checkout');
+  const offenders = [];
+  let controls = 0;
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name.endsWith('.vue')) {
+        const src = readFileSync(full, 'utf8');
+        controls += (src.match(/<ion-(?:input|select|textarea)(?=[\s/>])/g) ?? []).length;
+        for (const dead of controlsWithDeadFill(src)) offenders.push(`${full}: ${dead.tag}`);
+      }
+    }
+  };
+  walk(views);
+  assert.ok(controls > 30, `only ${controls} controls found in the Hub views: the scan is not reaching them`);
+  assert.deepEqual(offenders, [], 'this port disagrees with the Hub\'s own guard about the Hub\'s own markup');
 });
