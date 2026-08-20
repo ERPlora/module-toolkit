@@ -65,9 +65,35 @@ test('translate: the `erp_*` bridge functions are lowered like the runtime does'
   assert.equal(translateForPostgres('SELECT erp_now()').sql, 'SELECT now()');
 });
 
+test('translate: a `--` comment with an apostrophe does not swallow the bridge calls after it', () => {
+  // ERPlora/hub#1026: the shim opened a phantom string literal on the `'` of `slot's`, so every
+  // bridge function after the comment stayed unrewritten and Postgres rejected the prepare with
+  // `function erp_datediff_days(text, text) does not exist`. Mirror of the runtime fix.
+  assert.equal(
+    translateForPostgres("-- the slot's capacity\nSELECT erp_now()").sql,
+    "-- the slot's capacity\nSELECT now()",
+  );
+  assert.equal(
+    translateForPostgres("/* it's here */ SELECT erp_now()").sql,
+    "/* it's here */ SELECT now()",
+  );
+  // A call documented in a comment is prose, not code: it is emitted verbatim.
+  assert.equal(
+    translateForPostgres('-- use erp_now() here\nSELECT 1').sql,
+    '-- use erp_now() here\nSELECT 1',
+  );
+});
+
 test('DDL types: the portable subset is normalised like `shim_ddl_types` (INTEGER → BIGINT)', () => {
   const out = shimDdlTypes('CREATE TABLE t (id TEXT, n INTEGER, r REAL, b BLOB);');
   assert.equal(out, 'CREATE TABLE t (id TEXT, n BIGINT, r DOUBLE PRECISION, b BYTEA);');
+});
+
+test('DDL types: a `--` comment with an apostrophe does not swallow the types after it', () => {
+  // ERPlora/hub#1026 — same root cause as the bridge shim, but it lands in the SCHEMA: `BLOB` does
+  // not exist in Postgres (the migration blows up) and `INTEGER` is not `BIGINT`.
+  const out = shimDdlTypes("-- the slot's capacity\nCREATE TABLE t (n INTEGER, b BLOB);");
+  assert.equal(out, "-- the slot's capacity\nCREATE TABLE t (n BIGINT, b BYTEA);");
 });
 
 // ── which binds get a type: the ones that cannot arrive NULL ─────────────────────────────────

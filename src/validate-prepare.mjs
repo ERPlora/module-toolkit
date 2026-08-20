@@ -152,6 +152,24 @@ export function shimBridgeFunctions(sql) {
       continue;
     }
     if (c === "'") { inString = true; out += c; i++; continue; }
+    // `-- …` and `/* … */` comments, outside a string: emitted VERBATIM and they never touch the
+    // string state — same rule `translate` already applies to its `:name` binds (ERPlora/hub#1026).
+    // Without this, an apostrophe in prose (`-- the slot's capacity`) opened a phantom literal and
+    // left EVERY bridge function after it unrewritten.
+    if (c === '-' && sql[i + 1] === '-') {
+      const start = i;
+      while (i < sql.length && sql[i] !== '\n') i++;
+      out += sql.slice(start, i);
+      continue;
+    }
+    if (c === '/' && sql[i + 1] === '*') {
+      const start = i;
+      i += 2;
+      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
+      i = Math.min(i + 2, sql.length); // consume the closing `*/`
+      out += sql.slice(start, i);
+      continue;
+    }
     const prevIsIdent = i > 0 && /[\w]/.test(sql[i - 1]);
     if (!prevIsIdent) {
       const name = BRIDGE_FUNCTIONS.find(
@@ -250,6 +268,23 @@ export function shimDdlTypes(sql) {
       continue;
     }
     if (c === "'") { inString = true; out += c; i++; continue; }
+    // Comments verbatim, never touching the string state — mirror of `shim_ddl_types`
+    // (ERPlora/hub#1026): an apostrophe in prose left the portable types after it unnormalised,
+    // and `BLOB` does not exist in Postgres.
+    if (c === '-' && sql[i + 1] === '-') {
+      const start = i;
+      while (i < sql.length && sql[i] !== '\n') i++;
+      out += sql.slice(start, i);
+      continue;
+    }
+    if (c === '/' && sql[i + 1] === '*') {
+      const start = i;
+      i += 2;
+      while (i < sql.length && !(sql[i] === '*' && sql[i + 1] === '/')) i++;
+      i = Math.min(i + 2, sql.length);
+      out += sql.slice(start, i);
+      continue;
+    }
     const prevIsIdent = i > 0 && /[\w]/.test(sql[i - 1]);
     if (!prevIsIdent && /[A-Za-z_]/.test(c)) {
       let j = i;
