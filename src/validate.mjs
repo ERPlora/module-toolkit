@@ -13,6 +13,7 @@ import { resolve, join } from 'node:path';
 import { validateSql } from './validate-sql.mjs';
 import { checkMigrations } from './validate-migrations.mjs';
 import { checkMigrationGuard } from './validate-migration-guard.mjs';
+import { checkIonicFill } from './validate-ionic-fill.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 import { checkContracts } from './contracts.mjs';
 import { checkPgCompat } from './validate-pg.mjs';
@@ -218,6 +219,27 @@ export async function validate(moduleDir, { pg = false } = {}) {
   for (const d of contracts.deferred) console.warn(`⚠ ${manifest.id}: ${d}`);
   if (contracts.errors.length) {
     throw new Error('contratos de interoperabilidad rotos (ADR-0127):\n  - ' + contracts.errors.join('\n  - '));
+  }
+
+  // hub#760 en los MÓDULOS: `fill` en un `ion-input`/`ion-select`/`ion-textarea` solo lo pinta
+  // Ionic en `md`, y el shell del hub fija `mode: 'ios'` (ADR-0143). Es un no-op SILENCIOSO — el
+  // campo sale sin caja, sin borde y sin fondo, y el usuario no ve dónde escribir. El hub ya se
+  // defiende en su código (`apps/web/src/theme/ionic-fill-needs-md.test.ts`) y el Cloud también
+  // (saas#1080), pero ninguna de las dos puertas mira los módulos, que es donde vive la mayor
+  // parte de los formularios que rellena el comerciante: 275 de los 298 controles publicados
+  // declaran `fill` y NINGUNO declara `mode="md"`. La defensa estaba por duplicado y no cubría el
+  // tercer sitio.
+  //
+  // Arranca en modo trinquete, no de golpe: lo que hay hoy está en `FILL_GRANDFATHERED` por
+  // fichero Y por número, así que ningún repo se pone en rojo por algo que ya publicó, pero un
+  // control nuevo sí. La lista solo puede ENCOGER.
+  const ionicFill = checkIonicFill(dir, manifest);
+  for (const w of ionicFill.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (ionicFill.errors.length) {
+    throw new Error(
+      'controles Ionic con un `fill` que el hub NUNCA pinta (hub#760):\n  - ' +
+        ionicFill.errors.join('\n  - '),
+    );
   }
 
   // hub#459 (paso 3): AVISO, nunca error. `commands::validate_operation` resuelve una op de handler

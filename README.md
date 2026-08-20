@@ -25,7 +25,7 @@ aporta las dependencias y la configuración de build.
 | `erplora g view\|command\|query <id> <n>` | ✅ | Añade piezas dentro de un módulo existente. |
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
 | `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe) **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
-| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un canal de `host.notify` sin transporte y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*). |
+| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un canal de `host.notify` sin transporte y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), y un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*). |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
 | `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
 | `erplora publish <id\|dir>` | 📋 guía | Imprime el flujo de publicación al marketplace (no automatizado: auth + confirmación). |
@@ -131,6 +131,47 @@ los permisos de los commands que ese camino nombra literalmente, rol a rol (`rol
 > `_insert_history`). El barrido a mano de hub#459 contaba 84 porque comparaba el fuente ENTERO del
 > handler contra cada command con handler; repetido así aquí da 80 — los otros 77 son caminos que
 > ese command no recorre. La reachability por función es lo que separa una cosa de la otra.
+
+## El `fill` que el hub NUNCA pinta (hub#760)
+
+`src/validate-ionic-fill.mjs`. Ionic lo decide en una línea
+(`@ionic/core/…/input/input.js`):
+
+```js
+const hasOutlineFill = mode === 'md' && this.fill === 'outline';
+```
+
+y `input.ios.css` no trae **ninguna** regla `input-fill-*`. El shell del hub fija `mode: 'ios'`
+(ADR-0143, `hub/apps/web/src/main.ts`), así que un `fill` en un `ion-input`/`ion-select`/
+`ion-textarea` es un **no-op silencioso**: el campo sale sin caja, sin borde y sin fondo, y el
+usuario no ve dónde escribir. No lanza nada y no avisa de nada — por eso hace falta algo que lo
+mire por ti. En `ion-button`/`ion-chip` el `fill` **sí** es real en `ios`: ahí no se toca.
+
+La defensa ya existía **por duplicado y en los dos sitios equivocados**: el hub se protege en su
+código (`apps/web/src/theme/ionic-fill-needs-md.test.ts`) y el Cloud también
+(`saas/tests/unit/test_ionic_fill_needs_md.py`, saas#1080), pero ninguna de las dos puertas mira los
+**módulos**, que es donde vive la mayor parte de los formularios que rellena el comerciante. Medido
+sobre `origin/main` de los 25 repos: **275 de 298 controles** declaran `fill` y **ninguno** declara
+`mode="md"`.
+
+**No es una copia del escáner del hub.** El hub lee `.vue`, donde una etiqueta acaba en el primer
+`>`. Una plantilla Lit no: `@ionChange=${(e: any) => this.patch({ id: e.target.value })}` mete `>` y
+`{}` **dentro** de la etiqueta. Cortar en el primer `>` leería como ausente todo atributo posterior
+a una arrow function —`mode="md"` incluido— y delataría un control que está bien. Un falso positivo
+aquí pone en rojo el gate de un módulo correcto, que es peor que el bug que se persigue.
+
+**Trinquete, no big-bang.** Poner esto en error de golpe deja los 25 repos en rojo el mismo día por
+algo que no tiene que ver con lo que cada uno estaba publicando — y un gate que bloquea todo se
+apaga, no se obedece. Así que el pase es **por fichero Y por número** (`FILL_GRANDFATHERED`): los
+controles que un fichero tiene hoy se toleran, **uno más no**, y un componente nuevo no hereda nada.
+La lista **solo puede encoger**; la vacía el barrido de ERPlora/pm, módulo a módulo.
+
+**Con alarma sobre su propia premisa.** `test/validate-ionic-fill.test.mjs` lo comprueba contra la
+dependencia (no contra una copia): el día que Ionic pinte `fill` en `ios`, falla y dice que la
+comprobación **sobra**. `test/canonical-mirrors.test.mjs` hace lo propio con el pin `mode: 'ios'` del
+shell, y además corre este escáner sobre las vistas `.vue` del hub —limpias por su propio guard— para
+que las dos puertas no digan cosas distintas del mismo marcado. Un chequeo que sobrevive a su causa
+es peor que no tenerlo: enseña que el gate pide cosas que dan igual.
 
 ## El gate de CI de los repos de módulo (ERPlora/pm#107)
 
