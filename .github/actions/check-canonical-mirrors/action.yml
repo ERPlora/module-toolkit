@@ -1,0 +1,80 @@
+# The mirrors' alarm, as a step the HUB can run on itself (module-toolkit#61).
+#
+# WHY IT RUNS FROM THE HUB AND NOT FROM HERE. The toolkit copies six things by hand out of
+# ERPlora/hub, and `test/canonical-mirrors.test.mjs` compares them byte for byte. That test needs a
+# hub checkout, and this repository's CI has none — nor can it get one: the org is on the free plan,
+# where "organization-level secrets and variables are not accessible by private repositories", so
+# `secrets.GH_PAT` does not reach here and `actions/checkout` of a private ERPlora/hub has no
+# credential. A repo-level read token living in the repositories that need it is a security
+# decision, not a CI detail (the same reasoning `validate-module` already writes down for the
+# handler's wasm build).
+#
+# So the alarm moved to the side that HAS the hub. The divergence can only be introduced by editing
+# the hub, and the hub's CI checks the hub out anyway — the one thing it lacked was the toolkit's
+# vendored copy, and a composite action is exactly the shape GitHub resolves WITHOUT any credential
+# when this repository's Actions are shared with the organization (`access_level: organization`,
+# already set — it is how 24 module repos run `validate-module`). The runner fetches this whole
+# repository to run the action, which is what puts the vendored copy on disk.
+#
+# WHAT IT COSTS. About ten seconds, and only on a pull request that touches one of the mirrored
+# files — the caller path-filters it. Compare with what it replaces: nothing. Before this, every
+# run of the mirrors reported `pass 0 · fail 0 · skipped 7` and went green, and the machine where
+# the divergence is actually born was never asked a single question.
+name: Check the ERPlora canonical mirrors
+description: >
+  Fails when a canonical source of ERPlora/hub (manifest schema, BRIDGE_FUNCTIONS, the unknown-key
+  severity policy, CORE_QUERIES, the grandfathered migrations, the Ionic `ios` pin) has moved on
+  while the module-toolkit's vendored copy has not. Run it FROM the hub, on a hub checkout.
+
+inputs:
+  hub-dir:
+    description: >
+      The ERPlora/hub checkout to compare against. Defaults to the caller's workspace, which is the
+      hub itself when this action is used from the hub's own workflow.
+    required: false
+    default: ${{ github.workspace }}
+  node-version:
+    description: Node version used to run the mirrors.
+    required: false
+    default: '22'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    # `npm install` is impossible here for the same reason it is in `validate-module`: three of this
+    # package's dependencies are `file:` paths into sibling checkouts that do not exist on a runner.
+    # The mirrors need exactly ONE public package — `typescript`, which `contracts.mjs` uses to read
+    # a module's .ts — and it is installed on its own, at the version this repository declares.
+    - name: Install the single public dependency the mirrors need
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        toolkit=$(cd "$ACTION_PATH/../../.." && pwd)
+        ts=$(node -p "require('$toolkit/package.json').dependencies.typescript")
+        deps="$RUNNER_TEMP/erplora-mirror-deps"
+        mkdir -p "$deps"
+        npm install --prefix "$deps" --no-audit --no-fund --loglevel=error "typescript@$ts"
+        mkdir -p "$toolkit/node_modules"
+        # ESM ignores NODE_PATH, so the package has to be physically resolvable from the toolkit.
+        ln -sfn "$deps/node_modules/typescript" "$toolkit/node_modules/typescript"
+        echo "ERPLORA_TOOLKIT=$toolkit" >> "$GITHUB_ENV"
+
+    # `ERPLORA_HUB_DIR` is DECLARED here on purpose. That is what makes a missing or misspelled hub
+    # an error instead of a skip (`test/hub-mirror.mjs`): if this step could not read the hub it
+    # would otherwise switch all six comparisons off and still report green — the precise failure
+    # module-toolkit#61 was opened about.
+    - name: The six mirrors, against this hub
+      shell: bash
+      env:
+        ERPLORA_HUB_DIR: ${{ inputs.hub-dir }}
+      run: |
+        set -euo pipefail
+        echo "→ comparing the toolkit's vendored copies against $ERPLORA_HUB_DIR"
+        cd "$ERPLORA_TOOLKIT"
+        node --test test/hub-mirror.test.mjs test/canonical-mirrors.test.mjs

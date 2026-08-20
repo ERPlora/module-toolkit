@@ -20,24 +20,30 @@
 // place, and the symptom would be portable SQL the validator rejects — or, worse, SQL that is not
 // portable and it waves through.
 //
-// These tests SKIP themselves when the hub is not alongside (the gate's runner does not have it).
-// That is not a hole: the divergence can only be introduced by editing the hub, and that happens on
-// a machine where the whole monorepo IS checked out.
+// WHERE THESE ACTUALLY RUN (module-toolkit#61). They used to skip themselves whenever the hub was
+// not alongside, on the reasoning that the divergence can only be introduced by editing the hub —
+// which is true, and is exactly why the skip was a hole: the toolkit's CI has no hub, so all six
+// went `pass 0 · fail 0 · skipped 7` on every run and the job went green, while the ONE machine
+// that edits the hub had nothing asking it to resync.
+//
+// So the door moved to where the change happens: the hub's own CI calls
+// `.github/actions/check-canonical-mirrors` (this repository, resolved with no credential because
+// its Actions are shared with the organization) and runs this file with `ERPLORA_HUB_DIR` pointing
+// at the hub it just checked out. Here, with no hub declared, they still skip — honestly, saying
+// so. What is no longer allowed is a hub that was DECLARED and is not there: that is an error, and
+// `hub-mirror.mjs` is where the two cases are told apart.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { join, dirname } from 'node:path';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { BRIDGE_FUNCTIONS } from '../src/validate-sql.mjs';
 import { VENDORED_MANIFEST_SCHEMA_PATH } from '../src/manifest-schema.mjs';
 import { REFUSED_PATHS, RETIRED_FIELDS } from '../src/validate-manifest-keys.mjs';
 import { CORE_OPERATIONS } from '../src/contracts.mjs';
 import { GRANDFATHERED } from '../src/validate-migration-guard.mjs';
 import { controlsWithDeadFill } from '../src/validate-ionic-fill.mjs';
+import { hubPath } from './hub-mirror.mjs';
 
-const TOOLKIT = join(dirname(fileURLToPath(import.meta.url)), '..');
-/** The hub checkout, when it sits alongside (or wherever `ERPLORA_HUB_DIR` says). */
-const HUB = process.env.ERPLORA_HUB_DIR || join(TOOLKIT, '..', 'hub');
 
 /** `pub const BRIDGE_FUNCTIONS: &[&str] = &["erp_now", …];` → the names, in order. */
 function bridgeFunctionsOfTheShim(rust) {
@@ -61,8 +67,8 @@ function retiredFieldsOfTheRuntime(rust) {
 }
 
 test('the toolkit bridge functions are EXACTLY the shim of the runtime (#40)', (t) => {
-  const lib = join(HUB, 'crates', 'db', 'src', 'lib.rs');
-  if (!existsSync(lib)) return t.skip('ERPlora/hub is not in this checkout');
+  const lib = hubPath(t, 'crates', 'db', 'src', 'lib.rs');
+  if (!lib) return;
   assert.deepEqual(
     BRIDGE_FUNCTIONS,
     bridgeFunctionsOfTheShim(readFileSync(lib, 'utf8')),
@@ -75,8 +81,8 @@ test('the severity policy is the SAME one the runtime applies (#30, hub#521)', (
   // The author's door and the install door have to agree: a field the hub refuses on install cannot
   // pass the gate green, and one the hub tolerates cannot take down the CI of 25 repos. Both lists
   // are short and the divergence would be silent — hence the alarm.
-  const rs = join(HUB, 'crates', 'runtime', 'src', 'manifest.rs');
-  if (!existsSync(rs)) return t.skip('ERPlora/hub is not in this checkout');
+  const rs = hubPath(t, 'crates', 'runtime', 'src', 'manifest.rs');
+  if (!rs) return;
   const rust = readFileSync(rs, 'utf8');
   assert.deepEqual(REFUSED_PATHS, refusedPathsOfTheRuntime(rust), 'where an unknown key is REFUSED');
   assert.deepEqual(
@@ -87,8 +93,8 @@ test('the severity policy is the SAME one the runtime applies (#30, hub#521)', (
 });
 
 test('the vendored schema is byte for byte the hub one (#40)', (t) => {
-  const canonical = join(HUB, 'schemas', 'module.schema.json');
-  if (!existsSync(canonical)) return t.skip('ERPlora/hub is not in this checkout');
+  const canonical = hubPath(t, 'schemas', 'module.schema.json');
+  if (!canonical) return;
   assert.equal(
     readFileSync(VENDORED_MANIFEST_SCHEMA_PATH, 'utf8'),
     readFileSync(canonical, 'utf8'),
@@ -109,8 +115,8 @@ test('the core capabilities the gate accepts are EXACTLY the runtime\'s (#297)',
   // gate still called them typos. This is the expensive direction of the drift — the module that
   // consumes a real core query is told it does not exist, and the author has no way of learning
   // that the list of capabilities has a second home.
-  const rs = join(HUB, 'crates', 'runtime', 'src', 'hub_users.rs');
-  if (!existsSync(rs)) return t.skip('ERPlora/hub is not in this checkout');
+  const rs = hubPath(t, 'crates', 'runtime', 'src', 'hub_users.rs');
+  if (!rs) return;
   assert.deepEqual(
     CORE_OPERATIONS.queries,
     coreQueriesOfTheRuntime(readFileSync(rs, 'utf8')),
@@ -133,8 +139,8 @@ test('the grandfathered migrations are EXACTLY the runtime\'s (#51)', (t) => {
   //
   // 🔴 And it may only SHRINK on both sides at once: "grandfather it" is not a way to keep
   // publishing what the contract forbids.
-  const rs = join(HUB, 'crates', 'runtime', 'src', 'migration_guard.rs');
-  if (!existsSync(rs)) return t.skip('ERPlora/hub is not in this checkout');
+  const rs = hubPath(t, 'crates', 'runtime', 'src', 'migration_guard.rs');
+  if (!rs) return;
   assert.deepEqual(
     GRANDFATHERED.map(([m, f]) => [m, f]),
     grandfatheredOfTheRuntime(readFileSync(rs, 'utf8')),
@@ -153,8 +159,8 @@ test('the shell still pins Ionic to `ios` — the premise of the `fill` guard (h
   // The Hub carries its own copy of this same assertion (`apps/web/src/theme/
   // ionic-fill-needs-md.test.ts`), which is what makes it a MIRROR and not a duplicate: that one
   // runs where the change happens, this one runs where the 25 module repos are gated.
-  const main = join(HUB, 'apps', 'web', 'src', 'main.ts');
-  if (!existsSync(main)) return t.skip('ERPlora/hub is not in this checkout');
+  const main = hubPath(t, 'apps', 'web', 'src', 'main.ts');
+  if (!main) return;
   assert.match(
     readFileSync(main, 'utf8'),
     /use\(IonicVue,\s*\{[^}]*mode:\s*'ios'/,
@@ -168,8 +174,8 @@ test('the guard reads the Hub\'s OWN screens the same way the Hub does (hub#760)
   // views are the one place where a set of controls is known to be CLEAN — its own guard keeps them
   // that way. If this port ever reported an offence there, the two doors would be saying different
   // things about the same markup, and the module authors would be the ones paying for it.
-  const views = join(HUB, 'apps', 'web', 'src');
-  if (!existsSync(views)) return t.skip('ERPlora/hub is not in this checkout');
+  const views = hubPath(t, 'apps', 'web', 'src');
+  if (!views) return;
   const offenders = [];
   let controls = 0;
   const walk = (dir) => {
