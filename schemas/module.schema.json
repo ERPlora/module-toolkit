@@ -284,6 +284,10 @@
             "pattern": "^[a-z][a-z0-9]*-[a-z0-9-]+$",
             "description": "Nombre del custom element (Web Component) a montar."
           },
+          "permission": {
+            "type": "string",
+            "description": "Permiso que ABRE esta pestaña: `/api/navigation` no sirve la entrada a quien no lo tiene (hub#1052). Mismo contrato que `actions[].permission` un escalón más arriba — el manifest declara a quién le sirve la pestaña y el runtime revalida SIEMPRE la query/command real detrás: esto no es la puerta, es no enseñar una puerta cerrada. Ausente = visible para todos, que es como se comportan todos los manifests publicados hasta hoy. Sin este campo un módulo no tenía dónde escribir «esta pestaña es de admin», así que la pintaba para todo el mundo y el usuario descubría el límite estrellándose contra un 403."
+          },
           "chrome": {
             "type": "array",
             "default": [],
