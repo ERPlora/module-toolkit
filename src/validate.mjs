@@ -226,13 +226,15 @@ export async function validate(moduleDir, { pg = false } = {}) {
   // campo sale sin caja, sin borde y sin fondo, y el usuario no ve dónde escribir. El hub ya se
   // defiende en su código (`apps/web/src/theme/ionic-fill-needs-md.test.ts`) y el Cloud también
   // (saas#1080), pero ninguna de las dos puertas mira los módulos, que es donde vive la mayor
-  // parte de los formularios que rellena el comerciante: 275 de los 298 controles publicados
-  // declaran `fill` y NINGUNO declara `mode="md"`. La defensa estaba por duplicado y no cubría el
-  // tercer sitio.
+  // parte de los formularios que rellena el comerciante: el día que aterrizó, 275 de los 298
+  // controles publicados declaraban `fill` y NINGUNO declaraba `mode="md"`. La defensa estaba por
+  // duplicado y no cubría el tercer sitio.
   //
-  // Arranca en modo trinquete, no de golpe: lo que hay hoy está en `FILL_GRANDFATHERED` por
-  // fichero Y por número, así que ningún repo se pone en rojo por algo que ya publicó, pero un
-  // control nuevo sí. La lista solo puede ENCOGER.
+  // Arrancó en modo trinquete, no de golpe: lo que había está en `FILL_GRANDFATHERED` por fichero
+  // Y por número, así que ningún repo se pone en rojo por algo que ya publicó, pero un control
+  // nuevo sí. La lista solo puede ENCOGER, y el barrido (ERPlora/pm#152) ya la ha bajado a 170
+  // controles en 14 módulos: ocho — customers, inventory, kitchen, pricing, printing, staff,
+  // tasks y whatsapp_inbox — están limpios y fuera, o sea en error de verdad si recaen.
   const ionicFill = checkIonicFill(dir, manifest);
   for (const w of ionicFill.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (ionicFill.errors.length) {
