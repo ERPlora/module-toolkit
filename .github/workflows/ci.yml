@@ -14,9 +14,9 @@
 #
 # SCOPE. Only the validator's tests run here: `npm install` is impossible on a runner (three
 # dependencies are `file:` paths into sibling checkouts that do not exist), so the suites that need
-# esbuild, lit or @ionic/core — build, dev, icons, pack, scaffold, signing, wasm-build — stay a
-# local `node --test`. What runs is what the gate runs, including the real PREPARE ones, in about
-# 30 seconds.
+# esbuild or lit — build, dev, icons, pack, scaffold, signing, wasm-build — stay a local
+# `node --test`. What runs is what the gate runs, including the real PREPARE ones, in about 30
+# seconds. The public packages the running suites DO need are installed one by one below.
 #
 # The file list is EXPLICIT rather than a `validate-*` glob: `manifest-schema`,
 # `canonical-mirrors` (module-toolkit#30/#40) and `run-batteries` (#50) need no dependency either,
@@ -74,14 +74,25 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install the single public dependency the validator needs
+      # Two public dependencies, installed one by one (never `npm install`, which would try to
+      # resolve the three `file:` paths into sibling checkouts that do not exist on a runner).
+      #
+      # `@ionic/core` is here for ONE assertion, and it is the one that must not skip: the
+      # `fill`/`mode="md"` guard (hub#760) reads Ionic's own CSS to prove it still has a reason to
+      # exist. Letting that test skip itself for want of the package is exactly the hole of
+      # module-toolkit#61 — an alarm that is silent because nobody notices it never rang.
+      - name: Install the public dependencies the validator needs
         run: |
           set -euo pipefail
-          ts=$(node -p "require('./package.json').dependencies.typescript")
           deps="$RUNNER_TEMP/erplora-validator-deps"
           mkdir -p "$deps" node_modules
-          npm install --prefix "$deps" --no-audit --no-fund --loglevel=error "typescript@$ts"
+          for pkg in typescript @ionic/core; do
+            want=$(node -p "require('./package.json').dependencies['$pkg']")
+            npm install --prefix "$deps" --no-audit --no-fund --loglevel=error "$pkg@$want"
+          done
           ln -sfn "$deps/node_modules/typescript" node_modules/typescript
+          mkdir -p node_modules/@ionic
+          ln -sfn "$deps/node_modules/@ionic/core" node_modules/@ionic/core
 
       - name: Start the scratch Postgres
         env:
