@@ -333,6 +333,24 @@ export function crossValidateFull(manifest, contracts, universe) {
       const owner = name.split('.')[0];
       if (missingDeps.has(owner)) continue; // aplazado
       const surface = owner === me ? universe.get(me) : universe.get(owner);
+      // Un read con `required: false` es la forma DOCUMENTADA de decir «este módulo puede no estar
+      // instalado». Si su dueño no está en el universo no hay contrato que comprobar todavía: se
+      // APLAZA a la instalación, exactamente como `checkOperation` hace con `queryOptional`.
+      //
+      // Sin esta rama, el gate tumbaba una integración opcional legítima por un motivo que solo se
+      // da en CI: en local el módulo vecino está en el disco y el universo lo ve, pero el workflow
+      // hace checkout de UN módulo, así que el universo tiene un elemento y el dueño nunca aparece.
+      // Mordió con el primer `required: false` del repo (pm#93, `modifiers.options.all`).
+      //
+      // El límite se mantiene: si el dueño SÍ está en el universo, un nombre inventado sigue siendo
+      // un contrato roto. Opcional es la AUSENCIA del módulo, no el typo.
+      const optionalRead = typeof read === 'object' && read?.required === false;
+      if (!surface && optionalRead && owner !== me) {
+        deferred.push(
+          `reads de \`${cmdName}\`: \`${name}\` es opcional y \`${owner}\` no está en el workspace: su contrato se comprobará en la publicación/instalación`,
+        );
+        continue;
+      }
       if (!surface || !surface.queries.has(name)) {
         errors.push(`reads de \`${cmdName}\`: la query \`${name}\` no existe${surface ? ` en \`${owner}\`` : ''}`);
       }
