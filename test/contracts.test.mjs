@@ -475,3 +475,59 @@ test('checkContracts en verde: código correcto + contracts.json al día = 0 err
   const r = checkContracts(beta, manifest);
   assert.deepEqual(r.errors, []);
 });
+
+// ── Un `read` OPCIONAL a un módulo que no está en el workspace se APLAZA, no falla ───────────
+//
+// Lo que esto mata (pm#93, 2026-08-21): `sales` declaró el primer `reads` con `required: false`
+// del repo — la forma DOCUMENTADA de decir «este módulo puede no estar instalado» — y el gate lo
+// tumbó con «la query `modifiers.options.all` no existe». En LOCAL pasaba, porque el módulo nuevo
+// estaba en el disco al lado; en CI solo se hace checkout del módulo que se valida, así que el
+// universo tiene un solo elemento y el dueño nunca aparece.
+//
+// La asimetría estaba en el propio validador: `checkOperation` YA aplaza esto para
+// `queryOptional` («para queryOptional a un módulo fuera del universo, se resuelve en la
+// instalación»), pero el bloque de `reads` no tenía esa rama y trataba igual a un read opcional
+// que a uno obligatorio. Es un camino que nadie había ejercitado: hasta ese día no existía ni un
+// `required: false` en ningún manifest.
+//
+// El límite se mantiene: si el módulo SÍ está en el universo, un nombre inventado sigue siendo un
+// contrato roto. Opcional es la AUSENCIA del módulo, no el typo.
+
+function conRead(beta, read) {
+  const manifestPath = join(beta, 'module.json');
+  const m = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const first = Object.keys(m.commands ?? {})[0];
+  m.commands[first].reads = [read];
+  writeFileSync(manifestPath, JSON.stringify(m));
+  return first;
+}
+
+test('un read con required:false a un módulo AUSENTE del workspace se aplaza, no es error', () => {
+  const { ws, beta } = fakeWorkspace();
+  conRead(beta, { query: 'gamma.options.all', required: false }); // `gamma` no existe en el ws
+  const manifest = readManifest(beta);
+  const { errors, deferred } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.deepEqual(errors, [], 'un read opcional a un módulo ausente NO puede tumbar el gate');
+  assert.ok(
+    deferred.some((d) => d.includes('gamma.options.all')),
+    'y se aplaza CON CONSTANCIA, para que no desaparezca en silencio',
+  );
+});
+
+test('un read OBLIGATORIO a un módulo ausente sigue siendo error', () => {
+  const { ws, beta } = fakeWorkspace();
+  conRead(beta, { query: 'gamma.options.all', required: true });
+  const manifest = readManifest(beta);
+  const { errors } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.equal(errors.length, 1, 'sin `required: false` no hay indulto');
+  assert.match(errors[0], /gamma\.options\.all/);
+});
+
+test('un read opcional a un módulo PRESENTE con nombre inventado sigue siendo error', () => {
+  const { ws, beta } = fakeWorkspace();
+  conRead(beta, { query: 'alpha.no.existe', required: false }); // `alpha` SÍ está en el ws
+  const manifest = readManifest(beta);
+  const { errors } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.equal(errors.length, 1, 'opcional es la AUSENCIA del módulo, no un typo');
+  assert.match(errors[0], /alpha\.no\.existe/);
+});
