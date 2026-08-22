@@ -355,13 +355,28 @@
           "deprecated": true,
           "description": "DEPRECATED (ADR-0154): el Hub es Postgres-only; el runtime ignora este dialecto. Usa migrations/postgres. Se mantiene opcional solo por compatibilidad con manifests antiguos.",
           "items": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/migrationEntry"
+              }
+            ]
           }
         },
         "postgres": {
           "type": "array",
+          "description": "Cada entrada admite las dos formas de `MigrationEntry` (hub#542), igual que el runtime: la ruta pelada (`\"migrations/postgres/001_init.sql\"`, que se lee `expand` y es la forma de todo el catálogo publicado) o el objeto `{ file, kind, since }` — la ÚNICA manera de declarar un `contract`, y por tanto de retirar una columna (hub#1093).",
           "items": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/migrationEntry"
+              }
+            ]
           }
         }
       }
@@ -1350,7 +1365,35 @@
             "skip"
           ],
           "default": "collapse",
-          "description": "Comportamiento tras un apagado: `collapse` ejecuta UNA sola vez el backlog vencido al arrancar; `skip` no ejecuta nada vencido durante el apagado y solo reprograma."
+          "description": "Comportamiento tras un apagón: `collapse` ejecuta UNA sola vez el backlog vencido al arrancar; `skip` no ejecuta nada vencido durante el apagado y solo reprograma."
+        }
+      }
+    },
+    "migrationEntry": {
+      "type": "object",
+      "description": "Una migración DECLARADA (hub#542): además de la ruta, qué dice el módulo que hace el fichero — el guard (`migration_guard.rs`) comprueba que el SQL coincide. Es la ÚNICA manera de declarar un `contract`, o sea la única forma legítima de escribir un `DROP`: el runtime lo traduce a `RENAME … TO _deprecated_…` en vez de destruir. `kind` y `since` son opcionales exactamente como en el runtime (`MigrationEntry`): sin `kind`, la entrada se lee `expand`, igual que la ruta pelada.",
+      "required": [
+        "file"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Ruta del `.sql` relativa al paquete — la misma ruta que llevaría la forma string."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "expand",
+            "backfill",
+            "contract"
+          ],
+          "default": "expand",
+          "description": "Qué hace la migración (vocabulario CERRADO de `migration_guard::Kind`): `expand` = aditiva, el 95% de los casos; `backfill` = DML idempotente sobre tablas propias; `contract` = lo destructivo, único sitio donde se admite `DROP`."
+        },
+        "since": {
+          "type": "string",
+          "description": "Versión del módulo que dejó de usar lo que este `contract` retira. El runtime aún no lo consume (la ventana del contract es la segunda iteración de hub#542), pero viaja en el manifest desde ya para no tener que republicar cuando lo haga."
         }
       }
     }
