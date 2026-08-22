@@ -208,6 +208,26 @@ test('vitest exiting 0 without saying WHAT it ran is not a pass', () => {
   m.clean();
 });
 
+test('a COLORIZED summary still counts: the gate must not call green runs unread', () => {
+  // vitest 4.1.11 colors its reporter output even through a pipe when CI sets the env, so the
+  // `Test Files` line arrives wrapped in ANSI escapes and the regex saw NOTHING — every module
+  // PR whose vitest actually ran turned red on «no pude leer cuántos ficheros corrió» while the
+  // suite itself had passed (appointments#80/#81, 2026-08-22). The line below is byte-for-byte
+  // what that run printed.
+  const colored =
+    '\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m2 passed\u001b[39m\u001b[22m \u001b[90m (2)\u001b[39m';
+  const v = fakeVitest(`console.log(${JSON.stringify(colored)});\nprocess.exit(0);\n`);
+  const m = mod({ 'ui/lib/a.test.ts': '', 'ui/lib/b.test.ts': '' });
+  stub(m.dir, 'happy-dom');
+  const { errors, notRun, results } = runTsTests(m.dir, { vitest: v.bin });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(notRun, []);
+  assert.equal(results.length, 2, `expected the two files to count as run, got ${JSON.stringify(results)}`);
+  assert.ok(results.every((r) => r.ran));
+  v.clean();
+  m.clean();
+});
+
 test('vitest running FEWER files than `--list` promised FAILS the gate', () => {
   // The drift that would reopen #55 from the vitest side: the discovery says three files, the
   // config collects two, and both halves report success. The number is the check.
