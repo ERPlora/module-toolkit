@@ -114,7 +114,8 @@ test('un test de TypeScript en ROJO tumba el comando', () => {
 });
 
 test('en verde los cuenta y lo dice', () => {
-  const v = fakeVitest('process.exit(0);\n');
+  // The summary line is part of the contract now: exit 0 without saying what ran is not a pass.
+  const v = fakeVitest("console.log(' Test Files  2 passed (2)');\n");
   const m = mod({ 'ui/lib/a.test.ts': '', 'ui/lib/b.test.ts': '' });
   stub(m.dir, 'happy-dom');
   const r = run(m.dir, [], { ERPLORA_VITEST: v.bin });

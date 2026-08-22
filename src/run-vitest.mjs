@@ -283,15 +283,63 @@ export function runTsTests(dir, { vitest = undefined, env = process.env } = {}) 
     encoding: 'utf8',
   });
   const output = `${r.stdout ?? ''}${r.stderr ?? ''}`;
-  if (r.status === 0) {
-    for (const file of files) results.push({ file, kind: 'typescript', ran: true, output });
-  } else {
+  if (r.status !== 0) {
     errors.push(
       `${files.length} test(s) de TypeScript en ROJO (exit ${r.status}) — ` +
         `${files.join(', ')}\n${indent(output)}`,
     );
+    return { results, errors, notRun };
   }
+
+  // 🔴 EXIT 0 IS NOT THE CONTRACT — «se ejecutaron» LO ES. The same rule `run-batteries.mjs`
+  // applies to a `*.postgres.test.py` that returns clean without reaching Postgres, one layer up:
+  // `--list` promised N files to the gate, and until this nothing checked that N were run. Reading
+  // the count back is what stops #55 from reopening on the vitest side — a config whose `include`
+  // drifts from `TS_TEST_GLOBS` would collect fewer files, and both halves would report success.
+  const summary = collectedSummary(output);
+  if (!summary) {
+    errors.push(
+      `${files.length} test(s) de TypeScript: vitest salió con 0 pero NO pude leer cuántos ` +
+        'ficheros corrió (no hay línea `Test Files … (N)` en su salida). Un 0 sin constancia de ' +
+        `que se ejecutara algo es el verde que no prueba nada\n${indent(output)}`,
+    );
+    return { results, errors, notRun };
+  }
+  if (summary.total < files.length) {
+    errors.push(
+      `vitest solo recogió ${summary.total} de los ${files.length} fichero(s) que \`--list\` ` +
+        'promete al gate: los que faltan NO se han ejecutado y nadie se habría enterado. La ' +
+        `\`include\` de la config y \`TS_TEST_GLOBS\` han dejado de decir lo mismo — ${files.join(', ')}\n${indent(output)}`,
+    );
+    return { results, errors, notRun };
+  }
+  if (summary.skipped) {
+    // Deliberate (`describe.skip`) rather than infrastructure, so it is not a red — but it is not a
+    // pass either. Zero of the 212 files skip themselves today: the first one to do it says so.
+    notRun.push(
+      `${summary.skipped} de ${summary.total} fichero(s) de TypeScript se SALTARON enteros ` +
+        '(`describe.skip`/`it.skip`): no se cuentan como verdes. Quítales el skip o bórralos si ' +
+        'ya no prueban nada',
+    );
+  }
+  for (const file of files) results.push({ file, kind: 'typescript', ran: true, output });
   return { results, errors, notRun };
+}
+
+/**
+ * How many test FILES vitest actually collected, read from the line every reporter prints last:
+ *
+ *   ` Test Files  26 passed (26)`              → 26 collected, none skipped
+ *   ` Test Files  1 passed | 1 skipped (2)`    → 2 collected, 1 of them skipped whole
+ *
+ * The number in parentheses is the total; the breakdown before it is where a `skipped` shows up.
+ * `null` when the line is not there at all, which is a failure of its own — see the caller.
+ */
+export function collectedSummary(output) {
+  const line = /^\s*Test Files\s+(.*?)\((\d+)\)\s*$/m.exec(output);
+  if (!line) return null;
+  const skipped = /(\d+)\s+skipped/.exec(line[1]);
+  return { total: Number(line[2]), skipped: skipped ? Number(skipped[1]) : 0 };
 }
 
 function indent(text) {
