@@ -228,6 +228,42 @@ test('a COLORIZED summary still counts: the gate must not call green runs unread
   m.clean();
 });
 
+test('a COLORIZED run that collected FEWER files than promised is STILL red', () => {
+  // The other half of the ANSI fix, and the half that says it is a fix rather than an `exit 0` in
+  // disguise: pulling the paint off must not also pull off the CHECK. Same colorized shape the CI
+  // run printed, but two files collected where `--list` promised three — the drift of #55 arriving
+  // dressed in color. Before the strip this came back red for the WRONG reason («no pude leer
+  // cuántos ficheros corrió»), which is why the green case alone could never prove the fix: a
+  // parser that gave up on every colorized line passed it too.
+  const colored =
+    '\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m2 passed\u001b[39m\u001b[22m \u001b[90m (2)\u001b[39m';
+  const v = fakeVitest(`console.log(${JSON.stringify(colored)});\nprocess.exit(0);\n`);
+  const m = mod({ 'ui/lib/a.test.ts': '', 'ui/lib/b.test.ts': '', 'ui/lib/c.test.ts': '' });
+  stub(m.dir, 'happy-dom');
+  const { errors, results } = runTsTests(m.dir, { vitest: v.bin });
+  assert.equal(errors.length, 1, `expected one error, got ${JSON.stringify(errors)}`);
+  assert.match(errors[0], /solo recogió 2 de los 3/, 'the COUNT is what failed it, not the reading');
+  assert.deepEqual(results, [], 'nothing may be reported as run');
+  v.clean();
+  m.clean();
+});
+
+test('a COLORIZED file skipped whole is NAMED too, not swallowed with the escapes', () => {
+  // `skipped` is read from the breakdown BEFORE the parenthesis, which is the part vitest paints
+  // most heavily (yellow). Stripping only around the total would count this file as a pass.
+  const colored =
+    '\u001b[2m Test Files \u001b[22m \u001b[32m1 passed\u001b[39m \u001b[33m1 skipped\u001b[39m \u001b[90m (2)\u001b[39m';
+  const v = fakeVitest(`console.log(${JSON.stringify(colored)});\nprocess.exit(0);\n`);
+  const m = mod({ 'ui/lib/a.test.ts': '', 'ui/lib/b.test.ts': '' });
+  stub(m.dir, 'happy-dom');
+  const { errors, notRun } = runTsTests(m.dir, { vitest: v.bin });
+  assert.deepEqual(errors, []);
+  assert.equal(notRun.length, 1, `expected one warning, got ${JSON.stringify(notRun)}`);
+  assert.match(notRun[0], /salt|skip/i);
+  v.clean();
+  m.clean();
+});
+
 test('vitest running FEWER files than `--list` promised FAILS the gate', () => {
   // The drift that would reopen #55 from the vitest side: the discovery says three files, the
   // config collects two, and both halves report success. The number is the check.
