@@ -25,6 +25,12 @@
 # family suffix at all, `taxes` writes two of its batteries in bash). A `.py`/`.sh` left in `tests/`
 # that nothing will execute FAILS the gate by name: a test nobody runs is worse than no test.
 #
+# And since module-toolkit#74 the module's TYPESCRIPT tests too — `ui/**/*.test.ts`, run under
+# vitest + happy-dom, which is where nearly all of the screen logic lives. 210 files across the 25
+# repos and the gate ran ZERO of them: written, green on the author's machine, and breaking one
+# merged green. The same net applies backwards: a `.test.ts` (or `.spec.ts`) that no pattern picks
+# up FAILS the gate rather than disappearing.
+#
 # Three things stay out, and they are NAMED rather than faked:
 #
 #   1. compiling the handler to wasm32 and `cargo test` of `handler/` — the 21 modules with a
@@ -32,10 +38,11 @@
 #      ERPlora/hub here; fetching one means a read token for a private repo living in 25 repos,
 #      which is a security decision, not a CI detail. The validator says it out loud
 #      ("handler WASM SIN VERIFICAR");
-#   2. the vitest component tests — the `.test.ts` files DO live in the module repo, but vitest,
-#      `happy-dom`, `@erplora/outfitkit` and `@erplora/module-sdk` are devDependencies of
-#      `modules-workspace`, and the last two are `file:` paths into sibling checkouts that do not
-#      exist on a runner;
+#   2. `@erplora/module-sdk`, and with it MOST of the TypeScript tests — see below. Since
+#      module-toolkit#74 this action DOES install the vitest environment and `erplora test` DOES
+#      run `ui/**/*.test.ts`; what is still out of reach is that one package, which lives in the
+#      PRIVATE ERPlora/hub and is not published to npm. The tests that need it are reported as NOT
+#      RUN, by name and with the reason, never as passed;
 #   3. nothing else. A battery that skips ITSELF (every `*.postgres.test.py` exits 0 when it cannot
 #      reach Postgres) is reported as a FAILURE here, never as a pass.
 name: Validate an ERPlora module
@@ -58,6 +65,16 @@ inputs:
     description: Postgres image for the scratch database. Pinned to the major that runs in production.
     required: false
     default: 'postgres:18'
+  typescript:
+    description: >
+      'true' to also install the vitest environment so `erplora test` can run the module's
+      TypeScript tests (`ui/**/*.test.ts`). ON by default and it should stay on: a step that never
+      runs is a step that does not work, and the install is skipped outright for a module that
+      carries no `.test.ts`. What it CANNOT supply is `@erplora/module-sdk` — private, unpublished
+      (ERPlora/hub#1097) — and the toolkit reports the tests that need it as NOT RUN, by name. Set
+      to 'false' to skip the install entirely.
+    required: false
+    default: 'true'
   node-version:
     description: Node version used to run the validator.
     required: false
@@ -158,19 +175,28 @@ runs:
         # rule and the gate cannot disagree with the command it is about to run.
         files=$(node "$ERPLORA_TOOLKIT/bin/erplora.mjs" test "${{ inputs.path }}" --list)
         n=$(printf '%s' "$files" | grep -c . || true)
+        # Split by family: the Python venv and the node packages cost real seconds each, and most
+        # modules need one of the two and not the other. A module with only `.test.ts` must not pay
+        # for `setup-python`, and one with only `tests/*.py` must not pay for an `npm install`.
+        py=$(printf '%s\n' "$files" | grep -cE '\.(py|sh)$' || true)
+        ts=$(printf '%s\n' "$files" | grep -cE '\.test\.ts$' || true)
         echo "count=$n" >> "$GITHUB_OUTPUT"
-        echo "→ $n battery file(s) in ${{ inputs.path }}/tests"
+        echo "python=$py" >> "$GITHUB_OUTPUT"
+        echo "typescript=$ts" >> "$GITHUB_OUTPUT"
+        echo "→ $n test file(s) in ${{ inputs.path }}: $py battery(ies), $ts TypeScript"
         printf '%s\n' "$files"
 
-    # Only when there is something to run: 22 of the 25 modules carry none, and neither
-    # `setup-python` nor the venv should cost them a second.
+    # Only when there is a PYTHON/SHELL battery to run: 22 of the 25 modules carry none, and
+    # neither `setup-python` nor the venv should cost them a second. (Before module-toolkit#74 this
+    # read the total, which was the same number; now that `--list` also carries the `.test.ts`, a
+    # module with only those would have installed a venv it never uses.)
     - uses: actions/setup-python@v5
-      if: steps.batteries.outputs.count != '0'
+      if: steps.batteries.outputs.python != '0'
       with:
         python-version: '3.12'
 
     - name: Python for the batteries (a venv with jsonschema)
-      if: steps.batteries.outputs.count != '0'
+      if: steps.batteries.outputs.python != '0'
       shell: bash
       run: |
         set -euo pipefail
@@ -184,11 +210,87 @@ runs:
         "$venv/bin/pip" install --quiet --disable-pip-version-check jsonschema
         echo "ERPLORA_PYTHON=$venv/bin/python" >> "$GITHUB_ENV"
 
+    # ── The vitest environment for the module's TypeScript tests (module-toolkit#74) ─────────────
+    #
+    # `ui/**/*.test.ts` is where nearly all of the screen logic is checked — 210 files across the 25
+    # repos, and until this the gate ran none of them. Running them needs five packages. Four are
+    # public and are installed here; the fifth is not, and that is said out loud rather than faked:
+    #
+    #   vitest · happy-dom · lit · @ionic/core ·
+    #   @erplora/outfitkit                              → npm, installed below
+    #   @erplora/module-sdk                             → ERPlora/hub/packages/module-sdk. PRIVATE
+    #                                                     repo, not published. `secrets.GH_PAT`
+    #                                                     never reaches a private repository on the
+    #                                                     free plan (same wall as ci.yml), so there
+    #                                                     is no credential to check the hub out with.
+    #                                                     Publishing it is ERPlora/hub#1097; adding
+    #                                                     it below is then a one-line change.
+    #
+    # 🔴 WHY THE STEP RUNS ANYWAY, with 23 of the 25 modules importing the missing one. Measured
+    # before deciding: without the SDK vitest does not say "the environment is incomplete", it
+    # reports a resolution error per file — 6 of the 8 files of `taxes`, 51 of the 53 of `sales` —
+    # which reads exactly like 51 broken tests. So the toolkit checks the packages BEFORE spawning
+    # and reports those modules as NOT RUN, named, gate green. Measured on the 25 repos: 35 of the
+    # 211 files DO run today (`flows` 26, `appointments` 9 — they never import the SDK), and 176 are
+    # named as not run. What the step buys is that the machinery is exercised on every run instead
+    # of sitting dark until somebody flips it, and the day the SDK is installable the other 176
+    # light up with one line added below.
+    #
+    # Skipped outright for a module with no `.test.ts`, so it costs those nothing.
+    - name: Node packages for the module's TypeScript tests
+      if: inputs.typescript == 'true' && steps.batteries.outputs.typescript != '0'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mod=$(cd "${{ inputs.path }}" && pwd)
+        # Versions come from the MODULE's own package.json, so the gate cannot drift from what the
+        # author develops against — except where that file says `workspace:*`, a specifier that
+        # means "whatever the dev workspace has" and resolves to nothing off it. There, and only
+        # there, the fallback applies.
+        ver() {
+          node -e '
+            // `node -e` puts the user arguments straight after argv[0]: there is no script path.
+            const [, manifest, name, fallback] = process.argv;
+            let declared = {};
+            try {
+              const p = require(manifest);
+              declared = { ...p.dependencies, ...p.devDependencies };
+            } catch { /* a module without package.json takes the fallbacks */ }
+            const v = declared[name];
+            process.stdout.write(v && /^[~^]?[0-9]/.test(v) ? v : fallback);
+          ' "$mod/package.json" "$1" "$2"
+        }
+        deps="$RUNNER_TEMP/erplora-module-ui-deps"
+        mkdir -p "$deps"
+        # A scratch prefix, never the module itself: `npm install` inside the module would try to
+        # resolve its `workspace:*` dependencies and fail as a whole.
+        #
+        # `@ionic/core` is imported by nothing: `ui/lib/ionic-fill-needs-md.test.ts` (the mirror of
+        # hub#760 that `inventory`, `pricing` and `staff` carry) reads Ionic's own CSS through
+        # `require.resolve`, to prove the rule it enforces still has a reason to exist. Without it
+        # those three modules are red on «Cannot find module», not on their own logic.
+        npm install --prefix "$deps" --no-audit --no-fund --loglevel=error \
+          "vitest@$(ver vitest ^4.1.10)" \
+          "happy-dom@$(ver happy-dom ^20.0.0)" \
+          "lit@$(ver lit ^3.2.0)" \
+          "@ionic/core@$(ver @ionic/core ^8.8.0)" \
+          "@erplora/outfitkit@$(ver @erplora/outfitkit latest)"
+        # ESM ignores NODE_PATH, so the packages have to be physically resolvable from the module.
+        mkdir -p "$mod/node_modules/@erplora" "$mod/node_modules/@ionic"
+        for pkg in vitest happy-dom lit; do
+          ln -sfn "$deps/node_modules/$pkg" "$mod/node_modules/$pkg"
+        done
+        ln -sfn "$deps/node_modules/@ionic/core" "$mod/node_modules/@ionic/core"
+        ln -sfn "$deps/node_modules/@erplora/outfitkit" "$mod/node_modules/@erplora/outfitkit"
+        # The door the toolkit reads, so the gate runs the vitest IT installed and never whatever a
+        # self-hosted runner happens to carry from a previous job. Same shape as `ERPLORA_PYTHON`.
+        echo "ERPLORA_VITEST=$deps/node_modules/vitest/vitest.mjs" >> "$GITHUB_ENV"
+
     # ALWAYS, with no `if:` — including on the modules that carry no battery at all. Without the
     # container the Postgres batteries cost nothing (they are reported as NOT RUN, not run), and a
     # `tests/` holding nothing but an invisible check is precisely the case a `count != 0` guard
     # would skip: it has zero batteries by definition (module-toolkit#55).
-    - name: erplora test (the module's own batteries)
+    - name: erplora test (the module's own batteries + TypeScript tests)
       shell: bash
       run: |
         set -euo pipefail

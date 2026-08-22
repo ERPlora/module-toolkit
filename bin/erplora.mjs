@@ -7,7 +7,8 @@
 //   erplora build <dir>        compila el WC a dist/<id>.esm.js
 //   erplora validate <dir> [--pg]  valida manifest + CSP del bundle + contratos (ADR-0127);
 //                              con --pg, PREPARA cada SQL contra un Postgres efímero (#32)
-//   erplora test <dir>         corre las baterías propias del módulo (contrato + Postgres)
+//   erplora test <dir>         corre las baterías propias del módulo (contrato + Postgres) y sus
+//                              tests de TypeScript (`ui/**/*.test.ts`, vitest + happy-dom)
 //                              `--list` las enumera sin correrlas (lo que usa el gate compartido)
 //   erplora contracts <dir>    (re)genera .erplora/contracts.json
 //   erplora pack|sign|publish  empaquetado/firma/publicación al marketplace (§7.4)
@@ -50,8 +51,10 @@ const usage = () => {
   test <dir> [--list]            corre las baterías propias del módulo (cualquier
                                  tests/**/*.test.py|.sh; las que necesitan Postgres —por nombre
                                  \`.pg.\`/\`.postgres.\` o porque leen el contenedor— usan el de
-                                 \`ERPLORA_TEST_PG_CONTAINER\`). Falla si en tests/ queda un
-                                 .py/.sh que nadie va a ejecutar. \`--list\` solo las enumera
+                                 \`ERPLORA_TEST_PG_CONTAINER\`) Y sus tests de TypeScript
+                                 (\`ui/**/*.test.ts\` bajo vitest + happy-dom; el binario se puede
+                                 fijar con \`ERPLORA_VITEST\`). Falla si queda un test que nadie
+                                 va a ejecutar. \`--list\` solo los enumera
   contracts <dir>                (re)genera .erplora/contracts.json (superficie consumida)
   pack <dir>                     module.zip + manifest.lock + SHA256
   sign <dir>                     SHA256 + firma ed25519 (\`<zip>.sig\`, MODULE_SIGNING_KEY)
@@ -98,11 +101,16 @@ try {
       const { readFileSync } = await import('node:fs');
       const { join } = await import('node:path');
       const { discoverBatteries, runBatteries } = await import('../src/run-batteries.mjs');
+      // module-toolkit#74: and the module's TypeScript tests — `ui/**/*.test.ts`, the Web Component
+      // checks where nearly all of the screen logic lives. 210 of them across the 25 repos, and
+      // until this the gate ran zero.
+      const { discoverTsTests, runTsTests } = await import('../src/run-vitest.mjs');
       // `--list`: what WOULD run, one path per line, and nothing else on stdout. The shared gate
       // asks the toolkit instead of re-implementing the discovery rule in YAML — which is how the
       // gate's own `ls` of two suffixes ended up disagreeing with the toolkit (module-toolkit#55).
       if (flags.has('--list')) {
-        for (const f of Object.values(discoverBatteries(dir)).flat().sort()) console.log(f);
+        const all = [...Object.values(discoverBatteries(dir)).flat(), ...discoverTsTests(dir)];
+        for (const f of all.sort()) console.log(f);
         break;
       }
       const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
@@ -113,19 +121,25 @@ try {
       // over the python of a venv that has it. Choosing the interpreter is what lets it do that
       // without touching the 25 module repos.
       const python = process.env.ERPLORA_PYTHON || 'python3';
-      const { results, errors, notRun } = runBatteries(dir, manifest, { container, python });
+      const py = runBatteries(dir, manifest, { container, python });
+      // The TypeScript half runs under vitest, which the gate installs next to the module and hands
+      // over through `ERPLORA_VITEST` — the same door `ERPLORA_PYTHON` opens for the batteries.
+      const ts = runTsTests(dir);
+      const results = [...py.results, ...ts.results];
+      const errors = [...py.errors, ...ts.errors];
+      const notRun = [...py.notRun, ...ts.notRun];
       for (const r of results.filter((x) => x.ran)) console.log(`  ✓ ${r.file}`);
       // Never a silent pass: what did not run is named, every time.
       for (const n of notRun) console.warn(`  ⚠ ${n}`);
       if (errors.length) {
-        throw new Error(`baterías del módulo (module-toolkit#50):\n  - ${errors.join('\n  - ')}`);
+        throw new Error(`baterías del módulo (module-toolkit#50/#74):\n  - ${errors.join('\n  - ')}`);
       }
       const ran = results.filter((x) => x.ran).length;
       console.log(
         ran || notRun.length
           ? `✓ test ${manifest.id}: ${ran} batería(s) en verde` +
               (notRun.length ? `, ${notRun.length} sin correr` : '')
-          : `✓ test ${manifest.id}: sin baterías propias (0 baterías en tests/)`,
+          : `✓ test ${manifest.id}: sin baterías propias (0 baterías en tests/ ni en ui/)`,
       );
       break;
     }
