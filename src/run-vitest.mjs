@@ -334,9 +334,19 @@ export function runTsTests(dir, { vitest = undefined, env = process.env } = {}) 
  *
  * The number in parentheses is the total; the breakdown before it is where a `skipped` shows up.
  * `null` when the line is not there at all, which is a failure of its own — see the caller.
+ *
+ * The line is matched COLORIZED: vitest ≥ 4.1.11 paints its reporter with ANSI escapes even
+ * through a pipe when `CI` is set, and the escapes sit BETWEEN the words (`Test`, `Files`, the
+ * counts), so a plain regex over the raw output sees nothing and every module PR whose vitest
+ * actually ran turned red on «no pude leer cuántos ficheros corrió» while the suite had passed
+ * (appointments#80/#81, 2026-08-22). Stripping the escapes first keeps one matcher for both
+ * shapes — the count is the contract, not the paint.
  */
+const ANSI_ESCAPE = /\u001b\[[0-9;?]*[A-Za-z]/g;
+
 export function collectedSummary(output) {
-  const line = /^\s*Test Files\s+(.*?)\((\d+)\)\s*$/m.exec(output);
+  const plain = output.replace(ANSI_ESCAPE, '');
+  const line = /^\s*Test Files\s+(.*?)\((\d+)\)\s*$/m.exec(plain);
   if (!line) return null;
   const skipped = /(\d+)\s+skipped/.exec(line[1]);
   return { total: Number(line[2]), skipped: skipped ? Number(skipped[1]) : 0 };
