@@ -168,6 +168,43 @@ test('PASA: el `ON` de un JOIN no es un nombre de tabla (falso positivo = módul
   );
 });
 
+// ── #72: el upsert ───────────────────────────────────────────────────────────────────
+//
+// `ON CONFLICT … DO UPDATE SET …` es la forma canónica de sembrar datos de referencia
+// idempotentes en una migración. El `UPDATE` de esa cláusula NO va seguido de una tabla: va
+// seguido de `SET`, que es palabra reservada. Leer `set` como nombre de tabla rechazaba el
+// upsert entero (`taxes/005_category_labels.sql`) — un falso positivo que BLOQUEA, que es la
+// dirección cara de este guard.
+test('PASA (#72): un upsert `ON CONFLICT … DO UPDATE SET` no lee `set` como tabla', () => {
+  // The exact case of the issue: a reference-data seed that corrects what an earlier publish
+  // already seeded — an UPDATE of a real upsert, not a `DO NOTHING` that only works the first day.
+  const upsert = [
+    'INSERT INTO taxes_category_label (key, lang, label, description)',
+    "VALUES ('reduced', 'es', 'Reducido', NULL)",
+    'ON CONFLICT (key, lang) DO UPDATE',
+    '  SET label = EXCLUDED.label, description = EXCLUDED.description;',
+  ].join('\n');
+  assert.deepEqual(
+    guard('taxes', 'migrations/postgres/005_category_labels.sql', upsert),
+    [],
+  );
+  // The other leg of the upsert anchors nothing either: `DO NOTHING` carries no `UPDATE` at all.
+  const doNothing = [
+    'INSERT INTO taxes_category_label (key, lang, label)',
+    "VALUES ('reduced', 'es', 'Reducido')",
+    'ON CONFLICT (key, lang) DO NOTHING;',
+  ].join('\n');
+  assert.deepEqual(guard('taxes', 'migrations/postgres/005_category_labels.sql', doNothing), []);
+});
+
+test('FALLA (#72): un `UPDATE <tabla ajena> SET` de verdad se sigue rechazando', () => {
+  // The control that keeps the fix from opening a hole: the anchor still reads the table of a
+  // real `UPDATE` — only the `SET` KEYWORD stops being taken for a table name.
+  const errors = guard('taxes', 'm.sql', 'UPDATE inventory_item SET x = 1');
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /inventory_item/);
+});
+
 test('el `FROM` ancla salvo en una sentencia que EMPIEZA por SELECT', () => {
   // Una lectura pura no toca nada: el `FROM` de un `SELECT` no se ancla (el mismo criterio que el
   // runtime — anclarlo dejaba módulos correctos sin instalar).

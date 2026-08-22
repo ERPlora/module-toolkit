@@ -214,6 +214,14 @@ export function tablesInventedByCommentSplit(moduleId, sql) {
  * The table names the statement touches. Deliberately SIMPLE: it recognises the shapes a migration
  * really uses and, in doubt, invents nothing — what it does not recognise does not block, because a
  * false positive here leaves a module uninstalled.
+ *
+ * ⚠️ One deliberate DIVERGENCE from the runtime (#72): a `SET` right after an anchor is a keyword,
+ * never a table, so an `ON CONFLICT … DO UPDATE SET …` upsert anchors nothing besides its `INTO`.
+ * The runtime's `tables_touched` (as of develop and every tag to date) still reads that `SET` as a
+ * table and refuses the upsert at install — a hub-side bug in its own right. Until it is fixed
+ * there, this door passes what current hubs reject: it is still the right call, because the guard's
+ * contract is what the SQL MEANS, and an upsert on the module's own table is legal Postgres the
+ * runtime rejects by accident.
  */
 export function tablesTouched(statement) {
   const clean = stripComments(statement);
@@ -238,6 +246,12 @@ export function tablesTouched(statement) {
     for (let j = i + 1; j < tokens.length; j += 1) {
       const nextUpper = tokens[j].toUpperCase();
       if (['IF', 'NOT', 'EXISTS', 'ONLY'].includes(nextUpper)) continue;
+      // `SET` after an anchor is never a table: in `ON CONFLICT … DO UPDATE SET col = …` (#72) the
+      // `UPDATE` of the upsert carries no table at all, and reading the keyword as one rejected
+      // EVERY upsert — the canonical way to seed idempotent reference data. A table called `set`
+      // cannot exist under the module contract anyway (it would have to start `<module_id>_`), so
+      // skipping it can never mask a real violation.
+      if (nextUpper === 'SET') break;
       const name = tokens[j].replace(/^[^A-Za-z0-9_]+|[^A-Za-z0-9_]+$/g, '').toLowerCase();
       if (name && !seen.has(name)) {
         seen.add(name);
