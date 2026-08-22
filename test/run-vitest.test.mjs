@@ -160,18 +160,80 @@ test('a red TypeScript test FAILS the gate', () => {
   m.clean();
 });
 
-test('a green run reports the files it ran', () => {
+/** A stand-in for vitest that exits 0 after printing the summary line the real one prints. */
+function fakeVitest(body) {
   const fake = mkdtempSync(join(tmpdir(), 'erplora-fake-vitest-'));
   const bin = join(fake, 'vitest.mjs');
-  writeFileSync(bin, "process.exit(0);\n");
+  writeFileSync(bin, body);
+  return { bin, clean: () => rmSync(fake, { recursive: true, force: true }) };
+}
+
+/** What vitest prints at the end of a run: `Test Files  2 passed (2)`. */
+function summary(line) {
+  return `console.log(${JSON.stringify(` Test Files  ${line}`)});\nprocess.exit(0);\n`;
+}
+
+test('a green run reports the files it ran', () => {
+  const v = fakeVitest(summary('2 passed (2)'));
   const m = mod({ 'ui/lib/a.test.ts': '', 'ui/lib/b.test.ts': '' });
   stub(m.dir, 'happy-dom');
-  const { results, errors, notRun } = runTsTests(m.dir, { vitest: bin });
+  const { results, errors, notRun } = runTsTests(m.dir, { vitest: v.bin });
   assert.deepEqual(errors, []);
   assert.deepEqual(notRun, []);
   assert.equal(results.length, 2);
   assert.deepEqual(results.map((r) => r.file).sort(), ['ui/lib/a.test.ts', 'ui/lib/b.test.ts']);
   assert.ok(results.every((r) => r.ran));
+  v.clean();
+  m.clean();
+});
+
+// ── exit 0 is not the contract: «it actually ran» is (module-toolkit#57/#61) ───────────────────
+//
+// The same rule `run-batteries.mjs` applies to a `*.postgres.test.py` that exits 0 without
+// reaching Postgres. Trusting vitest's status code alone would buy back, one layer up, exactly the
+// green-that-proves-nothing this issue is about: `--list` promises N files to the gate, and
+// nothing checked that N files were run.
+
+test('vitest exiting 0 without saying WHAT it ran is not a pass', () => {
+  // No summary line at all. The run cannot be confirmed, so it is not confirmed — the alternative
+  // is a gate that certifies whatever silence it is handed.
+  const v = fakeVitest('process.exit(0);\n');
+  const m = mod({ 'ui/lib/a.test.ts': '' });
+  stub(m.dir, 'happy-dom');
+  const { errors, results } = runTsTests(m.dir, { vitest: v.bin });
+  assert.equal(errors.length, 1, `expected one error, got ${JSON.stringify(errors)}`);
+  assert.match(errors[0], /cuántos|no pude leer/i);
+  assert.deepEqual(results, []);
+  v.clean();
+  m.clean();
+});
+
+test('vitest running FEWER files than `--list` promised FAILS the gate', () => {
+  // The drift that would reopen #55 from the vitest side: the discovery says three files, the
+  // config collects two, and both halves report success. The number is the check.
+  const v = fakeVitest(summary('2 passed (2)'));
+  const m = mod({ 'ui/lib/a.test.ts': '', 'ui/lib/b.test.ts': '', 'ui/lib/c.test.ts': '' });
+  stub(m.dir, 'happy-dom');
+  const { errors } = runTsTests(m.dir, { vitest: v.bin });
+  assert.equal(errors.length, 1, `expected one error, got ${JSON.stringify(errors)}`);
+  assert.match(errors[0], /3/);
+  assert.match(errors[0], /2/);
+  v.clean();
+  m.clean();
+});
+
+test('a file vitest SKIPPED whole is NAMED, never counted as green', () => {
+  // Zero of the 212 files skip themselves today, which is precisely when the alarm goes on: the
+  // file that trips it is the one that introduces the skip, on its own pull request.
+  const v = fakeVitest(summary('1 passed | 1 skipped (2)'));
+  const m = mod({ 'ui/lib/a.test.ts': '', 'ui/lib/b.test.ts': '' });
+  stub(m.dir, 'happy-dom');
+  const { errors, notRun } = runTsTests(m.dir, { vitest: v.bin });
+  assert.deepEqual(errors, []);
+  assert.equal(notRun.length, 1, `expected one warning, got ${JSON.stringify(notRun)}`);
+  assert.match(notRun[0], /1/);
+  assert.match(notRun[0], /salt|skip/i);
+  v.clean();
   m.clean();
 });
 
@@ -180,22 +242,20 @@ test('vitest is invoked with the toolkit\'s config, in the module directory', ()
   // leaving the choice to vitest's defaults would run them in the `node` environment — where a
   // Web Component test cannot even mount — and the two that DO carry one could quietly narrow
   // their own `include`. The gate runs what the gate says it runs.
-  const fake = mkdtempSync(join(tmpdir(), 'erplora-fake-vitest-'));
-  const bin = join(fake, 'vitest.mjs');
-  writeFileSync(
-    bin,
-    "console.log(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));\n",
+  const v = fakeVitest(
+    "console.log(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }));\n" +
+      "console.log(' Test Files  1 passed (1)');\n",
   );
   const m = mod({ 'ui/lib/a.test.ts': '' });
   stub(m.dir, 'happy-dom');
-  const { results } = runTsTests(m.dir, { vitest: bin });
-  const seen = JSON.parse(results[0].output);
+  const { results } = runTsTests(m.dir, { vitest: v.bin });
+  const seen = JSON.parse(results[0].output.split('\n')[0]);
   assert.equal(seen.argv[0], 'run');
   assert.ok(
     seen.argv.some((a) => a === '--config'),
     `the config is passed explicitly: ${seen.argv.join(' ')}`,
   );
-  rmSync(fake, { recursive: true, force: true });
+  v.clean();
   m.clean();
 });
 

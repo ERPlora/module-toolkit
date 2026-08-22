@@ -205,6 +205,12 @@ Tres reglas, y las tres son el motivo de que esto sea código y no tres líneas 
    contenedor, o unos tests de TypeScript sin los paquetes que necesitan, salen como «sin correr»
    con el motivo. Un `*.postgres.test.py` sale con 0 cuando no alcanza el contenedor, así que
    «verde» y «no se ejecutó» son idénticos desde fuera — y esa distinción es todo el asunto.
+4. **El contrato no es «exit 0», es «se ejecutaron».** Tras un vitest en verde se lee del resumen
+   cuántos ficheros recogió y se compara con los que `--list` prometió: si recogió menos, **falla**
+   (es la deriva que reabriría #55 por el lado de la config, con las dos mitades diciendo que todo
+   fue bien); si se saltó alguno entero (`describe.skip`), sale «sin correr» por su nombre; y un
+   0 del que no se pueda leer ese resumen tampoco pasa. Hoy **ninguno** de los 212 ficheros se
+   salta a sí mismo — la alarma se instala con la casa limpia, para que salte con el primero.
 
 **La config de vitest la pone el toolkit**, no el módulo, porque el repo del módulo está limpio a
 propósito: 22 de los 25 no llevan `tsconfig.json` (sin él, `@state()` de Lit ni siquiera compila) y
@@ -215,10 +221,15 @@ casos están reproducidos sobre un checkout limpio en `test/run-vitest.test.mjs`
 **Lo que todavía NO corre en CI, dicho en voz alta.** Montar un WC de módulo necesita cinco
 paquetes: `vitest`, `happy-dom`, `lit`, `@ionic/core` y `@erplora/outfitkit` salen de npm y el gate
 los instala; `@erplora/module-sdk` vive en `ERPlora/hub` —privado y sin publicar— y en un runner no
-hay credencial que lo alcance. Medido sobre los 25 repos: **35 de los 211 ficheros se ejecutan hoy**
-(`flows` 26, `appointments` 9, que no lo importan) y **176 se declaran «sin correr»** con el paquete
+hay credencial que lo alcance. Medido sobre los 25 repos: **35 de los 212 ficheros se ejecutan hoy**
+(`flows` 26, `appointments` 9, que no lo importan) y **177 se declaran «sin correr»** con el paquete
 que falta por nombre. Publicarlo es [ERPlora/hub#1097](https://github.com/ERPlora/hub/issues/1097);
-el día que exista, añadirlo al paso de instalación es **una línea** y los 176 se encienden solos.
+el día que exista, añadirlo al paso de instalación es **una línea** y los 177 se encienden solos.
+
+Y el estado de partida, medido antes de tocar nada (`npx vitest run` en `modules-workspace`):
+**212 ficheros · 2.290 tests · todos en verde**. No hay rojos preexistentes que repartir por módulo
+—al revés que en `outfitkit#66`, donde eran 9 ficheros—, así que esto entra de golpe y no en
+trinquete: no hace falta ningún `GRANDFATHERED`.
 
 
 El validador **es** el gate: los 24 repos de módulo lo llaman desde aquí. Dos piezas, las dos en
