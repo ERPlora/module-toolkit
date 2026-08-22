@@ -19,10 +19,11 @@
 # seconds. The public packages the running suites DO need are installed one by one below.
 #
 # The file list is EXPLICIT rather than a `validate-*` glob: `manifest-schema`,
-# `canonical-mirrors` (module-toolkit#30/#40), `hub-mirror` (#61) and `run-batteries` (#50) need no
-# dependency either, and leaving them out of the pattern would mean a vendored schema that went
-# missing or unparseable reached the 25 module repos without a single check going red. A new
-# dependency-free suite belongs on this line. (`bin-*` already covers `bin-test-batteries`.)
+# `canonical-mirrors` (module-toolkit#30/#40), `hub-mirror` (#61), `run-batteries` (#50) and
+# `run-vitest` (#74) need no dependency either, and leaving them out of the pattern would mean a
+# vendored schema that went missing or unparseable reached the 25 module repos without a single
+# check going red. A new dependency-free suite belongs on this line. (`bin-*` already covers
+# `bin-test-batteries` and `bin-test-typescript`.)
 #
 # WHAT THIS CI CANNOT CHECK, said out loud (module-toolkit#61). The six mirrors of
 # `canonical-mirrors` need a checkout of ERPlora/hub, and there is none here — nor can there be:
@@ -137,6 +138,7 @@ jobs:
           test/canonical-mirrors.test.mjs
           test/hub-mirror.test.mjs
           test/run-batteries.test.mjs
+          test/run-vitest.test.mjs
 
       # Nobody tidies up after a job on a self-hosted runner: without this, a Postgres stays holding
       # memory on the machine. Only OUR container — never the other slot's. Best-effort on purpose.

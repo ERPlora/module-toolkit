@@ -26,6 +26,7 @@ aporta las dependencias y la configuración de build.
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
 | `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe) **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
 | `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un canal de `host.notify` sin transporte y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), y un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*). |
+| `erplora test <id\|dir> [--list]` | ✅ | Corre **los tests que el módulo ya trae**: sus baterías `tests/**/*.test.py|.sh` (las que necesitan Postgres usan el contenedor de `ERPLORA_TEST_PG_CONTAINER`) **y sus tests de TypeScript** `ui/**/*.test.ts` bajo vitest + happy-dom (§ *Los tests que el módulo ya tenía*). Falla si queda un test que **nadie** va a ejecutar. `--list` los enumera sin correrlos — es lo que el gate lee para decidir qué instalar. |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
 | `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
 | `erplora publish <id\|dir>` | 📋 guía | Imprime el flujo de publicación al marketplace (no automatizado: auth + confirmación). |
@@ -181,12 +182,51 @@ es peor que no tenerlo: enseña que el gate pide cosas que dan igual.
 
 ## El gate de CI de los repos de módulo (ERPlora/pm#107)
 
+## Los tests que el módulo ya tenía
+
+Un repo de módulo trae sus propios tests y, hasta module-toolkit#50/#55/#74, el gate **no corría
+ninguno**: se paraba en `erplora validate`. Se escribían, pasaban en local, y romper uno mergeaba en
+verde. `erplora test` cierra las dos mitades, con la misma regla en las dos:
+
+| Familia | Qué recoge | Cómo se corre |
+|---|---|---|
+| Baterías | cualquier `tests/**/*.test.py` o `*.test.sh` | el intérprete que toque; las que necesitan Postgres (por nombre `.pg.`/`.postgres.` **o porque leen el contenedor**) usan `ERPLORA_TEST_PG_CONTAINER` |
+| TypeScript | `ui/**/*.test.ts` — los Web Components, donde vive casi toda la lógica de pantalla | vitest + happy-dom, con la **config del toolkit** (`src/vitest.module.config.mjs`) |
+
+Tres reglas, y las tres son el motivo de que esto sea código y no tres líneas de YAML:
+
+1. **El descubrimiento vive aquí, una sola vez.** `--list` enumera exactamente lo que se va a
+   correr, y el gate pregunta al toolkit en vez de reimplementar la regla en YAML — que es
+   literalmente como pasó module-toolkit#55.
+2. **La red al revés.** Un fichero que parece un test y que ningún patrón recoge —un `.py`/`.sh`
+   suelto en `tests/`, un `.test.ts`/`.spec.ts` fuera de `ui/`— **tumba el gate por su nombre**. Un
+   test invisible es peor que no tener test: da la confianza sin hacer la comprobación.
+3. **Lo que no corre se NOMBRA, nunca se cuenta como verde.** Una batería de Postgres sin
+   contenedor, o unos tests de TypeScript sin los paquetes que necesitan, salen como «sin correr»
+   con el motivo. Un `*.postgres.test.py` sale con 0 cuando no alcanza el contenedor, así que
+   «verde» y «no se ejecutó» son idénticos desde fuera — y esa distinción es todo el asunto.
+
+**La config de vitest la pone el toolkit**, no el módulo, porque el repo del módulo está limpio a
+propósito: 22 de los 25 no llevan `tsconfig.json` (sin él, `@state()` de Lit ni siquiera compila) y
+los 3 que lo llevan hacen `extends: '../../tsconfig.json'`, una ruta que solo existe dentro del
+workspace de desarrollo (con ella, el transform muere y el módulo recoge **cero** tests). Los dos
+casos están reproducidos sobre un checkout limpio en `test/run-vitest.test.mjs`.
+
+**Lo que todavía NO corre en CI, dicho en voz alta.** Montar un WC de módulo necesita cinco
+paquetes: `vitest`, `happy-dom`, `lit`, `@ionic/core` y `@erplora/outfitkit` salen de npm y el gate
+los instala; `@erplora/module-sdk` vive en `ERPlora/hub` —privado y sin publicar— y en un runner no
+hay credencial que lo alcance. Medido sobre los 25 repos: **35 de los 211 ficheros se ejecutan hoy**
+(`flows` 26, `appointments` 9, que no lo importan) y **176 se declaran «sin correr»** con el paquete
+que falta por nombre. Publicarlo es [ERPlora/hub#1097](https://github.com/ERPlora/hub/issues/1097);
+el día que exista, añadirlo al paso de instalación es **una línea** y los 176 se encienden solos.
+
+
 El validador **es** el gate: los 24 repos de módulo lo llaman desde aquí. Dos piezas, las dos en
 este repo, para que arreglar un agujero no sean 24 PRs:
 
 | Pieza | Qué es |
 |---|---|
-| `.github/actions/validate-module/action.yml` | composite action: instala `typescript`, levanta el Postgres de scratch y corre `erplora validate <dir> --pg` |
+| `.github/actions/validate-module/action.yml` | composite action: instala `typescript`, levanta el Postgres de scratch, corre `erplora validate <dir> --pg` y después `erplora test <dir>` (baterías propias + tests de TypeScript, instalando el entorno de vitest solo si el módulo trae `.test.ts`) |
 | `.github/workflows/module-gate.yml` | workflow **reutilizable** (`workflow_call`) que hace el checkout del repo llamante y ejecuta la action |
 
 El stub que va en cada repo de módulo (`.github/workflows/module-gate.yml`) son ~10 líneas:

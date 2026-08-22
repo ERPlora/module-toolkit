@@ -30,12 +30,22 @@ on:
         required: false
         type: boolean
         default: true
+      typescript:
+        description: >
+          Install the vitest environment so the module's `ui/**/*.test.ts` are RUN and not just
+          listed (module-toolkit#74). ON by default. What it cannot supply is `@erplora/module-sdk`
+          (private, unpublished): the modules that import it are reported as NOT RUN, by name —
+          never as passed, and never as red.
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   validate:
     # `erplora validate` AND, since module-toolkit#50, `erplora test` — the batteries the module
-    # itself carries (any `tests/**/*.test.py` or `*.test.sh` since #55), auto-detected, so a module
-    # without them sees no change.
+    # itself carries (any `tests/**/*.test.py` or `*.test.sh` since #55) and, since #74, its
+    # TypeScript tests (`ui/**/*.test.ts` under vitest + happy-dom). All auto-detected, so a module
+    # without them sees no change and pays for no setup.
     name: erplora validate + test
     # The organization's own runner when `CI_RUNNER_LABEL` is set, the hosted image when it is not.
     # `vars` here resolves against the CALLING repository, so a module repo picks the runner up from
@@ -63,3 +73,4 @@ jobs:
         with:
           path: ${{ inputs.path }}
           pg: ${{ inputs.pg }}
+          typescript: ${{ inputs.typescript }}
