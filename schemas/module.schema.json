@@ -520,7 +520,7 @@
           "min_affected_rows": {
             "type": "integer",
             "minimum": 0,
-            "description": "Contrato de mutación (hub#140): mínimo de filas que las sentencias `sql` del command DEBEN afectar (en total) para que el command se considere exitoso y se emitan sus `emit`. Si el recuento real queda por debajo, la transacción se revierte ENTERA y NO se escribe ningún evento en el outbox (ni notificación al WS) — porque el hecho declarado nunca ocurrió. Es OPT-IN: ausente = comportamiento de siempre (emite haya o no mutado), para no romper los módulos publicados ni los commands genuinamente idempotentes. `1` es el caso habitual de un command de transición (confirmar/anular/cerrar) que NO debe emitir si el `WHERE` no casa; `0` declararía explícitamente un no-op idempotente permitido que sí emite. El error estable distingue `not_found` (0 filas) de `conflict` (>0 pero por debajo del mínimo)."
+            "description": "Contrato de mutación (hub#140): mínimo de filas que las sentencias `sql` del command DEBEN afectar (en total) para que el command se considere exitoso y se emitan sus `emit`. Si el recuento real queda por debajo, la transacción se revierte ENTERA y NO se escribe ningún evento en el outbox (ni notificación al WS) — porque el hecho declarado nunca ocurrió. Es OPT-IN: ausente = comportamiento de siempre (emite haya o no mutado), para no romper los módulos publicados ni los commands genuinamente idempotentes. `1` es el caso habitual de un command de transición (confirmar/anular/cerrar) que NO debe emitir si el `WHERE` no casa; `0` declararía explícitamente un no-op idempotente permitido que sí emite. El error estable distingue `not_found` (0 filas) de `conflict` (>0 pero por debajo del mínimo). El recuento es del LOTE: con varias sentencias, una incondicional al lado de la vigilada (un UPSERT de contador) puede satisfacer el mínimo con la fila que NO era la vigilada — para anclar la guarda a UNA sentencia usa `expect_rows.statement` (hub#1091)."
           },
           "expect_rows": {
             "type": "object",
@@ -539,9 +539,14 @@
                 "type": "string",
                 "maxLength": 500,
                 "description": "Fallback humano opcional (inglés fuente); no debe contener datos internos. Si se omite, el runtime genera uno genérico."
+              },
+              "statement": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Ancla la guarda a UNA sentencia del command (hub#1091): la ruta del fichero SQL, tal cual aparece en `commands.<name>.sql`. Ausente = la suma del lote entero (la semántica documentada de siempre). Con el ancla, SOLO esa sentencia cuenta: una sentencia incondicional hermana (un UPSERT de contador) ya no puede satisfacer el mínimo por la vigilada — `200 ok` sin escribir y con evento falso era el agujero (online_booking#25). El installer rechaza un ancla que no nombre una sentencia del command: un ancla que degrada en silencio al default neutralizado es justo lo que esto cierra."
               }
             },
-            "description": "Gate traducible de filas afectadas (hub#139): la versión con código de dominio estable de `min_affected_rows` (no combinables en un mismo command). Si la mutación afecta menos de `n` filas, rollback ENTERO (mutación + outbox) y el caller recibe HTTP 409 con `{code: error, message}` — nunca un `200 ok` con 0 filas ni un evento falso."
+            "description": "Gate traducible de filas afectadas (hub#139): la versión con código de dominio estable de `min_affected_rows` (no combinables en un mismo command). Si la mutación afecta menos de `n` filas, rollback ENTERO (mutación + outbox) y el caller recibe HTTP 409 con `{code: error, message}` — nunca un `200 ok` con 0 filas ni un evento falso. Por defecto el recuento es del LOTE; con varias sentencias donde una es incondicional, esa promesa solo se cumple declarando `statement` (hub#1091)."
           },
           "ai": {
             "$ref": "#/$defs/aiTool"
