@@ -210,9 +210,20 @@ test('a grandfathered file keeps passing with the controls it had — and NOT wi
 });
 
 test('the pass is per FILE, not per module: a new component inherits nothing', () => {
-  const [id] = FILL_GRANDFATHERED[0];
-  const m = mod({ 'ui/components/erp-brand-new/erp-brand-new.ts': '<ion-input fill="outline"></ion-input>' }, id);
-  assert.equal(checkIonicFill(m.dir, m.manifest).errors.length, 1);
+  // The listed file is present and exactly at its allowance, so the module is in its normal state;
+  // the only offence is the component that did not exist when the list was written.
+  const [id, file, allowed] = FILL_GRANDFATHERED[0];
+  const control = '<ion-input fill="outline"></ion-input>';
+  const m = mod(
+    {
+      [file]: Array.from({ length: allowed }, () => control).join('\n'),
+      'ui/components/erp-brand-new/erp-brand-new.ts': control,
+    },
+    id,
+  );
+  const { errors } = checkIonicFill(m.dir, m.manifest);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /erp-brand-new/, 'the offence is the new component, not the grandfathered file');
   m.clean();
 });
 
@@ -222,7 +233,7 @@ test('the grandfathered list may only SHRINK', () => {
   // entries; a PR that adds a line has to raise them, which is what makes the addition visible.
   const total = FILL_GRANDFATHERED.reduce((n, [, , count]) => n + count, 0);
   assert.ok(
-    FILL_GRANDFATHERED.length <= 27 && total <= 170,
+    FILL_GRANDFATHERED.length <= 22 && total <= 141,
     `the list GREW (${FILL_GRANDFATHERED.length} files / ${total} controls). Nothing gets added: it is ` +
       'the sweep of ERPlora/pm that empties it, one module at a time.',
   );
@@ -233,13 +244,24 @@ test('the grandfathered list may only SHRINK', () => {
 });
 
 test('a module the sweep already FIXED is out of the list, and stays out', () => {
-  // The eight of the first sweep (ERPlora/pm#152). Each one declares `mode="md"` on every control of
-  // its `ui/` at `origin/main` — verified module by module before the entries came out.
+  // The ten the sweep has finished so far (ERPlora/pm#152). Each one declares `mode="md"` on every
+  // control of its `ui/` at `origin/main` — verified module by module before the entries came out.
   //
   // Deleting the lines is only half of it: while a module keeps its allowance, a regression that
   // brings the dead `fill` back passes the gate in silence, and the sweep would have bought nothing.
   // Naming them here is what turns "we fixed it" into something that fails if it comes undone.
-  const swept = ['customers', 'inventory', 'kitchen', 'pricing', 'printing', 'staff', 'tasks', 'whatsapp_inbox'];
+  const swept = [
+    'customers',
+    'inventory',
+    'kitchen',
+    'pricing',
+    'printing',
+    'staff',
+    'tables',
+    'tasks',
+    'tickets',
+    'whatsapp_inbox',
+  ];
   const listed = new Set(FILL_GRANDFATHERED.map(([id]) => id));
   for (const id of swept) {
     assert.ok(!listed.has(id), `${id} was swept clean: its grandfathering is a free pass for a regression now`);
@@ -247,11 +269,88 @@ test('a module the sweep already FIXED is out of the list, and stays out', () =>
 });
 
 test('the list matches what the 25 repos really ship — otherwise it guards nothing', () => {
-  // The positive control of the list itself: every entry names a module that exists. A typo in an id
-  // or a path is a silent free pass, which is the one failure mode grandfathering has.
-  const ids = new Set(FILL_GRANDFATHERED.map(([id]) => id));
-  assert.ok(ids.size >= 14, `only ${ids.size} modules listed: the sweep that built this list missed most of them`);
-  for (const [, file] of FILL_GRANDFATHERED) {
+  // The positive control of the list itself: every entry names a real path under `ui/`. A typo in an
+  // id or a path is a silent free pass, which is the one failure mode grandfathering has.
+  //
+  // There is deliberately NO floor on how many modules are listed: this list's destiny is zero, so
+  // "at least N modules" would turn into a failing assertion the day the sweep succeeds — a test
+  // that breaks on success teaches people to delete tests.
+  const seen = new Set();
+  for (const [id, file] of FILL_GRANDFATHERED) {
     assert.match(file, /^ui\/.*\.(ts|js)$/, `a grandfathered path outside ui/: ${file}`);
+    const key = `${id}:${file}`;
+    assert.ok(!seen.has(key), `duplicated entry: ${key} — two allowances for one file, only one is read`);
+    seen.add(key);
+  }
+});
+
+// ── The other half of the ratchet: an entry may not OUTLIVE the module it covers ──────
+
+test('FAILS: the module is clean but keeps its entry — the allowance covers nothing', () => {
+  // 🔴 THE BUG THIS CLOSES, verbatim. `tickets` finished on 2026-08-22 and its two lines stayed in
+  // the list for two days (ERPlora/pm#152): the list said 170 and reality was 156, so `tickets`
+  // could have brought 14 dead controls back and the gate would have said nothing. An allowance
+  // that no longer covers anything is not harmless bookkeeping — it is an open door.
+  const [id, file] = FILL_GRANDFATHERED[0];
+  const m = mod({ [file]: '<ion-input mode="md" fill="outline"></ion-input>' }, id);
+  const { errors } = checkIonicFill(m.dir, m.manifest);
+  assert.equal(errors.length, 1, `a stale allowance has to be reported: ${JSON.stringify(errors)}`);
+  assert.match(errors[0], /FILL_GRANDFATHERED/, 'the error has to name the list to edit');
+  assert.match(errors[0], /pm#152/, 'and where the sweep is tracked');
+  m.clean();
+});
+
+test('FAILS: the entry points at a file that no longer exists', () => {
+  // The same staleness through the other door: the component was deleted or renamed. Reading only
+  // the files that ARE there would never notice, and the line would sit in the list forever.
+  const [id, file] = FILL_GRANDFATHERED[0];
+  const m = mod({ 'ui/components/erp-other/erp-other.ts': '<ion-input mode="md" fill="outline"></ion-input>' }, id);
+  const { errors } = checkIonicFill(m.dir, m.manifest);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], new RegExp(file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  m.clean();
+});
+
+test('WARNS (does not fail): the file is cleaner than its allowance, but not clean yet', () => {
+  // Half-way is not an offence — going from 9 dead controls to 3 must not turn the author's own
+  // pull request red. But it is the moment the list starts drifting looser than reality, which is
+  // how the `tickets` hole opened, so it is said out loud instead of noticed two days later.
+  const [id, file, allowed] = FILL_GRANDFATHERED[0];
+  assert.ok(allowed > 1, 'this test needs an entry with room to shrink');
+  const m = mod({ [file]: '<ion-input fill="outline"></ion-input>' }, id);
+  const { errors, warnings } = checkIonicFill(m.dir, m.manifest);
+  assert.deepEqual(errors, [], 'a partial fix is progress, not a regression');
+  assert.equal(warnings.length, 1, JSON.stringify(warnings));
+  assert.match(warnings[0], /1 de los \d+/, 'the warning has to say where the file stands');
+  m.clean();
+});
+
+test('a module with no entry at all is not asked about staleness', () => {
+  const m = mod({ 'ui/components/erp-demo/erp-demo.ts': '<ion-input mode="md" fill="outline"></ion-input>' }, 'demo');
+  assert.deepEqual(checkIonicFill(m.dir, m.manifest), { errors: [], warnings: [] });
+  m.clean();
+});
+
+test('an exact allowance is silent: every module still owing passes untouched', () => {
+  // The regression this test guards: making staleness visible must not make the gate noisy for the
+  // modules that have NOT been swept yet. `dead === allowed` is the normal state of the list, and
+  // it has to stay a silent one — for EVERY entry, not just the first.
+  //
+  // Each module is rebuilt whole (all of its entries at once), because that is how the check reads
+  // it: a fixture with one of the two files of `cash_register` would report the other as deleted.
+  const control = '<ion-input fill="outline"></ion-input>';
+  const byModule = new Map();
+  for (const [id, file, allowed] of FILL_GRANDFATHERED) {
+    if (!byModule.has(id)) byModule.set(id, {});
+    byModule.get(id)[file] = Array.from({ length: allowed }, () => control).join('\n');
+  }
+  for (const [id, files] of byModule) {
+    const m = mod(files, id);
+    assert.deepEqual(
+      checkIonicFill(m.dir, m.manifest),
+      { errors: [], warnings: [] },
+      `${id} is exactly at its allowance and must say nothing`,
+    );
+    m.clean();
   }
 });
