@@ -80,6 +80,26 @@ jobs:
           fi
           echo "docker=$(docker --version)"
 
+      # ── ¿Sigue llegando `@erplora/module-sdk`? (ERPlora/hub#1097) ─────────────────────────────
+      #
+      # `module-gate.yml` monta los tests de TypeScript de los 26 módulos sobre esta action, que
+      # `ERPlora/hub` comparte con la organización. Ese ajuste vive en la configuración de OTRO
+      # repo, así que puede desaparecer sin que nadie toque una línea de código — y el día que pase,
+      # los 26 gates se caen a la vez y con pinta de fallo de los módulos.
+      #
+      # Aquí se cae SOLO este repo, que es donde se lee y donde está el arreglo. Es la misma forma
+      # que `check-canonical-mirrors`: la alarma, en el lado que puede oírla.
+      - id: sdk
+        uses: ERPlora/hub/.github/actions/module-sdk@develop
+
+      - name: El SDK que la action promete está de verdad ahí
+        run: |
+          set -euo pipefail
+          sdk='${{ steps.sdk.outputs.path }}'
+          [ -n "$sdk" ] || { echo '::error::la action no ha devuelto ninguna ruta'; exit 1; }
+          [ -f "$sdk/package.json" ] || { echo "::error::$sdk sin package.json"; exit 1; }
+          echo "→ @erplora/module-sdk alcanzable en $sdk"
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
