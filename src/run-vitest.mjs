@@ -30,7 +30,7 @@
 //
 // That was a warning with an expiry date, and it expired. Measured on 2026-08-24 with the functions
 // right below — `bareImports` + `missingPackages`, not a grep, which counts the comments and gets a
-// different answer: 206 of the 245 `.test.ts` files across the 26 module repos, ≈2.600 tests, in 24
+// different answer: 206 of the 245 `.test.ts` files across the 26 module repos, 2.387 tests, in 24
 // modules, were NOT RUN. The blocking package was `@erplora/module-sdk` and only that, in all 24,
 // without one exception. The gate said so in a ⚠ and stayed green in 28 s. A warning is a pass with
 // decoration: `combos` merged 77 tests pinning that an amount typed with a thousands separator is
