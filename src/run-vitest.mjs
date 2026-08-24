@@ -257,9 +257,11 @@ export function runTsTests(dir, { vitest = undefined, env = process.env } = {}) 
 
   const bin = vitest === undefined ? resolveVitest(dir, env) : vitest;
   if (!bin) {
-    notRun.push(
-      `${files.length} test(s) de TypeScript sin correr: no hay \`vitest\` al alcance del módulo. ` +
-        'Darlos por buenos sería el fallo que esta puerta viene a evitar',
+    errors.push(
+      `${files.length} test(s) de TypeScript que NADIE va a ejecutar: no hay \`vitest\` al alcance ` +
+        'del módulo. Darlos por buenos sería el fallo que esta puerta viene a evitar. Remedio: ' +
+        '`npm install -D vitest happy-dom lit @ionic/core @erplora/outfitkit` junto al módulo, o ' +
+        'apunta `ERPLORA_VITEST` al binario de un vitest ya instalado — que es lo que hace el gate',
     );
     return { results, errors, notRun };
   }
@@ -269,10 +271,13 @@ export function runTsTests(dir, { vitest = undefined, env = process.env } = {}) 
   // incomplete": it reports a resolution error per file, which looks exactly like 51 broken tests.
   const missing = missingPackages(dir);
   if (missing.length) {
-    notRun.push(
-      `${files.length} test(s) de TypeScript sin correr: el módulo necesita ${missing.join(', ')} ` +
-        'y no está instalado junto a él. No es un fallo del módulo y no se cuenta como verde ' +
-        '(el que falta hoy en CI es `@erplora/module-sdk` — ERPlora/hub#1097)',
+    errors.push(
+      `${files.length} test(s) de TypeScript que NADIE va a ejecutar: el módulo necesita ` +
+        `${missing.join(', ')} y no está instalado junto a él. Un paquete que falta no convierte ` +
+        'un test en aprobado — el gate lo instala en el paso `Node packages for the module\'s ' +
+        'TypeScript tests`, y `@erplora/module-sdk` llega desde `ERPlora/hub` por la composite ' +
+        'action `module-sdk` (ERPlora/hub#1097). Si sale aquí, ese paso no corrió o no encontró ' +
+        'el paquete',
     );
     return { results, errors, notRun };
   }
