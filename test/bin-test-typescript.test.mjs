@@ -90,15 +90,31 @@ test('un `.test.ts` que ningún patrón recoge tumba el comando', () => {
   m.clean();
 });
 
-test('sin vitest al alcance se declaran SIN CORRER, y el gate sigue verde', () => {
-  // Medido antes de escribirlo: correrlos necesita `@erplora/module-sdk`, que vive en un repo
-  // PRIVADO y no está publicado. Convertir eso en error pondría los 25 repos en rojo por un
-  // paquete que el módulo no puede aportar — y un gate que bloquea todo se apaga, no se obedece.
+test('sin vitest al alcance el comando SE CAE — y dice cómo conseguirlo', () => {
+  // 🔴 ERPlora/hub#1097. Esto salía en VERDE con un ⚠, y el motivo estaba bien razonado:
+  // ejecutarlos necesita `@erplora/module-sdk`, que vive en un repo PRIVADO, y poner 26 repos en
+  // rojo por un paquete que el módulo no puede aportar es cómo un gate deja de leerse. Esa
+  // excepción tenía fecha de caducidad, y caduca aquí: el SDK llega al runner por la composite
+  // action que `ERPlora/hub` comparte con la organización. Ya no queda ningún sitio donde
+  // `erplora test` imprima ✓ sobre un test que nadie ejecutó.
   const m = mod({ 'ui/lib/quantity.test.ts': '' });
   const r = run(m.dir);
-  assert.equal(r.status, 0, r.stdout + r.stderr);
-  assert.match(r.stdout + r.stderr, /sin correr/i);
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout + r.stderr, /NADIE/);
   assert.match(r.stdout + r.stderr, /vitest/);
+  assert.match(r.stdout + r.stderr, /ERPLORA_VITEST/, 'el remedio, no solo el diagnóstico');
+  m.clean();
+});
+
+test('sin `@erplora/module-sdk` el comando SE CAE nombrando el paquete', () => {
+  // El caso real de los 206 ficheros: vitest está, el paquete no. Antes era un ⚠ y 28 s de verde.
+  const v = fakeVitest("console.log(' Test Files  1 passed (1)');\n");
+  const m = mod({ 'ui/lib/quantity.test.ts': "import '@erplora/module-sdk';\n" });
+  stub(m.dir, 'happy-dom');
+  const r = run(m.dir, [], { ERPLORA_VITEST: v.bin });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stdout + r.stderr, /@erplora\/module-sdk/);
+  v.clean();
   m.clean();
 });
 

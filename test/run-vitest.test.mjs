@@ -123,24 +123,49 @@ test('a package that does not resolve is NAMED, never guessed around', () => {
 
 // ── running them ──────────────────────────────────────────────────────────────────────────────
 
-test('without a vitest at hand the tests are NOT RUN — named, never counted as green', () => {
+// 🔴 ERPlora/hub#1097. These two used to assert the opposite — «not run» reported as a WARNING,
+// gate green. That exception was written when `@erplora/module-sdk` could not reach a module
+// runner at all, and putting 25 repos in red over a package they cannot supply is how a gate stops
+// being read. The SDK reaches the runner now (the hub shares a composite action with the
+// organization, the same door module-toolkit#66 opened for the canonical mirrors), so the
+// exception has expired — and with it the last place where `erplora test` printed ✓ over a test
+// nobody executed. The rule is the one #50/#55 already apply to the Python batteries, with no
+// carve-out left: a test that exists and does not run is a FAILURE.
+test('without a vitest at hand the tests FAIL — a test nobody runs is not a pass', () => {
   const m = mod({ 'ui/lib/a.test.ts': '' });
   const { results, errors, notRun } = runTsTests(m.dir, { vitest: null });
   assert.deepEqual(results, []);
-  assert.deepEqual(errors, []);
-  assert.equal(notRun.length, 1);
-  assert.match(notRun[0], /vitest/);
-  assert.match(notRun[0], /1/, 'says how many are not being run');
+  assert.deepEqual(notRun, [], 'not a warning any more');
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /vitest/);
+  assert.match(errors[0], /1/, 'says how many are not being run');
   m.clean();
 });
 
-test('with a package missing they are NOT RUN either, and the package is named', () => {
+test('the vitest failure tells the reader HOW to get one (module-toolkit#87)', () => {
+  const m = mod({ 'ui/lib/a.test.ts': '' });
+  const { errors } = runTsTests(m.dir, { vitest: null });
+  assert.match(errors[0], /npm i(nstall)? -D|npm install/, 'names the command that fixes it');
+  assert.match(errors[0], /ERPLORA_VITEST/, 'names the door the gate itself uses');
+  m.clean();
+});
+
+test('a missing package FAILS the gate, and the package is named', () => {
   const m = mod({ 'ui/lib/a.test.ts': "import '@erplora/module-sdk';\n" });
   stub(m.dir, 'happy-dom');
   const { errors, notRun } = runTsTests(m.dir, { vitest: '/nowhere/vitest.mjs' });
-  assert.deepEqual(errors, []);
-  assert.equal(notRun.length, 1);
-  assert.match(notRun[0], /@erplora\/module-sdk/);
+  assert.deepEqual(notRun, [], 'not a warning any more');
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /@erplora\/module-sdk/);
+  assert.match(errors[0], /1/, 'says how many files are affected');
+  m.clean();
+});
+
+test('a module with NO TypeScript test is untouched by any of this', () => {
+  // The rule is «a test that does not run fails», not «every module must have vitest».
+  const m = mod({ 'ui/lib/a.ts': "import 'lit';\n" });
+  const { results, errors, notRun } = runTsTests(m.dir, { vitest: null });
+  assert.deepEqual([results, errors, notRun], [[], [], []]);
   m.clean();
 });
 
