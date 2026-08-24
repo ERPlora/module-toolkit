@@ -19,11 +19,18 @@
 # seconds. The public packages the running suites DO need are installed one by one below.
 #
 # The file list is EXPLICIT rather than a `validate-*` glob: `manifest-schema`,
-# `canonical-mirrors` (module-toolkit#30/#40), `hub-mirror` (#61), `run-batteries` (#50) and
-# `run-vitest` (#74) need no dependency either, and leaving them out of the pattern would mean a
-# vendored schema that went missing or unparseable reached the 25 module repos without a single
-# check going red. A new dependency-free suite belongs on this line. (`bin-*` already covers
-# `bin-test-batteries` and `bin-test-typescript`.)
+# `canonical-mirrors` (module-toolkit#30/#40), `hub-mirror` (#61), `run-batteries` (#50),
+# `run-vitest` (#74) and `gate-wiring` (ERPlora/hub#1097) need no dependency either, and leaving
+# them out of the pattern would mean a vendored schema that went missing or unparseable reached the
+# 26 module repos without a single check going red. (`bin-*` already covers `bin-test-batteries`
+# and `bin-test-typescript`.)
+#
+# 🔴 «A new dependency-free suite belongs on this line» used to be written here as a REQUEST, and a
+# request is not a check: `gate-wiring.test.mjs` was added, was green locally, and this CI ran 367
+# tests without it — a test nobody executes, which is the very defect this repository keeps finding
+# in other people's code. `test/ci-runs-every-suite.test.mjs` now holds the list to account: every
+# suite in `test/` either appears below or is named in its `CANNOT_RUN_IN_CI` **with the reason**.
+# Adding one forces a decision instead of allowing an omission.
 #
 # WHAT THIS CI CANNOT CHECK, said out loud (module-toolkit#61). The six mirrors of
 # `canonical-mirrors` need a checkout of ERPlora/hub, and there is none here — nor can there be:
@@ -139,6 +146,8 @@ jobs:
           test/hub-mirror.test.mjs
           test/run-batteries.test.mjs
           test/run-vitest.test.mjs
+          test/gate-wiring.test.mjs
+          test/ci-runs-every-suite.test.mjs
 
       # Nobody tidies up after a job on a self-hosted runner: without this, a Postgres stays holding
       # memory on the machine. Only OUR container — never the other slot's. Best-effort on purpose.
