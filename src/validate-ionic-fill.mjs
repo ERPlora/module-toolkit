@@ -54,15 +54,27 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * edited down to fit: it is a module whose `ui/` declares `mode="md"` on every control, so the entry
  * stops covering anything. Trimming a number to match a half-done fix grandfathers the broken half.
  *
- * WHERE THE SWEEP IS — 170 dead controls left, in 27 files across 14 modules. It started at 275 in
+ * 🔴 AND AN ENTRY MAY NOT OUTLIVE ITS MODULE. A line that covers a file with nothing left to cover
+ * is not harmless bookkeeping: it is a standing permit to bring the dead controls back, in green.
+ * It happened — `tickets` finished on 2026-08-22 and its two lines sat here for two days, so the
+ * list tolerated 170 controls while reality was 156. `checkIonicFill` now FAILS the module's own
+ * gate on a stale entry, which fixes the order of a sweep: the two-line pull request that deletes
+ * the entry goes FIRST, and the module's fix merges behind it.
+ *
+ * WHERE THE SWEEP IS — 141 dead controls left, in 22 files across 12 modules. It started at 275 in
  * 45 files across 22 the day the check landed.
  *
  *   done, and out of the list  customers · inventory · kitchen · pricing · printing · staff ·
- *                              tasks · whatsapp_inbox   (105 controls, 18 files)
+ *                              tables · tasks · tickets · whatsapp_inbox  (134 controls, 23 files)
  *   still owing, worst first   taxes 18 · invoice 16 · online_booking 16 · reservations 16 ·
- *                              services 16 · tables 15 · cash_register 14 · schedules 14 ·
- *                              tickets 14 · appointments 9 · payment_gateways 8 ·
- *                              invoice_series 6 · payments 5 · cart_checkout 3
+ *                              services 16 · cash_register 14 · schedules 14 · appointments 9 ·
+ *                              payment_gateways 8 · invoice_series 6 · payments 5 ·
+ *                              cart_checkout 3
+ *
+ * ⚠️ Four of those modules are RETIRED and nobody is going to pay their debt: `invoice_series`
+ * (ADR-0369) and `cart_checkout` / `payments` / `online_booking` (saas migration 0058) — 30 of the
+ * 141. Their entries stay while their `ui/` still ships the dead controls, because the rule above is
+ * measured, not declared; they leave with the repos when those are archived.
  *
  * `sales`, `verifactu` and `flows` were never here: their `fill` sits on `ion-button`, where it paints.
  */
@@ -88,20 +100,20 @@ export const FILL_GRANDFATHERED = [
   ['services', 'ui/components/erp-services-categories/erp-services-categories.ts', 3],
   ['services', 'ui/components/erp-services-list/erp-services-list.ts', 5],
   ['services', 'ui/components/erp-services-packages/erp-services-packages.ts', 8],
-  ['tables', 'ui/components/erp-tables-canvas/erp-tables-canvas.ts', 9],
-  ['tables', 'ui/components/erp-tables-floor-plan/erp-tables-floor-plan.ts', 3],
-  ['tables', 'ui/components/erp-tables-zones/erp-tables-zones.ts', 3],
   ['taxes', 'ui/components/erp-taxes-aliases/erp-taxes-aliases.ts', 3],
   ['taxes', 'ui/components/erp-taxes-categories/erp-taxes-categories.ts', 3],
   ['taxes', 'ui/components/erp-taxes-rules/erp-taxes-rules.ts', 12],
-  ['tickets', 'ui/components/erp-tickets-list/erp-tickets-list.ts', 10],
-  ['tickets', 'ui/components/erp-tickets-sla/erp-tickets-sla.ts', 4],
 ];
 
 /** How many dead controls `file` of `moduleId` is allowed to keep. 0 = none. */
 function allowanceFor(moduleId, file) {
   const entry = FILL_GRANDFATHERED.find(([m, f]) => m === moduleId && f === file);
   return entry ? entry[2] : 0;
+}
+
+/** The entries this module is carrying, as `[file, count]`. Empty for a module never listed. */
+function grandfatheredFor(moduleId) {
+  return FILL_GRANDFATHERED.filter(([m]) => m === moduleId).map(([, file, count]) => [file, count]);
 }
 
 /**
@@ -205,6 +217,9 @@ export function checkIonicFill(dir, manifest) {
   const moduleId = manifest?.id;
   if (!moduleId) return { errors, warnings };
 
+  /** file → how many dead controls it has TODAY, for every file read. Feeds the staleness check. */
+  const deadPerFile = new Map();
+
   for (const abs of sourceFiles(join(dir, 'ui'))) {
     const file = relative(dir, abs).split(sep).join('/');
     let dead;
@@ -214,6 +229,7 @@ export function checkIonicFill(dir, manifest) {
       errors.push(`${file}: no se pudo leer (${e.message})`);
       continue;
     }
+    deadPerFile.set(file, dead.length);
     if (!dead.length) continue;
 
     const allowed = allowanceFor(moduleId, file);
@@ -227,6 +243,46 @@ export function checkIonicFill(dir, manifest) {
         'el campo sale sin caja, sin borde y sin fondo, y el usuario no ve dónde escribir. ' +
         `Añade \`mode="md"\` a cada uno:\n      ${shown.join('\n      ')}`,
     );
+  }
+
+  // The OTHER half of the ratchet: an allowance may not outlive the file it was written for.
+  //
+  // 🔴 Measured, not imagined. `tickets` finished its sweep on 2026-08-22 and its two lines stayed
+  // in the list for two days (ERPlora/pm#152): the list tolerated 170 controls while reality was
+  // 156. In that window `tickets` could have brought all 14 dead controls back and this gate would
+  // have said nothing — grandfathering had turned into a standing permit. Everything above asks
+  // «is the module worse than the list?»; this asks the question nobody was asking, «is the list
+  // looser than the module?».
+  for (const [file, allowed] of grandfatheredFor(moduleId)) {
+    const today = deadPerFile.get(file);
+    if (today === undefined) {
+      errors.push(
+        `${file}: su entrada en \`FILL_GRANDFATHERED\` (${allowed} control(es) tolerados) apunta a un ` +
+          'fichero que ya no está en `ui/` — se borró o se renombró. Una tolerancia sin fichero al ' +
+          'que aplicar no protege nada y sobrevive a su motivo: bórrala de ' +
+          '`module-toolkit/src/validate-ionic-fill.mjs` (ERPlora/pm#152).',
+      );
+      continue;
+    }
+    if (today === 0) {
+      errors.push(
+        `${file}: ya no tiene NINGÚN \`fill\` sin \`mode="md"\` — el barrido de este fichero está ` +
+          `hecho — pero sigue con su entrada en \`FILL_GRANDFATHERED\` (${allowed} control(es) ` +
+          'tolerados). Mientras esa línea siga ahí, el módulo puede reintroducir esos ' +
+          `${allowed} control(es) muertos y el gate lo dejará pasar en verde. Bórrala de ` +
+          '`module-toolkit/src/validate-ionic-fill.mjs` (ERPlora/pm#152) y vuelve a pasar el gate: ' +
+          'ese PR va PRIMERO, y el del módulo detrás.',
+      );
+      continue;
+    }
+    if (today < allowed) {
+      warnings.push(
+        `${file}: quedan ${today} de los ${allowed} control(es) que tolera ` +
+          '`FILL_GRANDFATHERED` — la lista va más floja que la realidad. No es un fallo (ir a ' +
+          'menos es el objetivo), pero el número NO se recorta para que cuadre: se termina el ' +
+          'fichero y entonces se borra la entrada entera (ERPlora/pm#152).',
+      );
+    }
   }
   return { errors, warnings };
 }
