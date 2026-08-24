@@ -28,11 +28,13 @@
 // an error would have put 25 repos in red over a package the module cannot supply, which is how a
 // gate stops being read. So the gap was REPORTED instead: named, gate green.
 //
-// That was a warning with an expiry date, and it expired badly. Measured on 2026-08-24: 232 of the
-// 245 `.test.ts` files across the 26 module repos — ≈3.044 tests — were NOT RUN, and the number had
-// grown on its own: `flows` used to run its 26 files and fell out the day `ui/lib/hub-flows.ts`
-// imported the SDK, because `missingPackages()` reads all of `ui/` and not just the tests. Nobody
-// noticed, because the gate stayed green in 28 s. A warning is a pass with decoration.
+// That was a warning with an expiry date, and it expired. Measured on 2026-08-24 with the functions
+// right below — `bareImports` + `missingPackages`, not a grep, which counts the comments and gets a
+// different answer: 206 of the 245 `.test.ts` files across the 26 module repos, ≈2.600 tests, in 24
+// modules, were NOT RUN. The blocking package was `@erplora/module-sdk` and only that, in all 24,
+// without one exception. The gate said so in a ⚠ and stayed green in 28 s. A warning is a pass with
+// decoration: `combos` merged 77 tests pinning that an amount typed with a thousands separator is
+// not stored as 0 — a 1.250,50 € menu saved as FREE — and nothing in CI has watched them since.
 //
 // The SDK reaches the runner now (ERPlora/hub#1097): `ERPlora/hub` shares a composite action with
 // the organization, which GitHub resolves WITHOUT a credential and which leaves the hub's checkout

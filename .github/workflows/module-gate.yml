@@ -69,10 +69,10 @@ jobs:
       # ── `@erplora/module-sdk` en el disco del runner (ERPlora/hub#1097) ────────────────────────
       #
       # El paquete que 25 de los 26 módulos importan desde `ui/` vive en `ERPlora/hub`, privado y
-      # sin publicar. Sin él, `erplora test` declaraba SIN CORRER **232 de los 245** ficheros
-      # `.test.ts` de la flota (≈3.044 tests) y el gate salía en VERDE en 28 s. Un aviso es un
-      # verde con adorno: en `combos` mergeó un contrato que impide guardar 1.250,50 € como GRATIS
-      # sin que nada en CI lo vigilara.
+      # sin publicar. Sin él, `erplora test` declaraba SIN CORRER **206 de los 245** ficheros
+      # `.test.ts` de la flota (≈2.600 tests, en 24 de los 26 módulos) y el gate salía en VERDE en
+      # 28 s. Un aviso es un verde con adorno: en `combos` mergeó un contrato que impide guardar
+      # 1.250,50 € como GRATIS sin que nada en CI lo vigilara.
       #
       # 🔴 SIN `token:`, y eso es el mecanismo entero. Los secretos de organización **no llegan a
       # un repo privado** en el plan Free, así que no hay credencial con la que hacer `checkout` de

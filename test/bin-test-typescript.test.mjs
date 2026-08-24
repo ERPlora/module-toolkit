@@ -107,7 +107,7 @@ test('sin vitest al alcance el comando SE CAE — y dice cómo conseguirlo', () 
 });
 
 test('sin `@erplora/module-sdk` el comando SE CAE nombrando el paquete', () => {
-  // El caso real de los 232 ficheros: vitest está, el paquete no. Antes era un ⚠ y 28 s de verde.
+  // El caso real de los 206 ficheros: vitest está, el paquete no. Antes era un ⚠ y 28 s de verde.
   const v = fakeVitest("console.log(' Test Files  1 passed (1)');\n");
   const m = mod({ 'ui/lib/quantity.test.ts': "import '@erplora/module-sdk';\n" });
   stub(m.dir, 'happy-dom');

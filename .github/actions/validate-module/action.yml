@@ -42,8 +42,8 @@
 #      ERPlora/hub#1097: the package still lives in the PRIVATE ERPlora/hub and is still unpublished,
 #      but it no longer has to be either — `module-gate.yml` calls a composite action of that repo,
 #      which GitHub resolves WITHOUT a credential and which leaves the hub's checkout on disk, and
-#      hands the path here as `module-sdk-path`. 232 of the 245 `.test.ts` of the 26 repos went from
-#      NOT RUN to run. And with the last unreachable package gone, «not run» stopped being a
+#      hands the path here as `module-sdk-path`. 206 of the 245 `.test.ts` of the 26 repos — 24 of
+#      the modules — went from NOT RUN to run. And with the last unreachable package gone, «not run» stopped being a
 #      tolerated state: a `.test.ts` that does not execute now FAILS, like every other test);
 #   3. nothing else. A battery that skips ITSELF (every `*.postgres.test.py` exits 0 when it cannot
 #      reach Postgres) is reported as a FAILURE here, never as a pass.
@@ -246,8 +246,8 @@ runs:
     # without it does not say "the environment is incomplete", it reports a resolution error per
     # file that reads like 51 broken tests, and putting 25 repos in red over a package they cannot
     # supply is how a gate stops being read. That reasoning held right up until the package became
-    # obtainable. It cost 232 of 245 files (≈3.044 tests) unwatched, and it grew in silence: `flows`
-    # ran its 26 files until `ui/lib/hub-flows.ts` imported the SDK, and then it did not.
+    # obtainable. It cost 206 of the 245 files (≈2.600 tests), in 24 of the 26 modules, unwatched —
+    # and `@erplora/module-sdk` was the ONLY package missing in every one of them.
     #
     # Skipped outright for a module with no `.test.ts`, so it costs those nothing.
     - name: Node packages for the module's TypeScript tests
