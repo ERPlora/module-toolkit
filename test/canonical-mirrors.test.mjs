@@ -195,14 +195,18 @@ test('the guard reads the Hub\'s OWN screens the same way the Hub does (hub#760)
 });
 
 /**
- * The verbs the runtime's `contract` translator sets aside instead of executing, and whether it
- * decides on the SQL or on the raw statement text.
+ * The verbs the runtime's `contract` translator sets aside instead of executing, whether it decides
+ * on the SQL or on the raw statement text, and whether the `Kind::Contract` arm still refuses what
+ * it cannot translate.
  *
- * `fn set_aside_instead_of_dropping(statement: &str) -> String { … }` — the body up to the first
- * column-0 `}`.
+ * `fn set_aside_instead_of_dropping(statement: &str) -> Result<String, GuardError> { … }` — the
+ * body up to the first column-0 `}`.
  */
 function contractTranslatorOfTheRuntime(rust) {
-  const fn = /fn set_aside_instead_of_dropping\(statement: &str\) -> String \{([\s\S]*?)\n\}/.exec(rust);
+  const fn =
+    /fn set_aside_instead_of_dropping\(statement: &str\) -> Result<String, GuardError> \{([\s\S]*?)\n\}/.exec(
+      rust,
+    );
   assert.ok(
     fn,
     'set_aside_instead_of_dropping is no longer declared like this in migration_guard.rs — update the reader',
@@ -212,6 +216,12 @@ function contractTranslatorOfTheRuntime(rust) {
     // Each verb is written twice in the body (`find(…)` and `…".len()`), hence the Set.
     verbs: [...new Set([...body.matchAll(/"\s?(DROP [A-Z]+)\s?"/g)].map((m) => m[1]))].sort(),
     decidesOnStrippedSql: /strip_comments\(/.test(body),
+    // ERPlora/hub#1145: what the translator cannot set aside must not go through. The `check`
+    // function's `Kind::Contract` arm calls this before translating.
+    refusesWhatItCannotTranslate:
+      /fn row_destroying_verb\(/.test(rust) &&
+      /Kind::Contract => \{[\s\S]*?row_destroying_verb\(&statement\)/.test(rust),
+    refusesADropOfMoreThanOne: /GuardError::DropsMoreThanOne \{/.test(body),
   };
 }
 
@@ -245,5 +255,21 @@ test('the runtime still translates only the DROPs this door assumes it does (hub
     'set_aside_instead_of_dropping no longer strips comments before deciding: a header comment ' +
       'above the first `DROP` defeats the translation again and the hub runs a REAL `DROP TABLE` ' +
       'on a customer database (hub#1137)',
+  );
+  // The other half of the same reasoning (hub#1145): the list above is only safe while everything
+  // it does NOT cover is refused. If `Kind::Contract` goes back to translating whatever arrives and
+  // letting the rest through, a `TRUNCATE` runs for real on a customer's rows and this door — which
+  // ports the verdict, not the rewrite — would keep saying green.
+  assert.ok(
+    translator.refusesWhatItCannotTranslate,
+    'the runtime\'s `Kind::Contract` arm no longer calls `row_destroying_verb`: a `contract` ' +
+      'carrying `TRUNCATE`/`DELETE FROM` destroys rows with no `_deprecated_*` to go back to ' +
+      '(hub#1145). Resync `rowDestroyingVerb` in src/validate-migration-guard.mjs',
+  );
+  assert.ok(
+    translator.refusesADropOfMoreThanOne,
+    'set_aside_instead_of_dropping no longer refuses a `DROP` that names more than one thing: the ' +
+      'translation is one statement in, one statement out, and taking the first name emitted ' +
+      '`ALTER TABLE a, RENAME TO _deprecated_a,` (hub#1145). Resync `dropsMoreThanOne`',
   );
 });
