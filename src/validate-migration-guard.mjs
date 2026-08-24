@@ -10,7 +10,10 @@
 //
 //   1. **the table belongs to the module** — prefix `<module_id>_`, never `hub_*` nor `_*`;
 //   2. **the SQL matches the declared `kind`** — `expand` admits no `DROP`/`TRUNCATE`/
-//      `DELETE FROM`/`SET NOT NULL`, `backfill` admits no DDL, `contract` admits everything.
+//      `DELETE FROM`/`SET NOT NULL`, `backfill` admits no DDL, and `contract` admits the `DROP`s
+//      the runtime TRANSLATES — but not `TRUNCATE`/`DELETE FROM`, which destroy rows there is no
+//      translation for (ERPlora/hub#1145), and not a `DROP` that names more than one thing in one
+//      statement, because the translation is one statement in, one statement out.
 //
 // 🔴 WHY A PORT AND NOT A CALL. The runtime is Rust and lives in a checkout the gate of the 25
 // module repos does not have. But the deeper reason is that the fix cannot depend on WHICH IMAGE
@@ -278,6 +281,62 @@ export function destructiveVerb(statement) {
   return null;
 }
 
+/**
+ * The verb that destroys ROWS, if the statement carries one — what a `contract` may not contain
+ * (ERPlora/hub#1145).
+ *
+ * Only `TRUNCATE` and `DELETE FROM`, and on purpose: they are what a `contract` cannot TRANSLATE.
+ * `DROP TABLE`/`DROP COLUMN` are set aside as `_deprecated_*`, and `DROP CONSTRAINT` does not touch
+ * a single row — one of the four published `contract` migrations is exactly that, an atomic
+ * constraint swap — so putting them here would turn correct, already-published work red.
+ *
+ * Compares WHOLE TOKENS, not substrings: `includes('TRUNCATE')` matches a column named
+ * `truncate_at`, and a false positive here keeps a correct module from publishing. For the same
+ * reason `DELETE` only counts with `FROM` behind it — `ON DELETE CASCADE` is a constraint, not a
+ * deletion — and it is read token by token instead of searching for the phrase `'DELETE FROM'`,
+ * which a line break would split.
+ */
+export function rowDestroyingVerb(statement) {
+  const tokens = stripComments(statement)
+    .toUpperCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => token.replace(/^[^A-Z0-9_]+|[^A-Z0-9_]+$/g, ''));
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (tokens[i] === 'TRUNCATE') return 'TRUNCATE';
+    if (tokens[i] === 'DELETE' && tokens[i + 1] === 'FROM') return 'DELETE FROM';
+  }
+  return null;
+}
+
+/**
+ * What the statement retires, when it retires MORE THAN ONE of them at once (ERPlora/hub#1145).
+ *
+ * `DROP TABLE a, b;` is valid SQL, but `ALTER TABLE … RENAME TO` takes a SINGLE table, so a list
+ * would have to come out as N statements. While the runtime took the first name, what got executed
+ * was `ALTER TABLE a, RENAME TO _deprecated_a,` — a `syntax error at or near ","` explaining
+ * nothing, with `b` left un-retired on top. The same crack on the column side: an `ALTER` carrying
+ * more than one action put the comma inside the `RENAME`.
+ *
+ * This is the ONE piece of the rewrite half this door ports, and only its verdict, never its
+ * output: whether the hub accepts the file is precisely this door's job.
+ */
+export function dropsMoreThanOne(statement) {
+  const sql = stripComments(statement).trim();
+  const upper = sql.toUpperCase();
+  const withoutTrailer = sql.replace(/;\s*$/, '');
+  if (upper.includes(' DROP COLUMN ')) {
+    return withoutTrailer.includes(',') ? 'columna' : null;
+  }
+  if (upper.startsWith('DROP TABLE ')) {
+    const named = withoutTrailer.slice('DROP TABLE '.length).trim();
+    // `DROP TABLE t CASCADE` carries no comma and is still one table: the `CASCADE` falls away on
+    // its own when renaming, because renaming drags nobody along.
+    return named.includes(',') ? 'tabla' : null;
+  }
+  return null;
+}
+
 /** The DDL verb the statement starts with, if any — what a `backfill` may not contain. */
 export function ddlVerb(statement) {
   const upper = stripComments(statement).trimStart().toUpperCase();
@@ -346,6 +405,26 @@ export function checkMigrationSql(moduleId, filename, sql, kind = 'expand') {
           `${filename}: la migración se declara \`expand\` pero contiene \`${found}\`. ` +
             'Si es intencionado, declárala `contract` en el manifest ' +
             `(\`{ "file": "${filename}", "kind": "contract", "since": "<versión>" }\`); si no, sobra`,
+        ];
+      }
+    } else if (kind === 'contract') {
+      const destroyed = rowDestroyingVerb(statement);
+      if (destroyed) {
+        return [
+          ...errors,
+          `${filename}: la migración se declara \`contract\` pero contiene \`${destroyed}\`, que ` +
+            'DESTRUYE FILAS sin vuelta atrás. Un `contract` retira ESTRUCTURA y el runtime la aparta ' +
+            'a `_deprecated_*`; de las filas no hay nada que apartar. Si de verdad hay que ' +
+            'limpiarlas, va en una migración `backfill`, que es donde el DML tiene su sitio',
+        ];
+      }
+      const many = dropsMoreThanOne(statement);
+      if (many) {
+        return [
+          ...errors,
+          `${filename}: la migración \`contract\` retira más de una ${many} en la misma sentencia, ` +
+            'y la traducción a `RENAME` es de una sentencia a una sentencia: ' +
+            `\`${stripComments(statement).trim()}\`. Escribe una ${many} por sentencia`,
         ];
       }
     } else if (kind === 'backfill') {

@@ -252,6 +252,68 @@ test('PASA: un `contract` es el único sitio donde se admite `DROP`', () => {
   assert.deepEqual(guard('sales', 'm.sql', 'ALTER TABLE sales_sale DROP COLUMN total', 'contract'), []);
 });
 
+// ── Un `contract` retira ESTRUCTURA, no filas (ERPlora/hub#1145) ─────────────────────
+
+test('FALLA: un `contract` no puede vaciar ni borrar filas', () => {
+  // El runtime traduce `DROP TABLE`/`DROP COLUMN` a `RENAME … TO _deprecated_…`, así que retirar
+  // algo es reversible. De las filas no hay nada que apartar: un `TRUNCATE`/`DELETE FROM` dentro de
+  // un `contract` se ejecutaba tal cual sobre la BD de un cliente, y el autor tenía todos los
+  // motivos para creer lo contrario, porque es lo que el `kind` promete.
+  for (const sql of [
+    'TRUNCATE sales_sale',
+    'TRUNCATE TABLE sales_sale',
+    'DELETE FROM sales_sale',
+    "DELETE FROM sales_sale WHERE legacy = 'yes'",
+    // Un salto de línea entre el verbo y su `FROM` es la razón de mirar token a token.
+    'DELETE\n  FROM sales_sale',
+  ]) {
+    const errors = guard('sales', 'm.sql', sql, 'contract');
+    assert.equal(errors.length, 1, `debería rechazar \`${sql}\``);
+    assert.match(errors[0], /backfill/, 'y decir por dónde SÍ se limpian filas');
+  }
+});
+
+test('PASA: limpiar filas es lo que un `backfill` es', () => {
+  // El error de arriba manda al autor a un `backfill`, así que esa puerta tiene que estar abierta
+  // de verdad — si no, se le está mandando a un sitio cerrado.
+  assert.deepEqual(
+    guard('sales', 'm.sql', "DELETE FROM sales_sale WHERE legacy = 'yes'", 'backfill'),
+    [],
+  );
+});
+
+test('PASA: lo que solo SE PARECE a un verbo destructivo no lo es', () => {
+  // Un falso positivo aquí deja un módulo sin publicar: por eso se comparan tokens enteros y
+  // `DELETE` solo cuenta con su `FROM` detrás.
+  for (const sql of [
+    'ALTER TABLE sales_sale DROP COLUMN truncate_at',
+    'ALTER TABLE sales_line ADD CONSTRAINT sales_line_fk FOREIGN KEY (sale_id) ' +
+      'REFERENCES sales_sale (id) ON DELETE CASCADE',
+    '-- esto NO hace TRUNCATE ni DELETE FROM nada\nDROP TABLE sales_old',
+  ]) {
+    assert.deepEqual(guard('sales', 'm.sql', sql, 'contract'), [], `debería pasar \`${sql}\``);
+  }
+});
+
+test('FALLA: un `contract` retira UNA tabla (o una columna) por sentencia', () => {
+  // `DROP TABLE a, b;` es SQL válido, pero `ALTER TABLE … RENAME TO` acepta una sola tabla: el
+  // runtime producía `ALTER TABLE a, RENAME TO _deprecated_a,` y reventaba con un `syntax error at
+  // or near ","` que no explica nada, dejando además `b` sin retirar.
+  for (const [sql, noun] of [
+    ['DROP TABLE sales_a, sales_b', 'tabla'],
+    ['ALTER TABLE sales_sale DROP COLUMN a, DROP COLUMN b', 'columna'],
+    ['ALTER TABLE sales_sale ADD COLUMN x TEXT, DROP COLUMN y', 'columna'],
+  ]) {
+    const errors = guard('sales', 'm.sql', sql, 'contract');
+    assert.equal(errors.length, 1, `debería rechazar \`${sql}\``);
+    assert.match(errors[0], new RegExp(`una ${noun} por sentencia`));
+  }
+});
+
+test('PASA: `CASCADE` no es una lista de tablas', () => {
+  assert.deepEqual(guard('sales', 'm.sql', 'DROP TABLE sales_old CASCADE', 'contract'), []);
+});
+
 test('FALLA: un `kind` que el runtime no sabe deserializar', () => {
   const errors = guard('sales', 'm.sql', 'CREATE TABLE sales_sale (id BIGINT)', 'destroy');
   assert.equal(errors.length, 1);
