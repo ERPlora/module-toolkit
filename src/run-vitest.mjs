@@ -19,17 +19,28 @@
 //   3. what does not run is NAMED, never counted as green. A missing package is reported as
 //      «not run», exactly like a Postgres battery without its container.
 //
-// 🔴 WHY (3) IS NOT «FAIL IF THEY DO NOT RUN», measured rather than assumed. Running them needs
-// `vitest`, `happy-dom`, `lit`, `@ionic/core`, `@erplora/outfitkit` — all public and installable —
-// AND
-// `@erplora/module-sdk`, which is `ERPlora/hub/packages/module-sdk`: a PRIVATE repository, not
-// published to npm, reachable through no credential a module repo's gate has (organization
-// secrets do not reach private repositories on the free plan — the same wall documented in
-// ci.yml). 23 of the 25 modules import it: without it vitest fails to resolve the import in 6 of
-// the 8 files of `taxes`, 51 of the 53 of `sales`. Turning that into an error would put 23 repos
-// in red over a package the module cannot supply, which is how a gate stops being read. So the gap
-// is REPORTED — 176 files named as NOT RUN, 35 running today — and the day the SDK is installable
-// (ERPlora/hub#1097) the rest run with no change here.
+// 🔴 (3) NO LONGER HAS AN EXCEPTION, and the history is worth keeping because the exception was
+// RIGHT while it lasted. Running these needs `vitest`, `happy-dom`, `lit`, `@ionic/core`,
+// `@erplora/outfitkit` — all public — AND `@erplora/module-sdk`, which is
+// `ERPlora/hub/packages/module-sdk`: a PRIVATE repository, not published to npm. Without it vitest
+// does not say «a package is missing», it reports a resolution error PER FILE — 6 of the 8 of
+// `taxes`, 51 of the 53 of `sales` — which reads exactly like 51 broken tests. Turning that into
+// an error would have put 25 repos in red over a package the module cannot supply, which is how a
+// gate stops being read. So the gap was REPORTED instead: named, gate green.
+//
+// That was a warning with an expiry date, and it expired badly. Measured on 2026-08-24: 232 of the
+// 245 `.test.ts` files across the 26 module repos — ≈3.044 tests — were NOT RUN, and the number had
+// grown on its own: `flows` used to run its 26 files and fell out the day `ui/lib/hub-flows.ts`
+// imported the SDK, because `missingPackages()` reads all of `ui/` and not just the tests. Nobody
+// noticed, because the gate stayed green in 28 s. A warning is a pass with decoration.
+//
+// The SDK reaches the runner now (ERPlora/hub#1097): `ERPlora/hub` shares a composite action with
+// the organization, which GitHub resolves WITHOUT a credential and which leaves the hub's checkout
+// on disk — the same door module-toolkit#61/#66 opened for the canonical mirrors, and the same one
+// the 26 modules already walk through to run this validator. So there is no longer a package the
+// module cannot get, and therefore no longer a reason to print ✓ over a test nobody executed. The
+// rule is now the one #50/#55 apply to the Python batteries, with no carve-out: a test that exists
+// and does not run FAILS.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';

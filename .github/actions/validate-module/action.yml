@@ -38,11 +38,13 @@
 #      ERPlora/hub here; fetching one means a read token for a private repo living in 25 repos,
 #      which is a security decision, not a CI detail. The validator says it out loud
 #      ("handler WASM SIN VERIFICAR");
-#   2. `@erplora/module-sdk`, and with it MOST of the TypeScript tests — see below. Since
-#      module-toolkit#74 this action DOES install the vitest environment and `erplora test` DOES
-#      run `ui/**/*.test.ts`; what is still out of reach is that one package, which lives in the
-#      PRIVATE ERPlora/hub and is not published to npm. The tests that need it are reported as NOT
-#      RUN, by name and with the reason, never as passed;
+#   2. (was `@erplora/module-sdk`, and with it MOST of the TypeScript tests. CLOSED by
+#      ERPlora/hub#1097: the package still lives in the PRIVATE ERPlora/hub and is still unpublished,
+#      but it no longer has to be either — `module-gate.yml` calls a composite action of that repo,
+#      which GitHub resolves WITHOUT a credential and which leaves the hub's checkout on disk, and
+#      hands the path here as `module-sdk-path`. 232 of the 245 `.test.ts` of the 26 repos went from
+#      NOT RUN to run. And with the last unreachable package gone, «not run» stopped being a
+#      tolerated state: a `.test.ts` that does not execute now FAILS, like every other test);
 #   3. nothing else. A battery that skips ITSELF (every `*.postgres.test.py` exits 0 when it cannot
 #      reach Postgres) is reported as a FAILURE here, never as a pass.
 name: Validate an ERPlora module
@@ -67,12 +69,14 @@ inputs:
     default: 'postgres:18'
   typescript:
     description: >
-      'true' to also install the vitest environment so `erplora test` can run the module's
-      TypeScript tests (`ui/**/*.test.ts`). ON by default and it should stay on: a step that never
-      runs is a step that does not work, and the install is skipped outright for a module that
-      carries no `.test.ts`. What it CANNOT supply is `@erplora/module-sdk` — private, unpublished
-      (ERPlora/hub#1097) — and the toolkit reports the tests that need it as NOT RUN, by name. Set
-      to 'false' to skip the install entirely.
+      'true' to install the vitest environment so `erplora test` can run the module's TypeScript
+      tests (`ui/**/*.test.ts`). ON by default and it should stay on: a step that never runs is a
+      step that does not work, and the install is skipped outright for a module that carries no
+      `.test.ts`.
+      🔴 'false' no longer buys a green. Since ERPlora/hub#1097 a `.test.ts` that does not execute
+      FAILS, so turning this off on a module that HAS TypeScript tests puts it in red — which is
+      the honest outcome, and the reason the flag is documented rather than removed: it is still
+      the way to say "this job is not the one that runs them", never "nobody has to".
     required: false
     default: 'true'
   module-sdk-path:
@@ -221,29 +225,29 @@ runs:
 
     # ── The vitest environment for the module's TypeScript tests (module-toolkit#74) ─────────────
     #
-    # `ui/**/*.test.ts` is where nearly all of the screen logic is checked — 210 files across the 25
-    # repos, and until this the gate ran none of them. Running them needs five packages. Four are
-    # public and are installed here; the fifth is not, and that is said out loud rather than faked:
+    # `ui/**/*.test.ts` is where nearly all of the screen logic is checked — 245 files across the 26
+    # repos. Running them needs five packages. Four are public and are installed here; the fifth
+    # arrives from somewhere no `npm install` can reach:
     #
     #   vitest · happy-dom · lit · @ionic/core ·
     #   @erplora/outfitkit                              → npm, installed below
-    #   @erplora/module-sdk                             → ERPlora/hub/packages/module-sdk. PRIVATE
-    #                                                     repo, not published. `secrets.GH_PAT`
-    #                                                     never reaches a private repository on the
-    #                                                     free plan (same wall as ci.yml), so there
-    #                                                     is no credential to check the hub out with.
-    #                                                     Publishing it is ERPlora/hub#1097; adding
-    #                                                     it below is then a one-line change.
+    #   @erplora/module-sdk                             → ERPlora/hub/packages/module-sdk. Private,
+    #                                                     unpublished, and no credential exists to
+    #                                                     check that repo out from here — org
+    #                                                     secrets do not reach a private repository
+    #                                                     on the free plan. It is handed over as
+    #                                                     `module-sdk-path` by the composite action
+    #                                                     `ERPlora/hub/.github/actions/module-sdk`,
+    #                                                     which the runner resolves WITHOUT one
+    #                                                     (ERPlora/hub#1097).
     #
-    # 🔴 WHY THE STEP RUNS ANYWAY, with 23 of the 25 modules importing the missing one. Measured
-    # before deciding: without the SDK vitest does not say "the environment is incomplete", it
-    # reports a resolution error per file — 6 of the 8 files of `taxes`, 51 of the 53 of `sales` —
-    # which reads exactly like 51 broken tests. So the toolkit checks the packages BEFORE spawning
-    # and reports those modules as NOT RUN, named, gate green. Measured on the 25 repos: 35 of the
-    # 211 files DO run today (`flows` 26, `appointments` 9 — they never import the SDK), and 176 are
-    # named as not run. What the step buys is that the machinery is exercised on every run instead
-    # of sitting dark until somebody flips it, and the day the SDK is installable the other 176
-    # light up with one line added below.
+    # 🔴 WHY IT IS A HARD FAILURE NOW. Until #1097 the toolkit checked the packages BEFORE spawning
+    # and reported the modules that import the SDK as NOT RUN, named, gate green — because vitest
+    # without it does not say "the environment is incomplete", it reports a resolution error per
+    # file that reads like 51 broken tests, and putting 25 repos in red over a package they cannot
+    # supply is how a gate stops being read. That reasoning held right up until the package became
+    # obtainable. It cost 232 of 245 files (≈3.044 tests) unwatched, and it grew in silence: `flows`
+    # ran its 26 files until `ui/lib/hub-flows.ts` imported the SDK, and then it did not.
     #
     # Skipped outright for a module with no `.test.ts`, so it costs those nothing.
     - name: Node packages for the module's TypeScript tests

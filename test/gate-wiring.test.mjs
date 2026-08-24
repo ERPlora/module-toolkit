@@ -3,7 +3,7 @@
 // WHY A TEST OVER YAML. `run-vitest.mjs` now FAILS a module whose `.test.ts` cannot run, and the
 // only reason they can run is a chain of three links written in two files nobody executes locally:
 //
-//   module-gate.yml  →  uses ERPlora/hub/.github/actions/module-sdk@main   (the SDK on disk)
+//   module-gate.yml  →  uses ERPlora/hub/.github/actions/module-sdk@develop   (the SDK on disk)
 //                    →  passes its output into validate-module
 //   validate-module  →  links it into the module's node_modules/@erplora/module-sdk
 //
@@ -24,7 +24,7 @@ const GATE = readFileSync(join(REPO, '.github/workflows/module-gate.yml'), 'utf8
 const VALIDATE = readFileSync(join(REPO, '.github/actions/validate-module/action.yml'), 'utf8');
 
 /** The action that carries the SDK, pinned the same way the gate pins the validator. */
-const SDK_ACTION = 'ERPlora/hub/.github/actions/module-sdk@main';
+const SDK_ACTION = 'ERPlora/hub/.github/actions/module-sdk@develop';
 
 /**
  * The lines of the step that `uses:` the given action, up to the next step. Comments stripped:
@@ -63,7 +63,7 @@ test('the gate fetches the SDK through the hub action, with no credential', () =
 });
 
 test('what the hub action outputs is what validate-module is given', () => {
-  const step = /id:\s*(\S+)[\s\S]{0,300}?uses:\s*ERPlora\/hub\/\.github\/actions\/module-sdk@main/.exec(
+  const step = /id:\s*(\S+)[\s\S]{0,300}?uses:\s*ERPlora\/hub\/\.github\/actions\/module-sdk@develop/.exec(
     GATE,
   );
   assert.ok(step, 'the SDK step must carry an `id:` — its output is read by name');

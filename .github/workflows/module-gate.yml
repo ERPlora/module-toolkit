@@ -84,8 +84,18 @@ jobs:
       #
       # Si `ERPlora/hub` dejara de compartir sus Actions, este paso se cae en ROJO diciendo que no
       # encuentra la action — nunca se degrada a un verde con los tests sin correr.
+      #
+      # 🔴 `@develop`, NO `@main`, y es deliberado. El hub integra en `develop` y publica en `main`,
+      # y hoy `main` va ~100 commits por detrás: su `packages/module-sdk` no lleva todavía el
+      # cambio de agrupación de millares (hub#1090) contra el que los módulos ya están escritos.
+      # `develop` es el SDK contra el que se desarrolla, que es lo que el gate de un PR de módulo
+      # tiene que comprobar. Medido antes de elegir: con el SDK de `main` los 7 módulos más
+      # cargados (135 ficheros) también pasan, así que esto NO es un parche a un rojo — es la
+      # respuesta a «¿qué SDK está probando este PR?». Probar contra el SDK **publicado** en vez
+      # del integrado es una política distinta y más estricta (pillaría un módulo que usa una API
+      # que aún no ha salido): se decide aparte, en module-toolkit#99.
       - id: sdk
-        uses: ERPlora/hub/.github/actions/module-sdk@main
+        uses: ERPlora/hub/.github/actions/module-sdk@develop
 
       # Resolved without any token: this repository is private, but its actions are shared with the
       # organization (repo Settings → Actions → Access). Pinned to `main` on purpose — the gate is
