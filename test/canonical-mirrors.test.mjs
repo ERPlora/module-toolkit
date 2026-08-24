@@ -193,3 +193,57 @@ test('the guard reads the Hub\'s OWN screens the same way the Hub does (hub#760)
   assert.ok(controls > 30, `only ${controls} controls found in the Hub views: the scan is not reaching them`);
   assert.deepEqual(offenders, [], 'this port disagrees with the Hub\'s own guard about the Hub\'s own markup');
 });
+
+/**
+ * The verbs the runtime's `contract` translator sets aside instead of executing, and whether it
+ * decides on the SQL or on the raw statement text.
+ *
+ * `fn set_aside_instead_of_dropping(statement: &str) -> String { … }` — the body up to the first
+ * column-0 `}`.
+ */
+function contractTranslatorOfTheRuntime(rust) {
+  const fn = /fn set_aside_instead_of_dropping\(statement: &str\) -> String \{([\s\S]*?)\n\}/.exec(rust);
+  assert.ok(
+    fn,
+    'set_aside_instead_of_dropping is no longer declared like this in migration_guard.rs — update the reader',
+  );
+  const body = fn[1];
+  return {
+    // Each verb is written twice in the body (`find(…)` and `…".len()`), hence the Set.
+    verbs: [...new Set([...body.matchAll(/"\s?(DROP [A-Z]+)\s?"/g)].map((m) => m[1]))].sort(),
+    decidesOnStrippedSql: /strip_comments\(/.test(body),
+  };
+}
+
+test('the runtime still translates only the DROPs this door assumes it does (hub#1137)', (t) => {
+  // The seventh mirror, and the one that guards an ABSENCE. `checkMigrationSql` deliberately does
+  // not port the rewrite half — see its doc comment — on the reasoning that this door only has to
+  // say whether the hub will ACCEPT a file, and rewriting SQL nobody here executes would be a
+  // second place to get it wrong. That reasoning holds exactly while the rewrite covers what a
+  // `contract` is allowed to contain. The day the runtime translates a third verb (or stops
+  // translating one), a `contract` this door waves through starts meaning something else on
+  // install — and there is nothing in this repository that would say so.
+  //
+  // `decidesOnStrippedSql` is the hub#1137 half. The translator used to match `DROP TABLE ` at the
+  // START of the statement TEXT, and the splitter keeps a preceding comment INSIDE the statement
+  // it precedes (hub#1027) — so a header comment above the first `DROP` made the match miss and
+  // the hub ran a real, irreversible `DROP TABLE` on a customer's database. Every published
+  // migration opens with a block of prose, so this door says "green" to the exact shape that broke
+  // it. If the decision ever moves back onto the raw text, the module authors are the ones who pay.
+  const rs = hubPath(t, 'crates', 'runtime', 'src', 'migration_guard.rs');
+  if (!rs) return;
+  const translator = contractTranslatorOfTheRuntime(readFileSync(rs, 'utf8'));
+
+  assert.deepEqual(
+    translator.verbs,
+    ['DROP COLUMN', 'DROP TABLE'],
+    'the runtime\'s `contract` translator changed which DROPs it sets aside — revisit the ' +
+      '"deliberately NOT ported" note in src/validate-migration-guard.mjs before syncing anything',
+  );
+  assert.ok(
+    translator.decidesOnStrippedSql,
+    'set_aside_instead_of_dropping no longer strips comments before deciding: a header comment ' +
+      'above the first `DROP` defeats the translation again and the hub runs a REAL `DROP TABLE` ' +
+      'on a customer database (hub#1137)',
+  );
+});
