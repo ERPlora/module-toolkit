@@ -75,6 +75,15 @@ inputs:
       to 'false' to skip the install entirely.
     required: false
     default: 'true'
+  module-sdk-path:
+    description: >
+      Absolute path of `@erplora/module-sdk` on this runner, handed over by
+      `ERPlora/hub/.github/actions/module-sdk` (ERPlora/hub#1097). It is the one package the gate
+      cannot install from npm — it lives in the PRIVATE ERPlora/hub — and 25 of the 26 modules
+      import it from `ui/`. Empty means "not supplied", and a module with `.test.ts` then FAILS
+      rather than being reported as not run: a test nobody executes is worse than no test.
+    required: false
+    default: ''
   node-version:
     description: Node version used to run the validator.
     required: false
@@ -282,6 +291,27 @@ runs:
         done
         ln -sfn "$deps/node_modules/@ionic/core" "$mod/node_modules/@ionic/core"
         ln -sfn "$deps/node_modules/@erplora/outfitkit" "$mod/node_modules/@erplora/outfitkit"
+        # ── The fifth package, the one npm cannot give (ERPlora/hub#1097) ────────────────────────
+        #
+        # A DIRECTORY, not a tarball: `@erplora/module-sdk` declares `"main": "src/index.ts"` and is
+        # consumed as TypeScript source — vitest transpiles it. So the link is the whole install:
+        # no build, no version, no registry, and no second copy that can quietly fall behind the
+        # hub. Measured: with it in place the 245 `.test.ts` of the 26 modules run, 26/26 green.
+        #
+        # 🔴 An empty path is a FAILURE, not a skip. This step only runs for a module that HAS
+        # `.test.ts`; if it got here without an SDK the tests cannot run, and `erplora test` would
+        # be the one to say so — but it would say it about the module, and the module is not what
+        # broke. Failing here names the real culprit: the gate's own wiring.
+        sdk="${{ inputs.module-sdk-path }}"
+        if [ -z "$sdk" ]; then
+          echo '::error::este módulo tiene tests de TypeScript y el gate no ha recibido `module-sdk-path`: sin `@erplora/module-sdk` no se pueden ejecutar. Lo entrega `ERPlora/hub/.github/actions/module-sdk` desde module-gate.yml (ERPlora/hub#1097)'
+          exit 1
+        fi
+        if [ ! -f "$sdk/package.json" ]; then
+          echo "::error::module-sdk-path apunta a $sdk y ahí no hay package.json"
+          exit 1
+        fi
+        ln -sfn "$sdk" "$mod/node_modules/@erplora/module-sdk"
         # The door the toolkit reads, so the gate runs the vitest IT installed and never whatever a
         # self-hosted runner happens to carry from a previous job. Same shape as `ERPLORA_PYTHON`.
         echo "ERPLORA_VITEST=$deps/node_modules/vitest/vitest.mjs" >> "$GITHUB_ENV"

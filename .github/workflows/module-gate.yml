@@ -66,6 +66,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ── `@erplora/module-sdk` en el disco del runner (ERPlora/hub#1097) ────────────────────────
+      #
+      # El paquete que 25 de los 26 módulos importan desde `ui/` vive en `ERPlora/hub`, privado y
+      # sin publicar. Sin él, `erplora test` declaraba SIN CORRER **232 de los 245** ficheros
+      # `.test.ts` de la flota (≈3.044 tests) y el gate salía en VERDE en 28 s. Un aviso es un
+      # verde con adorno: en `combos` mergeó un contrato que impide guardar 1.250,50 € como GRATIS
+      # sin que nada en CI lo vigilara.
+      #
+      # 🔴 SIN `token:`, y eso es el mecanismo entero. Los secretos de organización **no llegan a
+      # un repo privado** en el plan Free, así que no hay credencial con la que hacer `checkout` de
+      # `ERPlora/hub` — y un PAT en 26 repos es una decisión de seguridad, no un detalle de CI. Una
+      # composite action de un repo privado que comparte sus Actions con la org es la única forma
+      # que GitHub resuelve sin credencial, y al resolverla **deja el repo entero en disco**. Es el
+      # mismo camino por el que este `uses:` de abajo funciona, y el que module-toolkit#61/#66
+      # abrió para los espejos canónicos.
+      #
+      # Si `ERPlora/hub` dejara de compartir sus Actions, este paso se cae en ROJO diciendo que no
+      # encuentra la action — nunca se degrada a un verde con los tests sin correr.
+      - id: sdk
+        uses: ERPlora/hub/.github/actions/module-sdk@main
+
       # Resolved without any token: this repository is private, but its actions are shared with the
       # organization (repo Settings → Actions → Access). Pinned to `main` on purpose — the gate is
       # meant to be the CURRENT validator, not the one that existed when the stub was written.
@@ -74,3 +95,4 @@ jobs:
           path: ${{ inputs.path }}
           pg: ${{ inputs.pg }}
           typescript: ${{ inputs.typescript }}
+          module-sdk-path: ${{ steps.sdk.outputs.path }}
