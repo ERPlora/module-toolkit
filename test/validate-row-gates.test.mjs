@@ -83,3 +83,17 @@ test('the shape the published catalogue uses keeps validating', () => {
   };
   assert.deepEqual(checkRowGates(flows), []);
 });
+
+// Paridad con las OTRAS DOS puertas (revisión de hub#1091). Un command de HANDLER no declara `sql`:
+// no hay lote, así que no hay guarda que neutralizar. El installer lo acepta
+// (`command.sql.len() > 1` → `0 > 1`, falso) y el JSON Schema también, desde que su `if` exige
+// `required: ["min_affected_rows", "sql"]` — antes casaba en vacío y lo rechazaba solo él.
+// Esta puerta tiene que decir lo mismo que las otras dos.
+test('a handler command with no sql may declare min_affected_rows', () => {
+  const handler = {
+    permission: 'm.w',
+    handler: { type: 'wasm', file: 'dist/handler.wasm', function: 'run' },
+    min_affected_rows: 1,
+  };
+  assert.deepEqual(checkRowGates(gate(handler)), []);
+});

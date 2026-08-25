@@ -554,9 +554,9 @@
         },
         "allOf": [
           {
-            "$comment": "hub#1091: `min_affected_rows` cuenta el LOTE y, siendo un entero, no tiene dónde nombrar la sentencia vigilada. Con más de una sentencia queda NEUTRALIZABLE sin cura: una sentencia incondicional hermana satisface el mínimo por la que falló, y el caller recibe `200 ok` con evento de un hecho que no ocurrió. Quien necesite la guarda sobre una sentencia concreta declara `expect_rows` con `expect_rows.statement`. El installer lo rechaza igual (defensa en profundidad).",
+            "$comment": "hub#1091: `min_affected_rows` cuenta el LOTE y, siendo un entero, no tiene dónde nombrar la sentencia vigilada. Con más de una sentencia queda NEUTRALIZABLE sin cura: una sentencia incondicional hermana satisface el mínimo por la que falló, y el caller recibe `200 ok` con evento de un hecho que no ocurrió. Quien necesite la guarda sobre una sentencia concreta declara `expect_rows` con `expect_rows.statement`. El installer lo rechaza igual (defensa en profundidad). `sql` va en `required` a proposito: `properties` solo restringe las claves PRESENTES, asi que sin el un command de HANDLER (que no declara `sql`) casaria el antecedente en vacio y quedaria rechazado aqui mientras el installer lo acepta \u2014 el schema no puede ser mas estricto que la puerta que instala.",
             "if": {
-              "required": ["min_affected_rows"],
+              "required": ["min_affected_rows", "sql"],
               "properties": { "sql": { "type": "array", "minItems": 2 } }
             },
             "then": {
