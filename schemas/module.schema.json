@@ -1032,6 +1032,21 @@
         }
       }
     },
+    "errors": {
+      "type": "object",
+      "description": "Catálogo de los códigos de error de dominio que este módulo PROVEE (ADR-0398, hub#1177). La clave es el code con la forma de ADR-0205 (`<module>.<snake_case>`); el valor es su ESTADO, no su texto: el mensaje vive en `locales/<lang>.json → errors.<code>` (ADR-0055). Ausente = módulo sin migrar (el runtime acepta cualquier code del namespace propio, como hasta ahora). Presente = estricto: un code emitido por el handler o por `expect_rows.error` que no esté aquí es contrato roto (install rechazado / `unexpected` en runtime), y retirar un code sin marcarlo `deprecated` en una publicación anterior rompe el gate del módulo. Añadir es libre.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "deprecated": {
+            "type": "string",
+            "description": "Versión del módulo desde la que se avisa a los consumidores de que el code va a desaparecer. Primera de las DOS publicaciones que exige retirarlo (la segunda lo borra)."
+          }
+        }
+      },
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$" }
+    },
     "protects": {
       "type": "array",
       "description": "Guardias de RUTA que este módulo declara sobre la superficie de OTRO módulo (hub#775). El caso canónico es `cash_register`: mientras `enable_cash_register` está on y la ruta de `protected_pos_url` (servida por `sales`) está en juego, ninguna venta puede completarse si `cash_register.current_session` no devuelve ninguna fila (la caja está cerrada). El runtime PARSEA este bloque y lo aplica de forma AUTORITATIVA en el dispatcher de commands (la mitad en la que el shell no se puede confiar): un cliente manipulado, un flow o un `POST /api/command` directo no pueden saltarse el guard. El shell además renderiza `component` (p. ej. `erp-cashregister-open`) en vez de montar el módulo en esa ruta. Cross-módulo a propósito: el módulo que declara el guard no necesita `depends_on` del que protege — protege una RUTA, y el dispatcher saca el módulo protegido de `route_setting`.",

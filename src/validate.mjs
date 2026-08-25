@@ -22,6 +22,7 @@ import { checkWasmArtifact } from './wasm.mjs';
 import { checkNotifyChannels } from './validate-notify-channels.mjs';
 import { checkHandlerPermissionCeiling } from './validate-handler-permissions.mjs';
 import { checkManifestKeys } from './validate-manifest-keys.mjs';
+import { checkErrorsCatalog } from './validate-errors-catalog.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -210,6 +211,16 @@ export async function validate(moduleDir, { pg = false } = {}) {
   }
   if (schemaErrs.length) {
     throw new Error('dinero con decimales en los schemas:\n  - ' + schemaErrs.join('\n  - '));
+  }
+
+  // ADR-0398 (module-toolkit#101): the domain error codes a module provides are a DECLARED
+  // surface (`errors` in the manifest). A code emitted and not declared, a declared code without
+  // its `en`/`es` text, or a code retired without a `deprecated` release in between, fails here —
+  // before it fails the hub's tests of every consumer. No block yet = warning (migration open).
+  const errorsCatalog = checkErrorsCatalog(dir, manifest);
+  for (const w of errorsCatalog.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (errorsCatalog.errors.length) {
+    throw new Error('catálogo de códigos de error de dominio roto (ADR-0398):\n  - ' + errorsCatalog.errors.join('\n  - '));
   }
 
   // ADR-0127: los contratos consumidos (queries/commands/eventos/slots que la UI usa de otros
