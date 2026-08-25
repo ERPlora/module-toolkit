@@ -22,6 +22,7 @@ import { checkWasmArtifact } from './wasm.mjs';
 import { checkNotifyChannels } from './validate-notify-channels.mjs';
 import { checkHandlerPermissionCeiling } from './validate-handler-permissions.mjs';
 import { checkManifestKeys } from './validate-manifest-keys.mjs';
+import { checkRowGates } from './validate-row-gates.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -148,6 +149,12 @@ export async function validate(moduleDir, { pg = false } = {}) {
   const keys = checkManifestKeys(manifest);
   for (const w of keys.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   errs.push(...keys.errors);
+
+  // hub#1091: las guardas de filas afectadas. `checkManifestKeys` no las ve — lee claves
+  // desconocidas, patrones y vocabularios cerrados, y lo que el schema canónico declara para esto
+  // es un CONDICIONAL (`if min_affected_rows && sql.minItems 2 → then false`), que el walker no
+  // evalúa. Sin esta puerta la restricción sería inerte aquí y cierta solo en el hub.
+  errs.push(...checkRowGates(manifest));
 
   if (errs.length) throw new Error('manifest inválido:\n  - ' + errs.join('\n  - '));
 
