@@ -93,3 +93,20 @@ test('an absent SDK is never silently tolerated by the gate', () => {
     'validate-module must fail loudly when the SDK path it was promised is not there',
   );
 });
+
+// ADR-0398 (module-toolkit#101): the errors-catalog guard compares the manifest against the last
+// `chore(release)` commit. With the default shallow checkout (depth 1) that commit is not on disk
+// and the guard would silently have no previous self to compare with — a guard that cannot see
+// the past passes everything.
+test('the gate checks out the FULL history so the last chore(release) commit is there to diff', () => {
+  // `stepUsing` keys on a `uses:` continuation line; the checkout is the step's FIRST line
+  // (`- uses:`), so the step is read directly: from that line to the next `- `.
+  const lines = GATE.split('\n');
+  const at = lines.findIndex((l) => l.trim() === '- uses: actions/checkout@v4');
+  assert.notEqual(at, -1, 'the gate checks the module out with actions/checkout@v4');
+  const step = [];
+  for (let i = at + 1; i < lines.length && !lines[i].trimStart().startsWith('- '); i += 1) {
+    if (!lines[i].trim().startsWith('#')) step.push(lines[i]);
+  }
+  assert.match(step.join('\n'), /fetch-depth:\s*0/, 'fetch-depth: 0 on the module checkout');
+});

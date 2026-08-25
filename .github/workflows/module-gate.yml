@@ -65,6 +65,12 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          # ADR-0398 (module-toolkit#101): the errors-catalog guard diffs the manifest against the
+          # last `chore(release)` commit. A shallow checkout has no such commit on disk and the
+          # guard would have nothing to compare with — a guard that cannot see the past passes
+          # everything. The extra cost is one fetch of a small repo.
+          fetch-depth: 0
 
       # ── `@erplora/module-sdk` en el disco del runner (ERPlora/hub#1097) ────────────────────────
       #
