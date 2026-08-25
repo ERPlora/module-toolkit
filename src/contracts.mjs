@@ -22,6 +22,10 @@ export const RECOGNIZERS = {
   queryAll: { kind: 'query', argument: 0, required: true },
   queryPage: { kind: 'query', argument: 0, required: true },
   queryOptional: { kind: 'query', argument: 0, required: false },
+  // sales#186: `queryAll` plus `queryOptional`'s tolerance — the WHOLE set of a module that may not
+  // be installed. Optional like its sibling: no `depends_on`, but the name must exist if the owner
+  // is in the universe.
+  queryAllOptional: { kind: 'query', argument: 0, required: false },
   command: { kind: 'command', argument: 0, required: true },
   on: { kind: 'event', argument: 0 },
   loadSlot: { kind: 'slot', argument: 0 },

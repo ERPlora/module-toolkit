@@ -137,6 +137,31 @@ test('queryOptional se registra APARTE (consumo opcional, no obligatorio)', () =
   assert.deepEqual(consumes.queries, []);
 });
 
+test('queryAllOptional is recorded as OPTIONAL, just like queryOptional (ERPlora/sales#186)', () => {
+  // The pair the SDK was missing: the WHOLE set of a module that may not be installed. If the
+  // extractor does not recognize it, the call shows up nowhere — and a contract nobody declares is
+  // a contract nobody checks, not here, not at publish time, not at install time. That silence is
+  // exactly what this gate exists to prevent.
+  const { beta } = fakeWorkspace();
+  write(beta, 'ui/components/x.ts', `
+    const todo = await erplora().queryAllOptional<Item[]>('alpha.items.list');
+  `);
+  const { consumes } = extractContracts(beta, readManifest(beta));
+  assert.deepEqual(consumes.optional_queries, ['alpha.items.list']);
+  assert.deepEqual(consumes.queries, [], 'optional: it is NOT a mandatory consumption');
+});
+
+test('queryAllOptional does NOT require depends_on, and DOES require the contract to exist (sales#186)', () => {
+  assert.deepEqual(
+    validateBeta(`await erplora().queryAllOptional('alpha.items.list');`, (m) => { m.depends_on = []; }),
+    [],
+    'the optionality belongs to the MODULE: no hard dependency',
+  );
+  const errs = validateBeta(`await erplora().queryAllOptional('alpha.items.search');`, (m) => { m.depends_on = []; });
+  assert.equal(errs.length, 1, 'known provider + non-existent query = broken contract, not optionality');
+  assert.match(errs[0], /alpha\.items\.search/);
+});
+
 test('IGNORA strings normales: un literal con forma modulo.algo fuera del SDK no es contrato', () => {
   const { beta } = fakeWorkspace();
   write(beta, 'ui/components/x.ts', `
