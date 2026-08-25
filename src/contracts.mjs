@@ -258,6 +258,10 @@ export const CORE_OPERATIONS = {
     'hub.approvals.list',
     // hub#297 — el techo de la simplificada como DATO: el core RESPONDE, el TPV DECIDE.
     'hub.fiscal.limits',
+    // hub#1107 — the print queue is READABLE by a module: coverage per station and the queue
+    // as a status view (the document never travels; it leaves through the drain, ADR-0192).
+    'hub.print.coverage',
+    'hub.print.jobs',
   ],
   commands: [],
 };
