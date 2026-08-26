@@ -94,21 +94,40 @@ function stripRustComments(src) {
 }
 
 /**
- * Domain codes the handler source names literally, per file. A sub-command name
- * (`appointments._cancel_row`) has the same shape and is NOT an error code: the `_` prefix is the
- * internal-command marker (ADR-0166), so it is excluded here.
+ * Domain codes the handler source names literally, per file.
+ *
+ * `<module>.<snake_case>` is at once the shape of a domain code (ADR-0205) and the shape of a
+ * QUERY or COMMAND name, so a handler naming its own manifest entries —
+ * `read_rows(&context, "sales.get")`, `Operation::sql("sales.checkout", ...)` — is not emitting
+ * anything. `notCodes` carries those declared names (module-toolkit#107): counting them would have
+ * pushed `sales.get` into the error ABI, and the hub validates `Output.error` against the catalog,
+ * so from there `code: "sales.get"` would be a legitimate domain rejection.
+ *
+ * A sub-command name (`appointments._cancel_row`) is excluded by its `_` prefix, the
+ * internal-command marker (ADR-0166) — it is not always listed in `commands`.
+ *
+ * A code that deliberately shares its name with a query is unreachable here, by design: the
+ * exclusion wins (a silent false negative, which the hub runtime still catches, beats a false
+ * positive that blocks the catalog of every module that reads its own data by name).
  */
-export function handlerErrorLiterals(dir, moduleId) {
+export function handlerErrorLiterals(dir, moduleId, { notCodes = [] } = {}) {
   const re = new RegExp(`"(${moduleId}\\.${SEGMENT})"`, 'g');
+  const notACode = new Set(notCodes);
   const found = new Map();
   for (const { file, text } of handlerSources(dir)) {
     for (const m of stripRustComments(text).matchAll(re)) {
       const code = m[1];
       if (code.slice(moduleId.length + 1).startsWith('_')) continue;
+      if (notACode.has(code)) continue;
       if (!found.has(code)) found.set(code, file);
     }
   }
   return found;
+}
+
+/** The query and command names the manifest declares - same shape as a code, never a code. */
+function manifestNames(manifest) {
+  return [...Object.keys(manifest.queries ?? {}), ...Object.keys(manifest.commands ?? {})];
 }
 
 /** `locales/<lang>.json → errors` as a map, or `null` when the file is absent/unreadable. */
@@ -163,7 +182,7 @@ export function checkErrorsCatalog(dir, manifest, { previous = previousReleaseMa
   const moduleId = manifest.id;
   const declared = manifest.errors && typeof manifest.errors === 'object' ? manifest.errors : null;
 
-  const emitted = handlerErrorLiterals(dir, moduleId);
+  const emitted = handlerErrorLiterals(dir, moduleId, { notCodes: manifestNames(manifest) });
   const expectRows = [];
   for (const [name, command] of Object.entries(manifest.commands ?? {})) {
     const code = command?.expect_rows?.error;

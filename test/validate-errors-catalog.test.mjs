@@ -16,7 +16,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { checkErrorsCatalog, previousReleaseManifest } from '../src/validate-errors-catalog.mjs';
+import { checkErrorsCatalog, handlerErrorLiterals, previousReleaseManifest } from '../src/validate-errors-catalog.mjs';
 import { validate } from '../src/validate.mjs';
 
 const RUST = `
@@ -252,3 +252,91 @@ test('WIRED: `erplora validate` rejects a module whose expect_rows raises an und
 function readManifest(dir) {
   return readFileSync(join(dir, 'module.json'), 'utf8');
 }
+
+// ── a name the manifest declares is not an error code (module-toolkit#107) ────────────────────
+//
+// `<module>.<snake_case>` is at once the shape of a domain code (ADR-0205) and the shape of a
+// query/command name, so a handler that reads its own data from the context by name
+// (`read_rows(&context, "sales.get")`) looked, to a lexical scan, exactly like an emission. The
+// `_` filter (ADR-0166) never covered it: a public query carries no underscore. Declaring the
+// catalog would have forced `sales.get` INTO the error ABI, and the hub validates `Output.error`
+// against that catalog — so `code: "sales.get"` would have become a legitimate domain rejection.
+
+const READS_ITS_OWN_QUERY = `
+pub fn checkout() -> Output {
+    let rows = tax::read_rows(&context, "appointments.get").unwrap_or_default();
+    let cat = tax::read_rows(&context, "appointments.slot_catalog");
+    Output::new().with_operation(Operation::sql("appointments.book", p));
+    if closed { return Output::error(DomainError::new("appointments.cannot_cancel", "closed")); }
+}
+`;
+
+const withNames = (extra) =>
+  base({
+    queries: { 'appointments.get': { sql: 'get.sql' }, 'appointments.slot_catalog': { sql: 'slots.sql' } },
+    commands: { 'appointments.book': { permission: '', sql: 'book.sql' } },
+    ...extra,
+  });
+
+test('handlerErrorLiterals: a literal listed in `notCodes` is not an emitted code (#107)', () => {
+  const dir = mod(withNames({}), { rust: READS_ITS_OWN_QUERY });
+  try {
+    const all = [...handlerErrorLiterals(dir, 'appointments').keys()].sort();
+    assert.deepEqual(all, ['appointments.book', 'appointments.cannot_cancel', 'appointments.get', 'appointments.slot_catalog']);
+    const codes = [
+      ...handlerErrorLiterals(dir, 'appointments', {
+        notCodes: ['appointments.get', 'appointments.slot_catalog', 'appointments.book'],
+      }).keys(),
+    ];
+    assert.deepEqual(codes, ['appointments.cannot_cancel']);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('WARNS only about the real codes: query and command names are not counted (#107)', () => {
+  const manifest = withNames({});
+  const dir = mod(manifest, { rust: READS_ITS_OWN_QUERY });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.deepEqual(out.errors, []);
+    assert.equal(out.warnings.length, 1);
+    assert.match(out.warnings[0], /emits 1 domain error code/);
+    assert.match(out.warnings[0], /appointments\.cannot_cancel/);
+    for (const name of ['appointments.get', 'appointments.slot_catalog', 'appointments.book']) {
+      assert.doesNotMatch(out.warnings[0], new RegExp(name.replace('.', '\\.') + '(,|$)'), `${name} is a declared name, not a code`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('PASSES in strict mode: the catalog declares the codes only, never the query names (#107)', () => {
+  const manifest = withNames({ errors: catalog(['appointments.cannot_cancel']) });
+  const dir = mod(manifest, {
+    rust: READS_ITS_OWN_QUERY,
+    en: locales(['appointments.cannot_cancel']),
+    es: locales(['appointments.cannot_cancel']),
+  });
+  try {
+    assert.deepEqual(checkErrorsCatalog(dir, manifest), { errors: [], warnings: [] });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('STILL FAILS: a literal the manifest declares nowhere is an emitted code (#107 does not open a hole)', () => {
+  const manifest = withNames({ errors: catalog(['appointments.cannot_cancel']) });
+  const dir = mod(manifest, {
+    rust: READS_ITS_OWN_QUERY + '\nlet _ = "appointments.undeclared_thing";\n',
+    en: locales(['appointments.cannot_cancel']),
+    es: locales(['appointments.cannot_cancel']),
+  });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 1);
+    assert.match(out.errors[0], /appointments\.undeclared_thing/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
