@@ -25,7 +25,7 @@ aporta las dependencias y la configuración de build.
 | `erplora g view\|command\|query <id> <n>` | ✅ | Añade piezas dentro de un módulo existente. |
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
 | `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe) **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
-| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un canal de `host.notify` sin transporte y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), y un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*). |
+| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un canal de `host.notify` sin transporte, una guarda de filas que no se puede armar (`min_affected_rows` sobre un lote, un ancla `expect_rows.statement` colgando — hub#1091) y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), y un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*). |
 | `erplora test <id\|dir> [--list]` | ✅ | Corre **los tests que el módulo ya trae**: sus baterías `tests/**/*.test.py|.sh` (las que necesitan Postgres usan el contenedor de `ERPLORA_TEST_PG_CONTAINER`) **y sus tests de TypeScript** `ui/**/*.test.ts` bajo vitest + happy-dom (§ *Los tests que el módulo ya tenía*). Falla si queda un test que **nadie** va a ejecutar. `--list` los enumera sin correrlos — es lo que el gate lee para decidir qué instalar. |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
 | `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
@@ -119,6 +119,24 @@ error en el envío. Un manifest que declare `sms` —en `capabilities.notify.cha
 `notify` legacy— se rechaza. La lista es **positiva** (`SUPPORTED_NOTIFY_CHANNELS`): el día que haya
 transporte de SMS se mueve una entrada, y un canal inventado (`telegram`) cae por el mismo camino.
 Es error y no aviso porque hoy no lo declara ningún módulo publicado: no rompe a nadie.
+
+**Guardas de filas que no se pueden armar — ERROR** (`src/validate-row-gates.mjs`, hub#1091). Un
+command declara como mucho UNA guarda de filas afectadas: `min_affected_rows` (entero, error
+genérico) o `expect_rows` (la traducible, con código de dominio). Las dos cuentan el **LOTE**, y ahí
+estaba el agujero: una sentencia incondicional al lado de la vigilada —un UPSERT de contador, un
+INSERT de auditoría— satisface el mínimo **por la que falló**, así que el command contesta `200 ok`,
+no escribe nada y emite el evento igual. `expect_rows.statement` lo cierra anclando la guarda a UNA
+sentencia; `min_affected_rows` **no puede** (es un entero: no tiene dónde nombrarla), y no se deja
+combinar con `expect_rows`. Se rechazan los tres casos que el installer rechaza: `min_affected_rows`
+sobre más de una `sql`, un ancla que no nombra ninguna de las `sql` del command, y las dos guardas
+juntas.
+
+> Por qué es una comprobación propia y no sale del schema: `module.schema.json` lo declara con un
+> `if/then`, pero `checkManifestKeys` es un **walker** —claves desconocidas, patrones, vocabularios
+> cerrados— y **no evalúa condicionales**. Sin este fichero la restricción sería cierta solo en el
+> hub, y el autor se enteraría al INSTALAR, con el módulo publicado. Es error y no aviso porque no
+> rompe a nadie: en los 27 repos de módulo `min_affected_rows` aparece **una** vez
+> (`flows.drafts.resolve`) y es de una sola sentencia — hay un test que fija esa forma.
 
 **El techo de permisos de un handler — WARNING** (`src/validate-handler-permissions.mjs`, hub#459
 paso 3). `commands::validate_operation` resuelve una op de handler a SQL sin mirar el permiso del

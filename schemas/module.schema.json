@@ -520,7 +520,7 @@
           "min_affected_rows": {
             "type": "integer",
             "minimum": 0,
-            "description": "Contrato de mutación (hub#140): mínimo de filas que las sentencias `sql` del command DEBEN afectar (en total) para que el command se considere exitoso y se emitan sus `emit`. Si el recuento real queda por debajo, la transacción se revierte ENTERA y NO se escribe ningún evento en el outbox (ni notificación al WS) — porque el hecho declarado nunca ocurrió. Es OPT-IN: ausente = comportamiento de siempre (emite haya o no mutado), para no romper los módulos publicados ni los commands genuinamente idempotentes. `1` es el caso habitual de un command de transición (confirmar/anular/cerrar) que NO debe emitir si el `WHERE` no casa; `0` declararía explícitamente un no-op idempotente permitido que sí emite. El error estable distingue `not_found` (0 filas) de `conflict` (>0 pero por debajo del mínimo). El recuento es del LOTE: con varias sentencias, una incondicional al lado de la vigilada (un UPSERT de contador) puede satisfacer el mínimo con la fila que NO era la vigilada — para anclar la guarda a UNA sentencia usa `expect_rows.statement` (hub#1091)."
+            "description": "Contrato de mutación (hub#140): mínimo de filas que las sentencias `sql` del command DEBEN afectar (en total) para que el command se considere exitoso y se emitan sus `emit`. Si el recuento real queda por debajo, la transacción se revierte ENTERA y NO se escribe ningún evento en el outbox (ni notificación al WS) — porque el hecho declarado nunca ocurrió. Es OPT-IN: ausente = comportamiento de siempre (emite haya o no mutado), para no romper los módulos publicados ni los commands genuinamente idempotentes. `1` es el caso habitual de un command de transición (confirmar/anular/cerrar) que NO debe emitir si el `WHERE` no casa; `0` declararía explícitamente un no-op idempotente permitido que sí emite. El error estable distingue `not_found` (0 filas) de `conflict` (>0 pero por debajo del mínimo). Solo se admite sobre UNA sentencia (hub#1091): al ser un entero no tiene dónde nombrar la sentencia vigilada, así que con varias una incondicional al lado (un UPSERT de contador) satisfaría el mínimo con la fila que NO era la vigilada. El installer RECHAZA `min_affected_rows` con más de una sentencia `sql`; para una guarda sobre una sentencia concreta de un lote, declara `expect_rows` con `expect_rows.statement`."
           },
           "expect_rows": {
             "type": "object",
@@ -551,7 +551,21 @@
           "ai": {
             "$ref": "#/$defs/aiTool"
           }
-        }
+        },
+        "allOf": [
+          {
+            "$comment": "hub#1091: `min_affected_rows` cuenta el LOTE y, siendo un entero, no tiene dónde nombrar la sentencia vigilada. Con más de una sentencia queda NEUTRALIZABLE sin cura: una sentencia incondicional hermana satisface el mínimo por la que falló, y el caller recibe `200 ok` con evento de un hecho que no ocurrió. Quien necesite la guarda sobre una sentencia concreta declara `expect_rows` con `expect_rows.statement`. El installer lo rechaza igual (defensa en profundidad). `sql` va en `required` a proposito: `properties` solo restringe las claves PRESENTES, asi que sin el un command de HANDLER (que no declara `sql`) casaria el antecedente en vacio y quedaria rechazado aqui mientras el installer lo acepta \u2014 el schema no puede ser mas estricto que la puerta que instala.",
+            "if": {
+              "required": ["min_affected_rows", "sql"],
+              "properties": { "sql": { "type": "array", "minItems": 2 } }
+            },
+            "then": {
+              "properties": {
+                "min_affected_rows": false
+              }
+            }
+          }
+        ]
       }
     },
     "events": {
