@@ -510,3 +510,67 @@ test('lo que ESCRIBE el generador pasa su propia regla (#70)', async () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── Lo que no se puede LEER no entra (espejo de ERPlora/hub#1149) ──────────────────────────────
+//
+// El guard es un lint sobre el TEXTO y el cuerpo de un `DO`/`CREATE FUNCTION` es opaco: dentro cabe
+// un `EXECUTE` que arma la sentencia en tiempo de ejecución, así que ni el verbo ni la tabla son
+// tokens que leer. El runtime lo rechaza desde hub#1149; esta puerta tiene que rechazarlo IGUAL, o
+// el módulo se publica verde y revienta al instalar — que es exactamente el accidente que este
+// port vino a impedir.
+
+test('un cuerpo `$$ … $$` es UNA sentencia, no dos (hub#1149)', () => {
+  for (const sql of [
+    "DO $$\nBEGIN\n  DELETE FROM sales_line WHERE legacy = 'yes';\nEND\n$$;",
+    'CREATE FUNCTION sales_touch() RETURNS trigger AS $body$\nBEGIN\n  DELETE FROM sales_line;\n  RETURN NEW;\nEND\n$body$ LANGUAGE plpgsql;',
+  ]) {
+    const statements = splitStatements(sql);
+    assert.equal(statements.length, 1, `el cuerpo entre \`$…$\` no se parte: ${JSON.stringify(statements)}`);
+  }
+});
+
+test('un cuerpo procedimental NO entra en una migración de módulo (hub#1149)', () => {
+  const bodies = [
+    "DO $$\nBEGIN\n  DELETE FROM sales_line WHERE legacy = 'yes';\nEND\n$$",
+    "DO $limpia$ BEGIN EXECUTE 'DELETE FROM sales_line'; END $limpia$",
+    'CREATE FUNCTION sales_touch() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql',
+    'CREATE OR REPLACE FUNCTION sales_touch() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$ LANGUAGE plpgsql',
+    'CREATE PROCEDURE sales_clean() LANGUAGE plpgsql AS $$ BEGIN DELETE FROM sales_line; END $$',
+  ];
+  for (const sql of bodies) {
+    for (const kind of ['expand', 'backfill', 'contract']) {
+      const errors = checkMigrationSql('sales', 'migrations/postgres/020_x.sql', sql, kind);
+      assert.equal(errors.length > 0, true, `\`${sql}\` (${kind}) tenía que rechazarse`);
+      assert.match(errors[0], /procedimental|no se puede leer|opaco/i, `y decir por qué: ${errors[0]}`);
+    }
+  }
+});
+
+test('un `$$` dentro de un literal o de un comentario NO abre un cuerpo (hub#1149)', () => {
+  for (const sql of [
+    "INSERT INTO sales_line (label) VALUES ('$$ no es un cuerpo $$')",
+    '-- el coste va en $$ y no abre nada\nCREATE TABLE sales_line (id BIGINT)',
+    "CREATE TABLE sales_line (id BIGINT, note TEXT DEFAULT 'precio en $')",
+  ]) {
+    assert.deepEqual(
+      checkMigrationSql('sales', 'migrations/postgres/021_x.sql', sql, 'expand'),
+      [],
+      `\`${sql}\` es SQL correcto y tiene que pasar`,
+    );
+  }
+});
+
+// ── El upsert: las dos puertas ya dicen lo mismo (hub#1109) ────────────────────────────────────
+
+test('un upsert sobre tabla propia pasa, y el runtime ya no lo rechaza (hub#1109)', () => {
+  const upsert =
+    "INSERT INTO taxes_category_label (key, lang, label, description) VALUES ('food', 'es', 'x', 'y') " +
+    'ON CONFLICT (key, lang) DO UPDATE SET label = EXCLUDED.label, description = EXCLUDED.description';
+  assert.deepEqual(
+    checkMigrationSql('taxes', 'migrations/postgres/005_category_labels.sql', upsert, 'backfill'),
+    [],
+  );
+  // Y el ancla sigue cazando el positivo: `set` no es una tabla, pero la de otro módulo sí.
+  assert.deepEqual(tablesTouched(upsert), ['taxes_category_label']);
+  assert.deepEqual(tablesTouched('UPDATE sales_sale SET total = 0'), ['sales_sale']);
+});

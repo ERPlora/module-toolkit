@@ -142,6 +142,23 @@ export function splitStatements(sql) {
         current += sql[i];
         if (sql[i - 1] === '*' && sql[i] === '/') break;
       }
+    } else if (ch === '$' && dollarTagLength(sql, i) !== null) {
+      // Dollar-quoting (ERPlora/hub#1149): sin esto el `;` de dentro de un `DO $$ … $$` parte el
+      // bloque y los inspectores deciden sobre trozos de algo que ya no es la sentencia que
+      // Postgres va a ejecutar. El cuerpo se copia verbatim: aquí solo se decide dónde ACABA.
+      const len = dollarTagLength(sql, i);
+      const tag = sql.slice(i, i + len);
+      current += tag;
+      i += len - 1;
+      while (i + 1 < sql.length) {
+        if (sql.startsWith(tag, i + 1)) {
+          current += tag;
+          i += tag.length;
+          break;
+        }
+        i += 1;
+        current += sql[i];
+      }
     } else if (ch === ';') {
       if (current.trim()) out.push(current.trim());
       current = '';
@@ -151,6 +168,51 @@ export function splitStatements(sql) {
   }
   if (current.trim()) out.push(current.trim());
   return out;
+}
+
+/**
+ * Length of the `$…$` delimiter starting at `at`, or `null` when it is not one (ERPlora/hub#1149).
+ *
+ * A Postgres tag is `$`, an optional identifier (letter or `_` first, digits allowed after) and a
+ * closing `$`. Checking it is what separates `$$`/`$body$` — which open a body — from a `$1` or a
+ * lone `$` in a price, which open nothing. Mirror of `migration_guard.rs::dollar_tag_len`.
+ */
+export function dollarTagLength(sql, at) {
+  if (sql[at] !== '$') return null;
+  for (let j = at + 1; j < sql.length; j += 1) {
+    const c = sql[j];
+    if (c === '$') return j + 1 - at;
+    const isFirst = j === at + 1;
+    const ok = /[A-Za-z_]/.test(c) || (!isFirst && /[0-9]/.test(c));
+    if (!ok) return null;
+  }
+  return null;
+}
+
+/**
+ * The procedural construct the statement opens, if any (ERPlora/hub#1149).
+ *
+ * Only `DO` and `CREATE [OR REPLACE] FUNCTION`/`PROCEDURE`: the three shapes that carry a body this
+ * door cannot read. A lone `$…$` does NOT count — `VALUES ($$hola$$)` is a perfectly readable
+ * literal, and refusing it would be a false positive, which here means a module left uninstalled.
+ *
+ * Mirror of `migration_guard.rs::procedural_construct`.
+ */
+export function proceduralConstruct(statement) {
+  const tokens = stripComments(statement)
+    .toUpperCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((token) => token.replace(/^[^A-Z0-9_]+|[^A-Z0-9_]+$/g, ''));
+
+  if (tokens[0] === 'DO') return 'DO';
+  if (tokens[0] === 'CREATE') {
+    let j = 1;
+    while (tokens[j] === 'OR' || tokens[j] === 'REPLACE') j += 1;
+    if (tokens[j] === 'FUNCTION') return 'CREATE FUNCTION';
+    if (tokens[j] === 'PROCEDURE') return 'CREATE PROCEDURE';
+  }
+  return null;
 }
 
 /**
@@ -218,13 +280,11 @@ export function tablesInventedByCommentSplit(moduleId, sql) {
  * really uses and, in doubt, invents nothing — what it does not recognise does not block, because a
  * false positive here leaves a module uninstalled.
  *
- * ⚠️ One deliberate DIVERGENCE from the runtime (#72): a `SET` right after an anchor is a keyword,
- * never a table, so an `ON CONFLICT … DO UPDATE SET …` upsert anchors nothing besides its `INTO`.
- * The runtime's `tables_touched` (as of develop and every tag to date) still reads that `SET` as a
- * table and refuses the upsert at install — a hub-side bug in its own right. Until it is fixed
- * there, this door passes what current hubs reject: it is still the right call, because the guard's
- * contract is what the SQL MEANS, and an upsert on the module's own table is legal Postgres the
- * runtime rejects by accident.
+ * A `SET` right after an anchor is a keyword, never a table, so an `ON CONFLICT … DO UPDATE SET …`
+ * upsert anchors nothing besides its `INTO` (#72). This WAS a deliberate divergence: the runtime's
+ * `tables_touched` read that `SET` as a table and refused the upsert at install, so this door
+ * passed what every hub rejected. ERPlora/hub#1109 fixed it there, and the two doors say the same
+ * thing again — which is the only state in which a green gate means an installable module.
  */
 export function tablesTouched(statement) {
   const clean = stripComments(statement);
@@ -364,6 +424,21 @@ export function checkMigrationSql(moduleId, filename, sql, kind = 'expand') {
   // A grandfathered file is applied as written: it is already in the fleet's databases, and the
   // contract cannot be applied retroactively without breaking exactly what it protects.
   if (isGrandfathered(moduleId, filename)) return [];
+
+  // 🔴 Lo que no se puede LEER, no entra (ERPlora/hub#1149). Va lo PRIMERO y devuelve solo esto: si
+  // no, el autor vería además la queja del splitter viejo sobre un bloque que de todas formas no
+  // puede publicar, y lo que hay que decirle es que ahí dentro no se puede afirmar nada.
+  for (const statement of splitStatements(sql)) {
+    const construct = proceduralConstruct(statement);
+    if (construct) {
+      return [
+        `${filename}: la migración contiene un \`${construct}\`, y el cuerpo de un bloque ` +
+          'procedimental es opaco para esta puerta: dentro cabe un `EXECUTE` que arma la sentencia ' +
+          'en tiempo de ejecución, así que no se puede afirmar ni qué tablas toca ni si destruye ' +
+          'filas. Escribe la migración como sentencias SQL sueltas, que es lo que sí se puede leer',
+      ];
+    }
+  }
 
   const errors = [];
   // Checked on the RAW file, before anything is split: this is not about what the SQL MEANS, it is
