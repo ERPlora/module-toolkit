@@ -58,13 +58,14 @@ test('discoverBatteries: clasifica por sufijo y deja fuera lo que no es una bate
   assert.deepEqual(discoverBatteries(m.dir), {
     contract: ['tests/manifest.contract.test.py', 'tests/schemas.contract.test.py'],
     postgres: ['tests/engine.postgres.test.py'],
+    hub: [],
   });
   m.clean();
 });
 
 test('discoverBatteries: un módulo sin `tests/` no cambia nada', () => {
   const m = mod({});
-  assert.deepEqual(discoverBatteries(m.dir), { contract: [], postgres: [] });
+  assert.deepEqual(discoverBatteries(m.dir), { contract: [], postgres: [], hub: [] });
   m.clean();
 });
 
@@ -195,6 +196,7 @@ test('discoverBatteries: `.pg.test.py` is a Postgres battery, like `.postgres.te
   assert.deepEqual(discoverBatteries(m.dir), {
     contract: [],
     postgres: ['tests/anonymize.pg.test.py', 'tests/engine.postgres.test.py'],
+    hub: [],
   });
   m.clean();
 });
@@ -204,6 +206,7 @@ test('discoverBatteries: a `*.test.py` with NO family suffix is still a battery'
   assert.deepEqual(discoverBatteries(m.dir), {
     contract: ['tests/blind_count.test.py'],
     postgres: [],
+    hub: [],
   });
   m.clean();
 });
@@ -219,6 +222,7 @@ test('discoverBatteries: the CONTENT decides when the name does not say it', () 
   assert.deepEqual(discoverBatteries(m.dir), {
     contract: [],
     postgres: ['tests/auto_close.test.py'],
+    hub: [],
   });
   m.clean();
 });
@@ -228,6 +232,7 @@ test('discoverBatteries: bash batteries count too (`taxes` ships two)', () => {
   assert.deepEqual(discoverBatteries(m.dir), {
     contract: [],
     postgres: ['tests/natural-key.postgres.test.sh'],
+    hub: [],
   });
   m.clean();
 });
@@ -240,6 +245,7 @@ test('discoverBatteries: looks into subdirectories, and never into `__pycache__`
   assert.deepEqual(discoverBatteries(m.dir), {
     contract: [],
     postgres: ['tests/pg/engine.postgres.test.py'],
+    hub: [],
   });
   m.clean();
 });

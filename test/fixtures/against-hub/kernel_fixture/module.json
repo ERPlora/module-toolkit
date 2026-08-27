@@ -1,0 +1,21 @@
+{
+  "id": "kernel_fixture",
+  "name": "Kernel fixture",
+  "version": "0.0.1",
+  "description": "Fixture module used by `erplora test --against-hub` to prove the round trip against a real hub runtime.",
+  "permissions": ["kernel_fixture.view_item", "kernel_fixture.add_item"],
+  "migrations": { "postgres": ["migrations/postgres/001_init.sql"] },
+  "queries": {
+    "kernel_fixture.items.total": {
+      "permission": "kernel_fixture.view_item",
+      "sql": "queries/items_total.sql"
+    }
+  },
+  "commands": {
+    "kernel_fixture.items.create": {
+      "permission": "kernel_fixture.add_item",
+      "sql": ["commands/items_create.sql"],
+      "schema": "schemas/items_create.json"
+    }
+  }
+}

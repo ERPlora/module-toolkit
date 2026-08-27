@@ -26,7 +26,7 @@ aporta las dependencias y la configuración de build.
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
 | `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe) **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
 | `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un canal de `host.notify` sin transporte, una guarda de filas que no se puede armar (`min_affected_rows` sobre un lote, un ancla `expect_rows.statement` colgando — hub#1091) y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), y un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*). |
-| `erplora test <id\|dir> [--list]` | ✅ | Corre **los tests que el módulo ya trae**: sus baterías `tests/**/*.test.py|.sh` (las que necesitan Postgres usan el contenedor de `ERPLORA_TEST_PG_CONTAINER`) **y sus tests de TypeScript** `ui/**/*.test.ts` bajo vitest + happy-dom (§ *Los tests que el módulo ya tenía*). Falla si queda un test que **nadie** va a ejecutar. `--list` los enumera sin correrlos — es lo que el gate lee para decidir qué instalar. |
+| `erplora test <id\|dir> [--list] [--against-hub [<imagen>]]` | ✅ | Corre **los tests que el módulo ya trae**: sus baterías `tests/**/*.test.py|.sh` (las que necesitan Postgres usan el contenedor de `ERPLORA_TEST_PG_CONTAINER`) **y sus tests de TypeScript** `ui/**/*.test.ts` bajo vitest + happy-dom (§ *Los tests que el módulo ya tenía*). Falla si queda un test que **nadie** va a ejecutar. `--list` los enumera sin correrlos — es lo que el gate lee para decidir qué instalar. Con `--against-hub` levanta el **kernel real** y corre contra él las baterías `*.hub.test.py|.sh` (§ *La batería contra el kernel REAL*). |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
 | `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
 | `erplora publish <id\|dir>` | 📋 guía | Imprime el flujo de publicación al marketplace (no automatizado: auth + confirmación). |
@@ -249,6 +249,68 @@ Y el estado de partida, medido antes de tocar nada (`npx vitest run` en `modules
 —al revés que en `outfitkit#66`, donde eran 9 ficheros—, así que esto entra de golpe y no en
 trinquete: no hace falta ningún `GRANDFATHERED`.
 
+
+## La batería contra el kernel REAL (`--against-hub`) — module-toolkit#110
+
+Una batería de Postgres levanta una base de datos desde las migraciones del módulo y comprueba el
+SQL ahí, afirmando que «bindea y corre exactamente como lo corre el runtime». Eso es una afirmación
+del test, no una propiedad del runtime: el bindeo, los `system_params`, los gates de fila, el
+instalador y el `migration_guard` están **reimplementados a mano** en el harness, y coinciden con el
+motor solo hasta que alguien toca el motor.
+
+`erplora test <dir> --against-hub` borra la emulación del bucle. Es la mitad «módulo» de la suite de
+conformidad del kernel (ADR «El Hub se CIERRA como KERNEL» §5), y la forma es la de Android CTS y la
+de `testcontainers`: **el kernel de verdad, arrancado**.
+
+```bash
+erplora test modules/sales --against-hub          # ghcr.io/erplora/hub:stable (el canal por defecto)
+erplora test modules/sales --against-hub dev      # el canal de integración
+erplora test modules/sales --against-hub sha256:… # un digest concreto (lo que hay desplegado)
+erplora test modules/sales --against-hub ghcr.io/erplora/hub:1.1.10
+```
+
+Qué hace, en orden, y todo con `docker` de línea de comandos (sin SDK, sin driver):
+
+1. `docker pull` de la imagen. Si sale **denegado**, el error escribe el comando exacto que tiene
+   que funcionar y el `docker login ghcr.io` que falta — `ghcr.io/erplora/hub` es un paquete
+   privado, y un fallo mudo aquí es un verde comprado.
+2. Un Postgres efímero (`postgres:18`, el major de producción) en una red propia.
+3. El hub, con `HUB_AUTH=dev` + `HUB_DEV_MODE=1`, el módulo montado **de solo lectura** dentro de su
+   staging (`HUB_MODULE_CACHE`), y el puerto publicado en uno efímero de `127.0.0.1`.
+4. Espera a `/readyz` — el mismo endpoint que vigila el `HEALTHCHECK` de la imagen. Si no llega, el
+   error trae la **cola de `docker logs`** del contenedor.
+5. Instala el módulo por `POST /api/modules/install`, la puerta real del runtime: corre su
+   instalador, su `migration_guard` y su validación de manifest.
+6. Corre las baterías de la familia **hub**, que hablan HTTP con ese runtime.
+7. **Desmonta todo, pase lo que pase** — y solo lo que creó esta corrida, nunca los contenedores de
+   otro agente en la misma máquina. Una corrida que muere dejando el hub en pie lo deja con el
+   módulo INSTALADO, y la siguiente «pasa» contra un estado que nadie puso.
+
+**La familia `hub`.** Una batería es de esta familia por su **nombre** (`tests/*.hub.test.py|.sh`) o
+por su **contenido** (lee `ERPLORA_HUB_BASE_URL`) — la misma regla doble que la familia de Postgres,
+por el mismo motivo medido en module-toolkit#55. Recibe por entorno:
+
+| Variable | Qué es |
+|---|---|
+| `ERPLORA_HUB_BASE_URL` / `<ID>_HUB_BASE_URL` | la url del runtime vivo |
+| `ERPLORA_HUB_ID` | el `hub_id` con el que el runtime escribe las filas en modo dev (`local`) |
+| `ERPLORA_HUB_IMAGE` | la referencia exacta contra la que se está probando |
+
+🔴 **Sin `--against-hub`, una batería de esta familia sale como «sin correr», con su motivo — nunca
+como verde.** Es la misma regla que las de Postgres sin contenedor: contarla por buena sería
+certificar el módulo contra un hub que nunca arrancó.
+
+**Qué prueba esto que la emulación no puede.** El fixture de referencia
+(`test/fixtures/against-hub/kernel_fixture`) está hecho a propósito de cosas que solo el kernel
+enseña: `:new_id`/`:hub_id` los inyecta el runtime y no el payload; un `BIGINT` vuelve por HTTP como
+**string** JSON; la misma query bajo otro `X-Hub-Id` no ve **nada**; y un payload que rompe su
+propio JSON Schema lo rechaza el runtime, no el test.
+
+**Todavía NO está enganchado al gate compartido**, y se dice en voz alta: `module-gate.yml` corre en
+los 26 repos de módulo, que son **privados**, y en el plan Free los secretos de organización no
+llegan ahí — no hay credencial con la que hacer `docker pull` de un paquete privado, que es la misma
+decisión de seguridad que ya deja fuera al `cargo test` del handler. Engancharlo es
+[module-toolkit#112](https://github.com/ERPlora/module-toolkit/issues/112).
 
 El validador **es** el gate: los 24 repos de módulo lo llaman desde aquí. Dos piezas, las dos en
 este repo, para que arreglar un agujero no sean 24 PRs:

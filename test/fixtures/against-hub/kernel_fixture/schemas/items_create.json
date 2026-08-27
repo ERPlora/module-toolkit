@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "required": ["name", "amount_cents"],
+  "additionalProperties": false,
+  "properties": {
+    "name": { "type": "string", "minLength": 1 },
+    "amount_cents": { "type": "integer", "minimum": 0 }
+  }
+}

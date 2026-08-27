@@ -7,9 +7,11 @@
 //   erplora build <dir>        compila el WC a dist/<id>.esm.js
 //   erplora validate <dir> [--pg]  valida manifest + CSP del bundle + contratos (ADR-0127);
 //                              con --pg, PREPARA cada SQL contra un Postgres efímero (#32)
-//   erplora test <dir>         corre las baterías propias del módulo (contrato + Postgres) y sus
-//                              tests de TypeScript (`ui/**/*.test.ts`, vitest + happy-dom)
+//   erplora test <dir>         corre las baterías propias del módulo (contrato + Postgres + hub) y
+//                              sus tests de TypeScript (`ui/**/*.test.ts`, vitest + happy-dom)
 //                              `--list` las enumera sin correrlas (lo que usa el gate compartido)
+//                              `--against-hub [<imagen>]` levanta el kernel REAL y corre contra él
+//                              las baterías `*.hub.test.py|.sh` (module-toolkit#110)
 //   erplora contracts <dir>    (re)genera .erplora/contracts.json
 //   erplora pack|sign|publish  empaquetado/firma/publicación al marketplace (§7.4)
 //
@@ -21,13 +23,18 @@
 // (ERPlora/pm#107). Loading `build.mjs` just to run `validate` made the CLI die with
 // `ERR_MODULE_NOT_FOUND: esbuild` before parsing a single argument.
 import { validate } from '../src/validate.mjs';
+import { parseAgainstHub } from '../src/against-hub.mjs';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 const argv = process.argv.slice(2);
+// `--against-hub [<imagen|digest>]` is the ONE flag that takes a value, and a value does not start
+// with `--`: left in, it would land in `rest` and be read as the module directory (module-toolkit
+// #110). It is consumed first, once, so the split below keeps meaning what it always meant.
+const againstHub = parseAgainstHub(argv, { positionals: true });
 // Flags are separated from positional args so `erplora validate <dir> --pg` works in any order.
-const flags = new Set(argv.filter((a) => a.startsWith('--')));
-const [cmd, ...rest] = argv.filter((a) => !a.startsWith('--'));
+const flags = new Set(againstHub.positionals.filter((a) => a.startsWith('--')));
+const [cmd, ...rest] = againstHub.positionals.filter((a) => !a.startsWith('--'));
 
 // Acepta una ruta o un id suelto: desde un workspace, `erplora build inventory` → modules/inventory.
 const target = (arg) => {
@@ -48,13 +55,19 @@ const usage = () => {
   build <dir>                    compila el WebComponent → dist/<id>.esm.js
   validate <dir> [--pg]          valida el manifest + CSP del bundle + contratos (ADR-0127);
                                  con --pg, además PREPARA cada SQL contra un Postgres efímero
-  test <dir> [--list]            corre las baterías propias del módulo (cualquier
+  test <dir> [--list] [--against-hub [<imagen|digest>]]
+                                 corre las baterías propias del módulo (cualquier
                                  tests/**/*.test.py|.sh; las que necesitan Postgres —por nombre
                                  \`.pg.\`/\`.postgres.\` o porque leen el contenedor— usan el de
                                  \`ERPLORA_TEST_PG_CONTAINER\`) Y sus tests de TypeScript
                                  (\`ui/**/*.test.ts\` bajo vitest + happy-dom; el binario se puede
                                  fijar con \`ERPLORA_VITEST\`). Falla si queda un test que nadie
-                                 va a ejecutar. \`--list\` solo los enumera
+                                 va a ejecutar. \`--list\` solo los enumera.
+                                 Con \`--against-hub\` levanta la imagen PUBLICADA del kernel
+                                 (\`ghcr.io/erplora/hub:stable\` por defecto; \`dev\`, un
+                                 \`sha256:…\` o una referencia completa también valen) con su
+                                 Postgres, instala el módulo por \`POST /api/modules/install\` y
+                                 corre contra ÉL las baterías \`tests/**/*.hub.test.py|.sh\`
   contracts <dir>                (re)genera .erplora/contracts.json (superficie consumida)
   pack <dir>                     module.zip + manifest.lock + SHA256
   sign <dir>                     SHA256 + firma ed25519 (\`<zip>.sig\`, MODULE_SIGNING_KEY)
@@ -121,26 +134,52 @@ try {
       // over the python of a venv that has it. Choosing the interpreter is what lets it do that
       // without touching the 25 module repos.
       const python = process.env.ERPLORA_PYTHON || 'python3';
-      const py = runBatteries(dir, manifest, { container, python });
-      // The TypeScript half runs under vitest, which the gate installs next to the module and hands
-      // over through `ERPLORA_VITEST` — the same door `ERPLORA_PYTHON` opens for the batteries.
-      const ts = runTsTests(dir);
-      const results = [...py.results, ...ts.results];
-      const errors = [...py.errors, ...ts.errors];
-      const notRun = [...py.notRun, ...ts.notRun];
-      for (const r of results.filter((x) => x.ran)) console.log(`  ✓ ${r.file}`);
-      // Never a silent pass: what did not run is named, every time.
-      for (const n of notRun) console.warn(`  ⚠ ${n}`);
-      if (errors.length) {
-        throw new Error(`baterías del módulo (module-toolkit#50/#74):\n  - ${errors.join('\n  - ')}`);
+      // One body, run either bare or inside a live kernel: the report has to read the same way in
+      // both, and duplicating it is how the two would drift.
+      const runEverything = (liveHub) => {
+        const py = runBatteries(dir, manifest, { container, python, hub: liveHub });
+        // The TypeScript half runs under vitest, which the gate installs next to the module and
+        // hands over through `ERPLORA_VITEST` — the same door `ERPLORA_PYTHON` opens for the
+        // batteries.
+        const ts = runTsTests(dir);
+        const results = [...py.results, ...ts.results];
+        const errors = [...py.errors, ...ts.errors];
+        const notRun = [...py.notRun, ...ts.notRun];
+        for (const r of results.filter((x) => x.ran)) console.log(`  ✓ ${r.file}`);
+        // Never a silent pass: what did not run is named, every time.
+        for (const n of notRun) console.warn(`  ⚠ ${n}`);
+        if (errors.length) {
+          throw new Error(
+            `baterías del módulo (module-toolkit#50/#74/#110):\n  - ${errors.join('\n  - ')}`,
+          );
+        }
+        const ran = results.filter((x) => x.ran).length;
+        console.log(
+          ran || notRun.length
+            ? `✓ test ${manifest.id}: ${ran} batería(s) en verde` +
+                (notRun.length ? `, ${notRun.length} sin correr` : '')
+            : `✓ test ${manifest.id}: sin baterías propias (0 baterías en tests/ ni en ui/)`,
+        );
+      };
+      // module-toolkit#110: with `--against-hub` the `*.hub.test.py|.sh` batteries run against the
+      // PUBLISHED kernel image — its installer, its dispatcher, its Postgres — instead of against a
+      // scratch database that imitates it. Loaded on demand like the heavy commands: it reaches for
+      // Docker, and `--list` (what the shared gate calls) must never pay for that.
+      if (againstHub.present) {
+        const { resolveImageRef, withHubRuntime } = await import('../src/against-hub.mjs');
+        const image = resolveImageRef(againstHub.value);
+        console.log(`→ ${manifest.id} contra el runtime REAL ${image}`);
+        // Docker needs an absolute path to bind-mount, and `dir` is whatever the caller typed.
+        await withHubRuntime(
+          { dir: resolve(dir), manifest, image, log: (line) => console.log(line) },
+          async (live) => {
+            console.log(`  · runtime en ${live.baseUrl}`);
+            runEverything(live);
+          },
+        );
+      } else {
+        runEverything(null);
       }
-      const ran = results.filter((x) => x.ran).length;
-      console.log(
-        ran || notRun.length
-          ? `✓ test ${manifest.id}: ${ran} batería(s) en verde` +
-              (notRun.length ? `, ${notRun.length} sin correr` : '')
-          : `✓ test ${manifest.id}: sin baterías propias (0 baterías en tests/ ni en ui/)`,
-      );
       break;
     }
     case 'contracts': {
