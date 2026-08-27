@@ -20,7 +20,9 @@
 #
 # The file list is EXPLICIT rather than a `validate-*` glob: `manifest-schema`,
 # `canonical-mirrors` (module-toolkit#30/#40), `hub-mirror` (#61), `run-batteries` (#50),
-# `run-vitest` (#74) and `gate-wiring` (ERPlora/hub#1097) need no dependency either, and leaving
+# `run-vitest` (#74), `against-hub` (#110) and `gate-wiring` (ERPlora/hub#1097) need no dependency
+# either — `against-hub` injects `exec`/`probe`, so it checks the harness that starts containers
+# WITHOUT starting one — and leaving
 # them out of the pattern would mean a vendored schema that went missing or unparseable reached the
 # 26 module repos without a single check going red. (`bin-*` already covers `bin-test-batteries`
 # and `bin-test-typescript`.)
@@ -166,6 +168,7 @@ jobs:
           test/hub-mirror.test.mjs
           test/run-batteries.test.mjs
           test/run-vitest.test.mjs
+          test/against-hub.test.mjs
           test/gate-wiring.test.mjs
           test/ci-runs-every-suite.test.mjs
 

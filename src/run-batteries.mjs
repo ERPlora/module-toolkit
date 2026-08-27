@@ -46,6 +46,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, join } from 'node:path';
+import { hubBatteryVars } from './against-hub.mjs';
 
 /** A check is a battery if it is named like one. Both interpreters the modules actually use. */
 export const BATTERY_RE = /\.test\.(py|sh)$/;
@@ -66,6 +67,22 @@ export const PG_NAME_RE = /\.(postgres|pg)\.test\.(py|sh)$/;
  * how the classification stops depending on whoever named it.
  */
 export const PG_CONTENT_RE = /TEST_PG_CONTAINER|erplora-test-pg/;
+
+/**
+ * A battery that talks to a REAL hub runtime (module-toolkit#110). It is its own family because it
+ * needs something no other battery does — the published kernel image, running, with the module
+ * installed in it — and because the alternative is worse than not having it: misfiled as a contract
+ * battery it would run with nothing at the other end and pass, or fail, for reasons that have
+ * nothing to do with the module.
+ *
+ * By NAME (`totals.hub.test.py`) or by CONTENT, exactly like the Postgres family and for the same
+ * measured reason (module-toolkit#55): recognising a battery by one exact suffix left 20 files in
+ * 7 modules invisible, and «the next file born with another name» is not a hypothesis here either.
+ */
+export const HUB_NAME_RE = /\.hub\.test\.(py|sh)$/;
+
+/** The content says it even when the name does not: it reads the url of the live runtime. */
+export const HUB_CONTENT_RE = /ERPLORA_HUB_BASE_URL|_HUB_BASE_URL/;
 
 /** Directories under `tests/` that hold no checks, only leftovers. */
 const IGNORED_DIRS = new Set(['__pycache__', 'node_modules', '.venv', 'venv', '.pytest_cache']);
@@ -93,22 +110,35 @@ function testFiles(dir) {
   return out;
 }
 
-/** Does this battery need the Postgres container — by its name, or by what it reads? */
-function needsPostgres(dir, file) {
-  if (PG_NAME_RE.test(file)) return true;
+/**
+ * Which family does this battery belong to — by its name, or by what it reads?
+ *
+ * An explicit NAME beats the content, always and in both directions: somebody who wrote
+ * `engine.pg.test.py` said what it is, and a mention of the runtime's url in a comment must not
+ * relabel it. Only when the name says nothing does the content decide — and there `hub` goes first,
+ * because a battery driving the live runtime may perfectly well also name Postgres, and running it
+ * against a scratch database would test the very emulation this family exists to replace.
+ */
+function familyOf(dir, file) {
+  if (HUB_NAME_RE.test(file)) return 'hub';
+  if (PG_NAME_RE.test(file)) return 'postgres';
+  let source = '';
   try {
-    return PG_CONTENT_RE.test(readFileSync(join(dir, file), 'utf8'));
+    source = readFileSync(join(dir, file), 'utf8');
   } catch {
-    return false;
+    return 'contract';
   }
+  if (HUB_CONTENT_RE.test(source)) return 'hub';
+  if (PG_CONTENT_RE.test(source)) return 'postgres';
+  return 'contract';
 }
 
 /** The batteries the module carries, by kind, relative to the module dir and sorted. */
 export function discoverBatteries(dir) {
-  const out = { contract: [], postgres: [] };
+  const out = { contract: [], postgres: [], hub: [] };
   for (const file of testFiles(dir)) {
     if (!BATTERY_RE.test(file)) continue;
-    out[needsPostgres(dir, file) ? 'postgres' : 'contract'].push(file);
+    out[familyOf(dir, file)].push(file);
   }
   return out;
 }
@@ -190,8 +220,16 @@ export function looksSkipped(output) {
  * `container` is the Postgres the gate already starts. Without it the Postgres batteries are NOT
  * run and are listed in `notRun`: reporting them as passed would be the exact lie this file exists
  * to prevent.
+ *
+ * `hub` is the LIVE runtime `erplora test --against-hub` put up (`{ baseUrl, hubId, image }`), and
+ * it plays exactly the same role for the `hub` family (module-toolkit#110): without it those
+ * batteries are NOT run and are named, never counted as green.
  */
-export function runBatteries(dir, manifest, { container = null, python = 'python3', bash = 'bash' } = {}) {
+export function runBatteries(
+  dir,
+  manifest,
+  { container = null, python = 'python3', bash = 'bash', hub = null } = {},
+) {
   const results = [];
   const errors = [];
   const notRun = [];
@@ -233,9 +271,19 @@ export function runBatteries(dir, manifest, { container = null, python = 'python
         );
         continue;
       }
+      if (kind === 'hub' && !hub) {
+        notRun.push(
+          `${file}: sin un runtime del hub al alcance no se ha corrido (necesita ` +
+            '`erplora test <dir> --against-hub`, que levanta la imagen publicada del kernel e ' +
+            'instala el módulo en ella). Contarla como verde sería certificar el módulo contra un ' +
+            'hub que nunca arrancó',
+        );
+        continue;
+      }
       const env = {
         ...process.env,
         ...(kind === 'postgres' ? pgContainerVars(manifest.id, container) : {}),
+        ...(kind === 'hub' ? hubBatteryVars(manifest.id, hub) : {}),
       };
       // The interpreter follows the extension, never the file's own `+x` bit: a battery committed
       // without it (`taxes/tests/cashier_role.contract.test.py`) has to run just the same.
