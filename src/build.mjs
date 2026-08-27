@@ -10,12 +10,13 @@
 // Mismo contrato de salida que el antiguo @erplora/module-cli (dist/<id>.esm.js) para no tocar
 // module-loader/sync-modules.
 import { build as esbuild } from 'esbuild';
-import { readFileSync, mkdirSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { resolve, join, extname } from 'node:path';
 import { assertCspSafe } from './validate.mjs';
 import { erploraResolvePlugin } from './resolve-plugin.mjs';
 import { generateIcons } from './icons.mjs';
 import { stampOutfitkit, OUTFITKIT_STAMP } from './outfitkit-stamp.mjs';
+import { bundleStampFile, checkBundleProvenance, normalizeBundlePaths, stampBundle } from './bundle-freshness.mjs';
 import { buildWasmHandler } from './wasm.mjs';
 
 // Flags clásicos de decoradores para los `@state()/@property()` de Lit (igual que Vite).
@@ -66,8 +67,19 @@ export async function build(moduleDir, { wasm = {} } = {}) {
     });
   }
 
+  // module-toolkit#93 (causa raíz): esbuild anota la ruta de cada entrada como comentario, RELATIVA
+  // al working dir del PROCESO. Construir desde otro sitio (el checkout del toolkit, un worktree de
+  // la flota) horneaba rutas ABSOLUTAS en el artefacto publicado — `verifactu` publicó 8 apuntando
+  // al scratchpad de otro agente. Normalizarlas hace que el bundle salga IGUAL desde cualquier
+  // máquina, que es lo que la comprobación de procedencia exige aguas abajo.
+  writeFileSync(outfile, normalizeBundlePaths(readFileSync(outfile, 'utf8'), dir), 'utf8');
+
   const code = readFileSync(outfile, 'utf8');
   assertCspSafe(code, `${id} bundle`);
+  // Tras normalizar esto no debería disparar nunca; si lo hace, algo metió una ruta de esta máquina
+  // en el artefacto y publicarlo es peor que fallar aquí (module-toolkit#93).
+  const provenance = checkBundleProvenance(dir, manifest);
+  if (provenance.errors.length) throw new Error(provenance.errors.join('\n  - '));
   console.log(`✓ build ${id}: ${outfile} (${(code.length / 1024).toFixed(1)} KB, CSP-safe)`);
 
   // Sidecar de iconos (ADR option-b): hornea el SVG de los nombres Iconify del manifest →
@@ -76,6 +88,12 @@ export async function build(moduleDir, { wasm = {} } = {}) {
   console.log(`✓ icons ${id}: dist/icons.json (${icons.count} iconos)${
     icons.missing.length ? ` ⚠ sin resolver en ion:: ${icons.missing.join(', ')}` : ''}`);
 
+
+  // El SELLO DE FRESCURA del bundle (module-toolkit#93): qué `ui/` produjo estos bytes. Es la única
+  // evidencia que un rebuild siempre puede limpiar, y la que convierte el aviso de `validate` en
+  // error para este módulo a partir de ahora.
+  stampBundle(dir, manifest);
+  console.log(`✓ freshness ${id}: ${bundleStampFile(id)} (sello de ui/)`);
 
   // El SELLO de OutfitKit (ERPlora/hub#1024): con qué versión se horneó este bundle. En un hub real
   // el shell define sus `ok-*` primero y el `define()` horneado —que está guardado— pierde en
