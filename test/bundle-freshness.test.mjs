@@ -18,7 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, utimesSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   BUNDLE_MTIME_TOLERANCE_MS,
@@ -113,6 +113,9 @@ test('mt#93: every shape of build-machine path is caught (/Users, /home, /var/fo
     '/private/var/folders/xy/ui/a.ts',
     '/tmp/build-1234/ui/a.ts',
     'C:\\Users\\someone\\ui\\a.ts',
+    // A scratchpad reached by a RELATIVE path with no temp dir in it: the only shape that needs the
+    // `/scratchpad/` rule on its own (review of #114: dropping that rule left every test green).
+    '../../scratchpad/vf40/ui/components/a.ts',
   ]) {
     const dir = moduleFixture({ bundle: `// ${path}\nexport const x = 1;\n` });
     const out = checkBundleProvenance(dir, MANIFEST);
@@ -362,5 +365,53 @@ test('mt#93: with the test commit AND a real ui/ commit, it is still stale', () 
   const out = checkBundleFreshness(dir, MANIFEST);
   assert.equal(out.warnings.length, 1, JSON.stringify(out));
   assert.match(out.warnings[0], /ui\/components\/demo\.ts/);
+  cleanup(dir);
+});
+
+// --- review of PR #114: test-support DIRECTORIES never enter the bundle either ------------------
+//
+// `collectTs` (build.mjs) walks `ui/components/` only, and a file under `ui/test/` is imported by
+// tests alone. Swept over the 27 published modules from a FRESH clone (2026-08-28), `sales` was
+// flagged because `ui/test/erplora-double.ts` (a shared test double) was committed 45 min after
+// the bundle — and once `sales` gains a stamp, that same edit would be an ERROR. Same reason the
+// `*.test.ts` exclusion exists: a commit that provably cannot change a byte of the artifact must
+// not make it stale (module-toolkit#93).
+
+test('mt#93: a file under ui/test/ is not a bundle source — the stamp ignores it', () => {
+  const dir = moduleFixture();
+  writeFileSync(join(dir, bundleStampFile('demo')), JSON.stringify(bundleBuildStamp(dir, MANIFEST)));
+  mkdirSync(join(dir, 'ui', 'test'), { recursive: true });
+  writeFileSync(join(dir, 'ui', 'test', 'erplora-double.ts'), 'export const double = 1;\n');
+  const out = checkBundleFreshness(dir, MANIFEST);
+  assert.deepEqual(out.errors, [], JSON.stringify(out));
+  assert.ok(!collectUiSources(dir).some((p) => p.includes(`${sep}test${sep}`)), 'ui/test/ must not be collected');
+  cleanup(dir);
+});
+
+test('mt#93: a commit that only touches ui/test/ does not make the bundle stale (git layer)', () => {
+  const dir = moduleFixture();
+  initGit(dir);
+  commit(dir, 'inicial', '2026-01-01T10:00:00Z');
+  mkdirSync(join(dir, 'ui', 'test'), { recursive: true });
+  writeFileSync(join(dir, 'ui', 'test', 'erplora-double.ts'), 'export const double = 1;\n');
+  commit(dir, 'solo el doble de tests', '2026-02-01T10:00:00Z');
+  const out = checkBundleFreshness(dir, MANIFEST);
+  assert.deepEqual(out.warnings, [], JSON.stringify(out));
+  assert.deepEqual(out.errors, []);
+  cleanup(dir);
+});
+
+test('mt#93: ui/lib/ IS a bundle source — a commit there still makes the bundle stale', () => {
+  // The guard against the exclusion over-reaching: 15 of the 27 published modules keep real,
+  // component-imported code under `ui/lib/`.
+  const dir = moduleFixture();
+  initGit(dir);
+  commit(dir, 'inicial', '2026-01-01T10:00:00Z');
+  mkdirSync(join(dir, 'ui', 'lib'), { recursive: true });
+  writeFileSync(join(dir, 'ui', 'lib', 'money.ts'), 'export const cents = 1;\n');
+  commit(dir, 'lib sin rebuild', '2026-02-01T10:00:00Z');
+  const out = checkBundleFreshness(dir, MANIFEST);
+  assert.equal(out.warnings.length, 1, JSON.stringify(out));
+  assert.match(out.warnings[0], /ui\/lib\/money\.ts/);
   cleanup(dir);
 });

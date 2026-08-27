@@ -98,8 +98,9 @@ del módulo, relativas al módulo; las de una dependencia, por el `name` de su p
 - **Frescura — con trinquete.** El bundle tiene que corresponder al `ui/` actual, con la misma
   jerarquía de evidencia que el handler WASM: **sello** → **git** (cambios sin commitear, o `ui/`
   commiteado después del bundle) → **fechas de fichero**. Los ficheros que nunca entran en el
-  artefacto (`*.test.ts`, `*.spec.ts`, `*.d.ts`) quedan fuera de las tres capas: un commit que solo
-  toca un test no desfasa nada, y decir lo contrario es como un gate se gana que nadie lo lea.
+  artefacto (`*.test.ts`, `*.spec.ts`, `*.d.ts` y los directorios de apoyo a tests `ui/test/`,
+  `tests/`, `__tests__/`, `__mocks__/`) quedan fuera de las tres capas: un commit que solo toca un
+  test no desfasa nada, y decir lo contrario es como un gate se gana que nadie lo lea.
 
   El trinquete: **con sello es ERROR, sin sello es AVISO**. Ninguno de los 27 módulos publicados
   tiene sello todavía, y poner 27 repos en rojo por un cambio nuestro es como se acaba desactivando
