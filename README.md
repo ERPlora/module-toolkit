@@ -375,8 +375,21 @@ hub podía cazarlo, y aguantó un día entero en rojo con Actions en verde. Con 
 El stub de cada repo de módulo (`.github/workflows/release.yml`) queda así:
 
 ```yaml
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths: [module.json, 'ui/**', 'queries/**', 'commands/**', 'migrations/**', 'handler/**', 'schemas/**', 'locales/**', 'dist/**']
+  workflow_dispatch:
+
 permissions:
   contents: write          # el reutilizable nunca puede tener MÁS de lo que el llamante concede
+
+# Dos merges seguidos: el segundo ESPERA, no cancela (si no, se perdería un bump).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   gate:
@@ -399,6 +412,15 @@ vez de saltarse el aviso. Ponerlo en los 27:
 for m in $(ls modules-workspace/modules); do
   gh secret set HUB_DISPATCH_TOKEN --repo "ERPlora/$m" --body "$TOKEN"
 done
+```
+
+⚠️ **Si el aviso falló (secreto vacío, 401), NO se relanza el run**: el bump ya está en `main`, así
+que la repetición encuentra `main` bumpeado, no publica nada, **se salta el aviso y sale verde** sin
+que el hub se haya enterado. El paso lo anota (`::warning::`) y deja la orden para mandarlo a mano:
+
+```bash
+printf '{"event_type":"module-published","client_payload":{"module":"<id>","version":"<versión>"}}' \
+  | gh api repos/ERPlora/hub/dispatches --input -
 ```
 
 ## Workspace local (lo que existe hoy)

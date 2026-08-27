@@ -92,6 +92,11 @@ jobs:
             # Anti-loop layer 3: the tip already is a release commit.
             if git log -1 --pretty=%s | grep -q '^chore(release)'; then
               echo "→ main is already bumped by another run: $(git log -1 --pretty=%s). Nothing to publish."
+              # A RE-RUN after a failed notice (empty secret, 401) lands HERE: the bump is already on
+              # main, so nothing publishes, the dispatch step is skipped and the run goes green — while
+              # the hub was never told. Green must not read as delivered: say it, and name the route.
+              TIP=$(python3 -c 'import json, os, pathlib; m = json.loads((pathlib.Path(os.environ["MODULE_DIR"]) / "module.json").read_text()); print(m["id"], m["version"])')
+              echo "::warning::this run did not notify ERPlora/hub about ${TIP% *} v${TIP#* }. If it is a RE-RUN after a failed notice, send it by hand: printf '{\"event_type\":\"module-published\",\"client_payload\":{\"module\":\"${TIP% *}\",\"version\":\"${TIP#* }\"}}' | gh api repos/ERPlora/hub/dispatches --input -"
               echo "published=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -164,6 +169,8 @@ jobs:
             echo "Tiene que ser un secreto DEL REPO de este módulo (los de organización no alcanzan a"
             echo "repos privados con la org en plan Free), con permiso para POST repos/ERPlora/hub/dispatches."
             echo "Ponerlo:  gh secret set HUB_DISPATCH_TOKEN --repo ERPlora/<módulo> --body \"\$TOKEN\""
+            echo "Y NO re-lanzar este run: el bump ya está en main, la repetición no publica nada y no avisa."
+            echo "Mandar el aviso a mano:  printf '{\"event_type\":\"module-published\",\"client_payload\":{\"module\":\"${MODULE}\",\"version\":\"${VERSION}\"}}' | gh api repos/ERPlora/hub/dispatches --input -"
             exit 1
           fi
 
@@ -190,6 +197,8 @@ jobs:
           if [ "$code" != "204" ]; then
             echo "::error::el aviso a ERPlora/hub devolvió HTTP $code (se espera 204). El catálogo publicado NO se ha verificado contra el kernel."
             cat "$body" || true
+            echo "NO re-lanzar este run: el bump ya está en main, la repetición no publica nada y no avisa."
+            echo "Mandar el aviso a mano:  printf '{\"event_type\":\"module-published\",\"client_payload\":{\"module\":\"${MODULE}\",\"version\":\"${VERSION}\"}}' | gh api repos/ERPlora/hub/dispatches --input -"
             exit 1
           fi
 

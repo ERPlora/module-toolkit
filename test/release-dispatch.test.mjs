@@ -193,3 +193,16 @@ test('the emitter and the hub receiver name the SAME event and the SAME payload 
     );
   }
 });
+
+test('a run that finds main already bumped SAYS the hub may not have been told — a re-run is not a delivery (review of module-toolkit#118)', () => {
+  // The branch that exits with `published=false` is exactly where a RE-RUN lands after a failed
+  // notice (empty secret, 401): the bump is already on main, nothing publishes, the dispatch step is
+  // skipped — and the run goes GREEN without the hub ever hearing about the version. The branch has
+  // to annotate it and name the manual route, so green never reads as delivered.
+  const bump = step(RELEASE, 'id: bump');
+  assert.match(
+    bump,
+    /grep -q '\^chore\(release\)'[\s\S]*?::warning::[\s\S]*?repos\/ERPlora\/hub\/dispatches[\s\S]*?published=false/,
+    'the `published=false` branch must carry a `::warning::` annotation and the manual `POST repos/ERPlora/hub/dispatches` route',
+  );
+});
