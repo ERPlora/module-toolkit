@@ -42,6 +42,15 @@ export const BUNDLE_MTIME_TOLERANCE_MS = 2000;
 /** Directories that are build output or VCS noise, never Web Component source. */
 const IGNORED_DIRS = new Set(['dist', 'node_modules', 'target']);
 
+/**
+ * Test-support directories. `collectTs` (build.mjs) walks `ui/components/` only, and what lives in
+ * `ui/test/` (shared doubles) is imported by tests alone — so, like `*.test.ts`, it cannot change a
+ * byte of the artifact. Swept from a fresh clone on 2026-08-28, `sales` was flagged for exactly
+ * this: `ui/test/erplora-double.ts` committed 45 min after the bundle. `ui/lib/` and `ui/guards/`
+ * are real, component-imported source and stay IN.
+ */
+const TEST_SUPPORT_DIRS = new Set(['test', 'tests', '__tests__', '__mocks__']);
+
 /** Where the Web Component source lives: `ui/` (Lit) and the legacy `src/` of the first modules. */
 const SOURCE_ROOTS = ['ui', 'src'];
 
@@ -62,6 +71,7 @@ const GIT_EXCLUDE_NOT_IN_BUNDLE = [
   ':(exclude,glob)**/*.test.*',
   ':(exclude,glob)**/*.spec.*',
   ':(exclude,glob)**/*.d.ts',
+  ...[...TEST_SUPPORT_DIRS].map((d) => `:(exclude,glob)**/${d}/**`),
 ];
 
 /** The published bundle of a module, relative to its directory. */
@@ -85,6 +95,7 @@ function walk(from, out) {
   }
   for (const entry of entries) {
     if (entry.name.startsWith('.') || IGNORED_DIRS.has(entry.name)) continue;
+    if (entry.isDirectory() && TEST_SUPPORT_DIRS.has(entry.name)) continue;
     const path = join(from, entry.name);
     if (entry.isDirectory()) walk(path, out);
     else if (!NOT_IN_BUNDLE.test(entry.name)) out.push(path);
