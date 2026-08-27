@@ -160,6 +160,7 @@ jobs:
           node --test
           test/validate-*.test.mjs
           test/contracts.test.mjs
+          test/bundle-freshness.test.mjs
           test/bin-*.test.mjs
           test/manifest-schema.test.mjs
           test/canonical-mirrors.test.mjs
