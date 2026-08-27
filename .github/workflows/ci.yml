@@ -34,15 +34,23 @@
 # suite in `test/` either appears below or is named in its `CANNOT_RUN_IN_CI` **with the reason**.
 # Adding one forces a decision instead of allowing an omission.
 #
-# WHAT THIS CI CANNOT CHECK, said out loud (module-toolkit#61). The six mirrors of
-# `canonical-mirrors` need a checkout of ERPlora/hub, and there is none here — nor can there be:
-# the organization is on the free plan, where "organization-level secrets and variables are not
-# accessible by private repositories", so `secrets.GH_PAT` never arrives and `actions/checkout` of
-# a private ERPlora/hub has no credential. They therefore SKIP here, honestly and by name, and the
-# drift is gated from the hub's side instead — `.github/actions/check-canonical-mirrors`, called by
-# the hub's own `canonical-mirrors.yml`, where the hub IS checked out. What `hub-mirror` adds on
-# this side is the rule that makes that gate trustworthy: a hub that was DECLARED and is not there
-# is an ERROR, never a skip.
+# WHAT THIS CI COULD NOT CHECK, and now does (module-toolkit#61, #90). The six mirrors of
+# `canonical-mirrors` need a checkout of ERPlora/hub, and `actions/checkout` cannot get one: the
+# organization is on the free plan, where "organization-level secrets and variables are not
+# accessible by private repositories", so `secrets.GH_PAT` never arrives and a private ERPlora/hub
+# has no credential here.
+#
+# THE ALARM NOW RINGS ON BOTH SIDES (module-toolkit#90). There IS a hub on this runner, and there
+# has been since ERPlora/hub#1097: `module-sdk@develop` is a composite action of the hub, and
+# GitHub resolves it WITHOUT a credential by fetching that whole repository onto the runner. The
+# mirrors were skipping next to the very checkout they needed — `skipped 7`, green, on every pull
+# request. The `sdk` step below now hands them that hub in `ERPLORA_HUB_DIR`, so a vendored copy
+# that drifted from hub `develop` fails HERE, on the pull request that would have shipped it, and
+# not only from the hub's side (`.github/actions/check-canonical-mirrors`, called by the hub's own
+# `canonical-mirrors.yml`, which is the other direction and stays).
+#
+# What `hub-mirror` adds is the rule that makes both gates trustworthy: a hub that was DECLARED and
+# is not there is an ERROR, never a skip.
 name: CI
 
 on:
@@ -101,6 +109,20 @@ jobs:
           [ -n "$sdk" ] || { echo '::error::la action no ha devuelto ninguna ruta'; exit 1; }
           [ -f "$sdk/package.json" ] || { echo "::error::$sdk sin package.json"; exit 1; }
           echo "→ @erplora/module-sdk alcanzable en $sdk"
+          # The same checkout, two levels up, IS ERPlora/hub at `develop` — that is how the action
+          # resolves, and it is what lets the six canonical mirrors run here instead of skipping
+          # (module-toolkit#90). Declared, never guessed: `hub-mirror.mjs` turns a declared hub it
+          # cannot read into an ERROR, so a moved or renamed path fails loudly here rather than
+          # switching the mirrors off and reporting green.
+          hub=$(cd "$sdk/../.." && pwd)
+          for canonical in schemas/module.schema.json crates/runtime/src/manifest.rs apps/web/src/main.ts; do
+            [ -f "$hub/$canonical" ] || {
+              echo "::error::el checkout del hub ($hub) no trae $canonical — los espejos canónicos no pueden compararse contra él"
+              exit 1
+            }
+          done
+          echo "ERPLORA_HUB_DIR=$hub" >> "$GITHUB_ENV"
+          echo "→ espejos canónicos contra el hub en $hub"
 
       - uses: actions/setup-node@v4
         with:

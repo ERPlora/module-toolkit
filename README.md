@@ -198,6 +198,36 @@ shell, y además corre este escáner sobre las vistas `.vue` del hub —limpias 
 que las dos puertas no digan cosas distintas del mismo marcado. Un chequeo que sobrevive a su causa
 es peor que no tenerlo: enseña que el gate pide cosas que dan igual.
 
+## Los espejos canónicos: contra QUÉ se comparan (module-toolkit#61 y #90)
+
+El toolkit copia a mano seis cosas cuya autoridad vive en `ERPlora/hub` (el esquema del manifest,
+`BRIDGE_FUNCTIONS`, la política de claves desconocidas, `CORE_QUERIES`, las migraciones abueladas y
+el pin `mode: 'ios'` del shell). `test/canonical-mirrors.test.mjs` las compara byte a byte, y
+`test/hub-mirror.mjs` es la puerta que decide **de dónde sale el original**. Tres fuentes, por orden:
+
+| Fuente | Cómo lee | Si falta el fichero |
+|---|---|---|
+| `ERPLORA_HUB_DIR` | **del disco**, tal cual | **ERROR** — la promesa «compara contra ESTE hub» se aceptó |
+| el checkout vecino `../hub` | `git archive origin/develop` — **nunca** su árbol de trabajo | **ERROR** nombrando el ref (`git fetch` y otra vuelta) |
+| no hay hub | — | **skip** explícito, dicho por su nombre |
+
+**Por qué el vecino se lee por ref y no del disco (#90).** Leído del disco, el original es la rama
+en la que otro dejó su checkout, con lo que tenga sin commitear. El 28/08/2026,
+`schemas/module.schema.json` era **idéntico** a `origin/develop` y el espejo fallaba igual, porque
+el checkout vecino estaba en `fix/blueprint-media-auth`. Tres workers seguidos lo archivaron como
+«fallo preexistente en `main`, no es mío». Un guard que da falsas alarmas se silencia, y entonces
+ya no es un guard.
+
+**Por qué el declarado SÍ lee el disco.** Quien declara `ERPLORA_HUB_DIR` es CI, y ahí el checkout
+en disco **es** lo que se quiere comprobar: el del pull request.
+
+**Suena en los dos lados.** Desde el hub, `.github/actions/check-canonical-mirrors` (lo llama
+`canonical-mirrors.yml` del hub). Y desde aquí: el CI de este repo ya se traía el hub entero al
+runner para resolver `module-sdk@develop` (ERPlora/hub#1097) y los espejos se saltaban **al lado
+del checkout que necesitaban** — `skipped 7`, en verde, en cada PR. Ahora ese paso exporta
+`ERPLORA_HUB_DIR` y se comparan de verdad: **una copia vendorizada que derive de `develop` pone en
+rojo el PR que la traía**.
+
 ## El gate de CI de los repos de módulo (ERPlora/pm#107)
 
 ## Los tests que el módulo ya tenía
