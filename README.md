@@ -355,6 +355,52 @@ dice **`handler WASM SIN VERIFICAR`**.
 La salida sería consumir el `guest-sdk` **versionado** en vez de por ruta; mientras siga siendo una
 ruta relativa, esta puerta no puede cerrarse en CI sin pagar las otras dos facturas.
 
+### La release también vive aquí: `module-release.yml`
+
+La misma decisión, aplicada a la otra mitad del ciclo (module-toolkit#111 · ERPlora/hub#1239). El
+bump de versión —el que hace que el SaaS republique— estaba **copiado en los 27 `release.yml`**:
+~90 líneas de bucle de reintento y de razonamiento anti-bucle, 27 veces. Ahora es un
+`workflow_call` más:
+
+| Pieza | Qué hace |
+|---|---|
+| `.github/workflows/module-release.yml` | sube el patch de `module.json`/`package.json`, lo empuja a `main` (eso publica) y **avisa a `ERPlora/hub`** con `repository_dispatch: module-published` |
+
+**Por qué el aviso.** `test-hub-modules.yml` del hub clona los ~27 módulos por su estado
+**publicado** y los corre contra el runtime. Sin aviso eso solo pasa en la pasada nocturna: el rojo
+de hub#1215 lo causó una **release de módulo** (`invoice` v1.2.27, ADR-0405), ningún disparador del
+hub podía cazarlo, y aguantó un día entero en rojo con Actions en verde. Con el aviso el rojo sale
+**en el momento de publicar** y con el nombre del culpable en el título del run.
+
+El stub de cada repo de módulo (`.github/workflows/release.yml`) queda así:
+
+```yaml
+permissions:
+  contents: write          # el reutilizable nunca puede tener MÁS de lo que el llamante concede
+
+jobs:
+  gate:
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release)') }}
+    uses: ERPlora/module-toolkit/.github/workflows/module-gate.yml@main
+  release:
+    needs: gate
+    uses: ERPlora/module-toolkit/.github/workflows/module-release.yml@main
+    secrets: inherit       # entrega HUB_DISPATCH_TOKEN
+```
+
+🔴 **`HUB_DISPATCH_TOKEN` es un secreto DE REPO, uno por módulo.** El `GITHUB_TOKEN` del repo del
+módulo está acotado a ese repo, así que un `repository_dispatch` sobre `ERPlora/hub` con él responde
+404; y los secretos **de organización no llegan a repos privados** con la org en plan Free — el
+mismo modo de fallo que dejó vacías `MODULES_DEPLOY_KEYS` y `CI_RUNNER_LABEL`. Un secreto ausente
+llega como **cadena vacía, no como error**, por eso el paso lo comprueba y **falla en voz alta** en
+vez de saltarse el aviso. Ponerlo en los 27:
+
+```bash
+for m in $(ls modules-workspace/modules); do
+  gh secret set HUB_DISPATCH_TOKEN --repo "ERPlora/$m" --body "$TOKEN"
+done
+```
+
 ## Workspace local (lo que existe hoy)
 
 Los **24** módulos viven en **`ERPlora/modules-workspace/`** (creado con `startproject`, cada
