@@ -284,7 +284,11 @@ Qué hace, en orden, y todo con `docker` de línea de comandos (sin SDK, sin dri
 6. Corre las baterías de la familia **hub**, que hablan HTTP con ese runtime.
 7. **Desmonta todo, pase lo que pase** — y solo lo que creó esta corrida, nunca los contenedores de
    otro agente en la misma máquina. Una corrida que muere dejando el hub en pie lo deja con el
-   módulo INSTALADO, y la siguiente «pasa» contra un estado que nadie puso.
+   módulo INSTALADO, y la siguiente «pasa» contra un estado que nadie puso. Vale también para
+   `Ctrl+C` y para la cancelación de un job de CI (`SIGINT`/`SIGTERM`/`SIGHUP`): mientras haya
+   contenedores el harness escucha esas señales, desmonta y sale con `128+señal` (medido en la
+   revisión: sin esto, un `SIGINT` dejaba 2 contenedores y 1 red). Lo único que no se puede
+   atrapar es un `SIGKILL`; si pasa, lo que queda se llama `erplora-ah-*` y se borra a mano.
 
 **La familia `hub`.** Una batería es de esta familia por su **nombre** (`tests/*.hub.test.py|.sh`) o
 por su **contenido** (lee `ERPLORA_HUB_BASE_URL`) — la misma regla doble que la familia de Postgres,

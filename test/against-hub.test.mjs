@@ -29,6 +29,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { EventEmitter } from 'node:events';
 import { join } from 'node:path';
 import {
   DEFAULT_CHANNEL,
@@ -406,4 +407,93 @@ test('runBatteries: con un hub vivo, la batería recibe la url por el entorno', 
   } finally {
     m.clean();
   }
+});
+
+// 🔴 Seen for real while reviewing module-toolkit#110 (three runs in parallel on one machine): the
+// hub container dies at boot, `docker port` answers «no public port», and the error said ONLY that
+// — no state, no logs — so the cause was invisible. A container that is not running must be
+// reported with its state and its own log tail, exactly like a readiness timeout is.
+test('withHubRuntime: si el puerto no se publica, el error trae el ESTADO y la COLA DE LOGS del contenedor', async () => {
+  const clock = fakeClock();
+  const { exec, calls } = fakeDocker({
+    'docker port': { code: 1, stdout: '', stderr: "no public port '8787/tcp' published for erplora-ah-hub-demo-x\n" },
+    'docker inspect': { code: 0, stdout: 'exited exit=101\n', stderr: '' },
+    'docker logs': { code: 0, stdout: 'thread main panicked: cannot bind 0.0.0.0:8787\n', stderr: '' },
+  });
+  await assert.rejects(
+    withHubRuntime(
+      { dir: '/tmp/demo', manifest: MODULE, image: `${HUB_IMAGE_REPO}:stable`, exec, ...clock },
+      async () => {
+        throw new Error('el cuerpo NO debería ejecutarse sin puerto');
+      },
+    ),
+    (err) => {
+      assert.match(err.message, /8787/);
+      assert.match(err.message, /exited exit=101/);
+      assert.match(err.message, /cannot bind 0\.0\.0\.0:8787/);
+      return true;
+    },
+  );
+  // Teardown still happens: the hub and the postgres were created, and the network too.
+  assert.equal(calls.filter((c) => c.startsWith('docker rm -f')).length, 2);
+  assert.ok(calls.some((c) => c.startsWith('docker network rm')));
+});
+
+// 🔴 Measured while reviewing module-toolkit#110: `kill -INT <node>` with the battery running left
+// 2 containers and 1 network behind (node exit 130, `finally` never ran — Node's default action for
+// a signal is to die on the spot). A Ctrl+C or a CI cancel is the MOST common way a run ends early,
+// and it must tear down exactly like a failure does, then exit with the conventional 128+signal.
+test('withHubRuntime: un SIGINT/SIGTERM mientras corre la batería DESMONTA antes de salir', async () => {
+  for (const [signal, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+    const clock = fakeClock();
+    const { exec, calls } = fakeDocker({ ...OK_DOCKER });
+    const signals = new EventEmitter();
+    let exitCode = null;
+    let bodyStarted;
+    const started = new Promise((r) => { bodyStarted = r; });
+    const exited = new Promise((resolve) => {
+      withHubRuntime(
+        {
+          dir: '/tmp/demo',
+          manifest: MODULE,
+          image: `${HUB_IMAGE_REPO}:stable`,
+          exec,
+          probe: async () => ({ ok: true, detail: 'UP' }),
+          install: async () => {},
+          signals,
+          exit: (c) => { exitCode = c; resolve(); },
+          ...clock,
+        },
+        () => { bodyStarted(); return new Promise(() => {}); }, // the battery never finishes by itself
+      ).catch(() => {});
+    });
+    await started;
+    assert.equal(signals.listenerCount(signal), 1, `${signal}: el harness tiene que estar escuchando mientras hay contenedores`);
+    signals.emit(signal, signal);
+    await exited;
+    assert.equal(exitCode, code, `${signal} → exit ${code}`);
+    assert.equal(calls.filter((c) => c.startsWith('docker rm -f')).length, 2, `${signal}: ${JSON.stringify(calls)}`);
+    assert.ok(calls.some((c) => c.startsWith('docker network rm')), `${signal}: la red se queda colgada`);
+  }
+});
+
+test('withHubRuntime: al terminar deja de escuchar señales (no cambia el comportamiento del CLI fuera del harness)', async () => {
+  const clock = fakeClock();
+  const { exec } = fakeDocker({ ...OK_DOCKER });
+  const signals = new EventEmitter();
+  await withHubRuntime(
+    {
+      dir: '/tmp/demo',
+      manifest: MODULE,
+      image: `${HUB_IMAGE_REPO}:stable`,
+      exec,
+      probe: async () => ({ ok: true, detail: 'UP' }),
+      install: async () => {},
+      signals,
+      exit: () => { throw new Error('no debería salir'); },
+      ...clock,
+    },
+    async () => {},
+  );
+  for (const s of ['SIGINT', 'SIGTERM', 'SIGHUP']) assert.equal(signals.listenerCount(s), 0, s);
 });

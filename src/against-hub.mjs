@@ -25,6 +25,9 @@
 //
 // TEARDOWN IS UNCONDITIONAL and it runs on the failing path too: a run that dies leaving the hub
 // up leaves the module INSTALLED in it, and the next run then agrees with state nobody put there.
+// That includes Ctrl+C and a CI cancel: Node's default action for SIGINT/SIGTERM is to die on the
+// spot, `finally` never runs, and the containers stay (measured in the review of #110). While
+// containers exist the harness listens for those signals, tears down, and exits with 128+signal.
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 
@@ -52,6 +55,9 @@ const HUB_PORT = 8787;
 
 /** How long the runtime gets to answer `/readyz` UP. The image's own HEALTHCHECK allows 90 s. */
 export const READY_TIMEOUT_MS = 180_000;
+
+/** The signals that end a run early, and the conventional exit code (128 + number) for each. */
+export const SIGNAL_EXIT_CODES = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
 
 // ── the flag ─────────────────────────────────────────────────────────────────────────────────
 
@@ -259,7 +265,9 @@ async function installThroughRuntime({ baseUrl, dir, hubId }) {
  * path, and only what it created.
  *
  * `exec`, `probe` and `install` are injectable so the suite can check the failure paths without a
- * Docker daemon — the paths that matter are the ones where something did not come up.
+ * Docker daemon — the paths that matter are the ones where something did not come up. `signals`
+ * (an emitter, `process` by default) and `exit` are injectable for the same reason: a SIGINT in a
+ * test must not kill the test runner.
  */
 export async function withHubRuntime(
   {
@@ -275,6 +283,8 @@ export async function withHubRuntime(
     now = Date.now,
     sleep = realSleep,
     log = () => {},
+    signals = process,
+    exit = (code) => process.exit(code),
   },
   body,
 ) {
@@ -308,6 +318,23 @@ export async function withHubRuntime(
   }
 
   const created = { net: false, pg: false, hub: false };
+  // Best-effort, idempotent, and only what this run created: another agent's containers on the
+  // same machine are never touched. Shared by the normal path and the signal path — whichever
+  // comes first does the work, the other awaits the same promise.
+  let teardownOnce = null;
+  const teardown = () => {
+    teardownOnce ??= (async () => {
+      if (created.hub) await exec('docker', ['rm', '-f', hub]);
+      if (created.pg) await exec('docker', ['rm', '-f', pg]);
+      if (created.net) await exec('docker', ['network', 'rm', net]);
+    })();
+    return teardownOnce;
+  };
+  const onSignal = (signal) => {
+    log(`  · ${signal}: desmontando el runtime antes de salir`);
+    teardown().then(() => exit(SIGNAL_EXIT_CODES[signal] ?? 1));
+  };
+  for (const signal of Object.keys(SIGNAL_EXIT_CODES)) signals.once(signal, onSignal);
   try {
     const mkNet = await exec('docker', ['network', 'create', net]);
     if (mkNet.code !== 0) {
@@ -361,9 +388,12 @@ export async function withHubRuntime(
     const port = await exec('docker', ['port', hub, `${HUB_PORT}/tcp`]);
     const mapped = port.code === 0 ? hostPort(port.stdout) : null;
     if (!mapped) {
+      // Seen for real: the container died at boot and `docker port` answered «no public port».
+      // Without its state and its own log tail the cause is invisible — same rule as readiness.
       throw new Error(
         `Docker no publicó el puerto ${HUB_PORT} del contenedor \`${hub}\` ` +
-          `(\`docker port\` → ${(port.stdout || port.stderr).trim() || `exit ${port.code}`})`,
+          `(\`docker port\` → ${(port.stdout || port.stderr).trim() || `exit ${port.code}`}; ` +
+          `estado del contenedor: ${await containerState(exec, hub)})\n${await logsTail(exec, hub)}`,
       );
     }
     const baseUrl = `http://127.0.0.1:${mapped}`;
@@ -391,12 +421,21 @@ export async function withHubRuntime(
 
     return await body(live);
   } finally {
-    // Best-effort and unconditional. Only what this run created: another agent's containers on the
-    // same machine are never touched.
-    if (created.hub) await exec('docker', ['rm', '-f', hub]);
-    if (created.pg) await exec('docker', ['rm', '-f', pg]);
-    if (created.net) await exec('docker', ['network', 'rm', net]);
+    // Listeners stay armed UNTIL the teardown has finished: a signal that lands while the
+    // containers are being removed (or one deferred by a blocking battery) still ends in a
+    // complete teardown and a 128+signal exit, never in Node's default die-on-the-spot half-way.
+    try {
+      await teardown();
+    } finally {
+      for (const signal of Object.keys(SIGNAL_EXIT_CODES)) signals.off(signal, onSignal);
+    }
   }
+}
+
+/** `running exit=0` / `exited exit=101`: whether the container is still there to answer at all. */
+async function containerState(exec, container) {
+  const r = await exec('docker', ['inspect', '-f', '{{.State.Status}} exit={{.State.ExitCode}}', container]);
+  return (r.code === 0 ? r.stdout : r.stderr).trim() || `docker inspect salió con ${r.code}`;
 }
 
 /** The container's own last lines. A boot that failed says why here and nowhere else. */
