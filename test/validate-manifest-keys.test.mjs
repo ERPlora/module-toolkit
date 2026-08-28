@@ -79,6 +79,25 @@ test('a RETIRED field is reported by name and issue, not refused', () => {
   assert.match(warnings[0], /hub#610/, 'with the number that decides its fate');
 });
 
+test('`navigation[].actions` is RETIRED, not an unknown key (mirror of hub#1237)', () => {
+  // Mirror of ERPlora/hub#1237. The runtime parsed the field (`manifest::NavAction`) and the schema
+  // declared it, but the shell never painted those buttons and `/api/navigation` never served them,
+  // so no `module-action` event ever reached a Web Component. Declared surface that does not exist
+  // is RETIRED, not frozen — and retired is not the same as unknown: the manifests already
+  // published carrying it must keep installing, and the author has to be told WHY it went, by name.
+  const { errors, warnings } = checkManifestKeys({
+    ...base(),
+    navigation: [
+      { id: 'main', label: 'Demo', component: 'demo-view', actions: [{ id: 'x', label: 'X' }] },
+    ],
+  });
+  assert.deepEqual(errors, [], 'not refused: a published manifest carrying it still installs');
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /navigation\[0\]\.actions/);
+  assert.match(warnings[0], /campo RETIRADO/, 'through the retired path, not the unknown-key one');
+  assert.match(warnings[0], /hub#1237/, 'with the number that retires it');
+});
+
 test('a retired field is NEVER also a known one (the list is not a junk drawer)', () => {
   for (const [path, field] of RETIRED_FIELDS) {
     assert.ok(!REFUSED_PATHS.includes(`${path}.${field}`), `${path}.${field} cannot be in both`);
