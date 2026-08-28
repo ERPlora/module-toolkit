@@ -11,9 +11,10 @@
 //   4. the capabilities of the core's reserved `hub.` namespace
 //      (`hub_users.rs::CORE_QUERIES`), which the contract gate rejects a module for consuming
 //      when it does not know them,
-//   5. the FROZEN kernel surface (`contracts/kernel/`), the six files the hub generates from its
-//      own code to say what it promises a published module — vendored whole, because the gate of
-//      the 26 module repos has no hub in reach either,
+//   5. the FROZEN kernel surface (`contracts/kernel/`), the five snapshots the hub generates from
+//      its own code to say what it promises a published module — vendored whole, because the gate
+//      of the 26 module repos has no hub in reach either. Its README is prose, not contract, and
+//      is deliberately left out (module-toolkit#121),
 //   6. the PREMISE of the `fill`/`mode="md"` guard — that the shell pins Ionic to `ios`
 //      (`apps/web/src/main.ts`, ADR-0143). This one is the opposite of the others: it does not
 //      guard a divergence, it guards the guard's own reason to exist.
@@ -48,6 +49,7 @@ import { controlsWithDeadFill } from '../src/validate-ionic-fill.mjs';
 import {
   KERNEL_CONTRACT_FILES,
   KERNEL_CONTRACT_HUB_PATH,
+  KERNEL_CONTRACT_NOT_MIRRORED,
   VENDORED_KERNEL_CONTRACT_DIR,
 } from '../src/kernel-contract.mjs';
 import { hubPath } from './hub-mirror.mjs';
@@ -294,8 +296,19 @@ test('the runtime still translates only the DROPs this door assumes it does (hub
 // because the drift is SILENT in the direction that costs most — the hub freezes a new surface,
 // the copy the module authors read still describes the old one, and nothing anywhere says so.
 //
-// Byte for byte, one test per file: a diff that names WHICH of the six moved is the whole point of
-// keeping the surface in files instead of in prose.
+// Byte for byte, one test per file: a diff that names WHICH of the five moved is the whole point
+// of keeping the surface in files instead of in prose.
+//
+// FIVE, not six: the hub's `contracts/kernel/README.md` is deliberately NOT mirrored
+// (module-toolkit#121). It is prose addressed to whoever works IN the hub — `cargo` commands,
+// `crates/runtime/tests/…` paths, workflow names — none of which exists or can be run here, and
+// none of which a published module consumes. Mirroring it byte for byte turned every DOCUMENTATION
+// edit of the hub into a red build of this repository and a two-repo lockstep for it: hub#1263 and
+// hub#1265 moved neither a route, nor the engine, nor the guest, nor the tables, nor the SDK, and
+// broke the mirror all the same. An alarm that fires on prose is an alarm people mute, and a muted
+// alarm no longer reports the `routes.snapshot` that does matter (W21, hub#1262). It stays
+// ENUMERATED, in `KERNEL_CONTRACT_NOT_MIRRORED`, so the set test below still catches a SIXTH
+// frozen surface: what is not enumerated is not watched.
 for (const file of KERNEL_CONTRACT_FILES) {
   test(`the vendored kernel contract \`${file}\` is byte for byte the hub one (#115)`, (t) => {
     const canonical = hubPath(t, ...KERNEL_CONTRACT_HUB_PATH, file);
@@ -316,19 +329,25 @@ for (const file of KERNEL_CONTRACT_FILES) {
   });
 }
 
-test('the vendored kernel contract carries EXACTLY the files the hub freezes (#115)', (t) => {
-  // The member tests above compare six named files; this one guards the SET. Without it the hub
-  // can add a seventh snapshot — a new frozen surface, which is precisely the event worth
+test('the vendored kernel contract carries EXACTLY the files the hub freezes (#115, #121)', (t) => {
+  // The member tests above compare five named files; this one guards the SET. Without it the hub
+  // can add a sixth snapshot — a new frozen surface, which is precisely the event worth
   // noticing — and every mirror stays green because nobody is asked about the file that is not on
   // the list. Same failure the `CANNOT_RUN_IN_CI` ghosts check exists for: what is not enumerated
   // is not watched.
+  //
+  // Hence the two lists rather than one (module-toolkit#121). Dropping README.md by simply not
+  // naming it anywhere would have re-opened exactly that hole — an unnamed file in the hub's
+  // directory is an unwatched file — so what is NOT mirrored is declared too, and the hub's
+  // directory is still asserted whole against the union.
   const canonicalDir = hubPath(t, ...KERNEL_CONTRACT_HUB_PATH);
   if (!canonicalDir) return;
   assert.deepEqual(
     readdirSync(canonicalDir).sort(),
-    [...KERNEL_CONTRACT_FILES].sort(),
-    'the hub\'s contracts/kernel/ no longer holds these exact files — add (or drop) the file in ' +
-      'src/kernel-contract.mjs and run `npm run sync-mirrors`',
+    [...KERNEL_CONTRACT_FILES, ...KERNEL_CONTRACT_NOT_MIRRORED].sort(),
+    'the hub\'s contracts/kernel/ no longer holds these exact files — the hub froze (or dropped) a ' +
+      'surface: add it to KERNEL_CONTRACT_FILES in src/kernel-contract.mjs and run ' +
+      '`npm run sync-mirrors`, or, if it is prose rather than contract, to KERNEL_CONTRACT_NOT_MIRRORED',
   );
   assert.ok(
     existsSync(VENDORED_KERNEL_CONTRACT_DIR),
@@ -339,4 +358,22 @@ test('the vendored kernel contract carries EXACTLY the files the hub freezes (#1
     [...KERNEL_CONTRACT_FILES].sort(),
     'the vendored contracts/kernel/ holds something other than the declared files',
   );
+});
+
+test('the kernel prose the hub keeps is NOT vendored here (#121)', () => {
+  // Regression test for ERPlora/module-toolkit#121. The two lists have to stay DISJOINT, and the
+  // not-mirrored side has to stay actually absent: leaving a stale `README.md` behind on disk while
+  // the mirror stopped comparing it is the worst of the two worlds — a file in `contracts/kernel/`
+  // that reads like the hub's documentation, is not, and nothing checks.
+  for (const file of KERNEL_CONTRACT_NOT_MIRRORED) {
+    assert.ok(
+      !KERNEL_CONTRACT_FILES.includes(file),
+      `${file} is declared both as mirrored and as not mirrored — the lists must be disjoint`,
+    );
+    assert.ok(
+      !existsSync(join(VENDORED_KERNEL_CONTRACT_DIR, file)),
+      `contracts/kernel/${file} is still vendored here while nothing compares it any more: a copy ` +
+        'nobody checks is worse than no copy — delete it',
+    );
+  }
 });

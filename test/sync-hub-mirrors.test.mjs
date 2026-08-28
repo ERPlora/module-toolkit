@@ -1,8 +1,8 @@
 // `npm run sync-mirrors` copies what it PROMISES, or says so loudly (module-toolkit#115).
 //
 // The script it exercises replaces a one-line `cp` of the manifest schema. That `cp` is why this
-// suite exists: it copied ONE of the vendored files, and the kernel contract (six more, ADR «El Hub
-// se CIERRA como KERNEL») had no way to be refreshed except by hand — which is the same as saying
+// suite exists: it copied ONE of the vendored files, and the kernel contract (five more, ADR «El
+// Hub se CIERRA como KERNEL») had no way to be refreshed except by hand — which is the same as saying
 // it would drift and be resynced in a hurry, one file at a time, by whoever the mirror caught.
 //
 // Two failure shapes are checked on purpose, and the second is the expensive one:
@@ -36,7 +36,7 @@ function scratchToolkit() {
   return mkdtempSync(join(tmpdir(), 'erplora-sync-toolkit-'));
 }
 
-test('the six kernel contract files are part of what gets synced (#115)', () => {
+test('the five kernel contract snapshots are part of what gets synced (#115, #121)', () => {
   for (const file of KERNEL_CONTRACT_FILES) {
     assert.ok(
       VENDORED_FROM_THE_HUB.includes(`contracts/kernel/${file}`),
