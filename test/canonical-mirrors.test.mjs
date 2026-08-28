@@ -11,7 +11,10 @@
 //   4. the capabilities of the core's reserved `hub.` namespace
 //      (`hub_users.rs::CORE_QUERIES`), which the contract gate rejects a module for consuming
 //      when it does not know them,
-//   5. the PREMISE of the `fill`/`mode="md"` guard — that the shell pins Ionic to `ios`
+//   5. the FROZEN kernel surface (`contracts/kernel/`), the six files the hub generates from its
+//      own code to say what it promises a published module — vendored whole, because the gate of
+//      the 26 module repos has no hub in reach either,
+//   6. the PREMISE of the `fill`/`mode="md"` guard — that the shell pins Ionic to `ios`
 //      (`apps/web/src/main.ts`, ADR-0143). This one is the opposite of the others: it does not
 //      guard a divergence, it guards the guard's own reason to exist.
 //
@@ -34,7 +37,7 @@
 // `hub-mirror.mjs` is where the two cases are told apart.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { BRIDGE_FUNCTIONS } from '../src/validate-sql.mjs';
 import { VENDORED_MANIFEST_SCHEMA_PATH } from '../src/manifest-schema.mjs';
@@ -42,6 +45,11 @@ import { REFUSED_PATHS, RETIRED_FIELDS } from '../src/validate-manifest-keys.mjs
 import { CORE_OPERATIONS } from '../src/contracts.mjs';
 import { GRANDFATHERED } from '../src/validate-migration-guard.mjs';
 import { controlsWithDeadFill } from '../src/validate-ionic-fill.mjs';
+import {
+  KERNEL_CONTRACT_FILES,
+  KERNEL_CONTRACT_HUB_PATH,
+  VENDORED_KERNEL_CONTRACT_DIR,
+} from '../src/kernel-contract.mjs';
 import { hubPath } from './hub-mirror.mjs';
 
 
@@ -271,5 +279,64 @@ test('the runtime still translates only the DROPs this door assumes it does (hub
     'set_aside_instead_of_dropping no longer refuses a `DROP` that names more than one thing: the ' +
       'translation is one statement in, one statement out, and taking the first name emitted ' +
       '`ALTER TABLE a, RENAME TO _deprecated_a,` (hub#1145). Resync `dropsMoreThanOne`',
+  );
+});
+
+// ── The FROZEN kernel surface (module-toolkit#115) ─────────────────────────────────────────────
+//
+// The eighth mirror, and the widest: `contracts/kernel/` is the whole surface the hub promises a
+// published module — its routes, the declarative engine, the WASM guest contract, the system
+// tables and the `@erplora/module-sdk` types — frozen by the ADR «El Hub se CIERRA como KERNEL»
+// (2026-08-27) into files the hub's own tests generate from its code.
+//
+// It is vendored for the same reason the manifest schema is (src/kernel-contract.mjs): the gate of
+// the 26 module repos runs with no hub in reach. And it is mirrored here rather than trusted
+// because the drift is SILENT in the direction that costs most — the hub freezes a new surface,
+// the copy the module authors read still describes the old one, and nothing anywhere says so.
+//
+// Byte for byte, one test per file: a diff that names WHICH of the six moved is the whole point of
+// keeping the surface in files instead of in prose.
+for (const file of KERNEL_CONTRACT_FILES) {
+  test(`the vendored kernel contract \`${file}\` is byte for byte the hub one (#115)`, (t) => {
+    const canonical = hubPath(t, ...KERNEL_CONTRACT_HUB_PATH, file);
+    if (!canonical) return;
+    const vendored = join(VENDORED_KERNEL_CONTRACT_DIR, file);
+    assert.ok(
+      existsSync(vendored),
+      `contracts/kernel/${file} is not vendored in this repository: the hub froze a surface and ` +
+        'the copy the module authors read does not carry it — `npm run sync-mirrors`',
+    );
+    assert.equal(
+      readFileSync(vendored, 'utf8'),
+      readFileSync(canonical, 'utf8'),
+      `contracts/kernel/${file} moved on in the hub — resync it with \`npm run sync-mirrors\`. ` +
+        'Read the diff before syncing: this file IS the promise made to every published module, ' +
+        'so a change in it is a change in what the 26 repos are built against',
+    );
+  });
+}
+
+test('the vendored kernel contract carries EXACTLY the files the hub freezes (#115)', (t) => {
+  // The member tests above compare six named files; this one guards the SET. Without it the hub
+  // can add a seventh snapshot — a new frozen surface, which is precisely the event worth
+  // noticing — and every mirror stays green because nobody is asked about the file that is not on
+  // the list. Same failure the `CANNOT_RUN_IN_CI` ghosts check exists for: what is not enumerated
+  // is not watched.
+  const canonicalDir = hubPath(t, ...KERNEL_CONTRACT_HUB_PATH);
+  if (!canonicalDir) return;
+  assert.deepEqual(
+    readdirSync(canonicalDir).sort(),
+    [...KERNEL_CONTRACT_FILES].sort(),
+    'the hub\'s contracts/kernel/ no longer holds these exact files — add (or drop) the file in ' +
+      'src/kernel-contract.mjs and run `npm run sync-mirrors`',
+  );
+  assert.ok(
+    existsSync(VENDORED_KERNEL_CONTRACT_DIR),
+    'contracts/kernel/ is not vendored in this repository at all — `npm run sync-mirrors`',
+  );
+  assert.deepEqual(
+    readdirSync(VENDORED_KERNEL_CONTRACT_DIR).sort(),
+    [...KERNEL_CONTRACT_FILES].sort(),
+    'the vendored contracts/kernel/ holds something other than the declared files',
   );
 });

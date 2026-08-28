@@ -1,6 +1,6 @@
 # The mirrors' alarm, as a step the HUB can run on itself (module-toolkit#61).
 #
-# WHY IT RUNS FROM THE HUB AND NOT FROM HERE. The toolkit copies six things by hand out of
+# WHY IT RUNS FROM THE HUB AND NOT FROM HERE. The toolkit copies several things by hand out of
 # ERPlora/hub, and `test/canonical-mirrors.test.mjs` compares them byte for byte. That test needs a
 # hub checkout, and this repository's CI has none — nor can it get one: the org is on the free plan,
 # where "organization-level secrets and variables are not accessible by private repositories", so
@@ -23,8 +23,9 @@
 name: Check the ERPlora canonical mirrors
 description: >
   Fails when a canonical source of ERPlora/hub (manifest schema, BRIDGE_FUNCTIONS, the unknown-key
-  severity policy, CORE_QUERIES, the grandfathered migrations, the Ionic `ios` pin) has moved on
-  while the module-toolkit's vendored copy has not. Run it FROM the hub, on a hub checkout.
+  severity policy, CORE_QUERIES, the grandfathered migrations, the Ionic `ios` pin, and the FROZEN
+  kernel surface of `contracts/kernel/`) has moved on while the module-toolkit's vendored copy has
+  not. Run it FROM the hub, on a hub checkout.
 
 inputs:
   hub-dir:
@@ -67,9 +68,9 @@ runs:
 
     # `ERPLORA_HUB_DIR` is DECLARED here on purpose. That is what makes a missing or misspelled hub
     # an error instead of a skip (`test/hub-mirror.mjs`): if this step could not read the hub it
-    # would otherwise switch all six comparisons off and still report green — the precise failure
+    # would otherwise switch every comparison off and still report green — the precise failure
     # module-toolkit#61 was opened about.
-    - name: The six mirrors, against this hub
+    - name: The canonical mirrors, against this hub
       shell: bash
       env:
         ERPLORA_HUB_DIR: ${{ inputs.hub-dir }}

@@ -236,10 +236,11 @@ es peor que no tenerlo: enseña que el gate pide cosas que dan igual.
 
 ## Los espejos canónicos: contra QUÉ se comparan (module-toolkit#61 y #90)
 
-El toolkit copia a mano seis cosas cuya autoridad vive en `ERPlora/hub` (el esquema del manifest,
-`BRIDGE_FUNCTIONS`, la política de claves desconocidas, `CORE_QUERIES`, las migraciones abueladas y
-el pin `mode: 'ios'` del shell). `test/canonical-mirrors.test.mjs` las compara byte a byte, y
-`test/hub-mirror.mjs` es la puerta que decide **de dónde sale el original**. Tres fuentes, por orden:
+El toolkit copia a mano siete cosas cuya autoridad vive en `ERPlora/hub` (el esquema del manifest,
+`BRIDGE_FUNCTIONS`, la política de claves desconocidas, `CORE_QUERIES`, las migraciones abueladas,
+el pin `mode: 'ios'` del shell y la **superficie congelada del kernel**).
+`test/canonical-mirrors.test.mjs` las compara byte a byte, y `test/hub-mirror.mjs` es la puerta que
+decide **de dónde sale el original**. Tres fuentes, por orden:
 
 | Fuente | Cómo lee | Si falta el fichero |
 |---|---|---|
@@ -263,6 +264,29 @@ runner para resolver `module-sdk@develop` (ERPlora/hub#1097) y los espejos se sa
 del checkout que necesitaban** — `skipped 7`, en verde, en cada PR. Ahora ese paso exporta
 `ERPLORA_HUB_DIR` y se comparan de verdad: **una copia vendorizada que derive de `develop` pone en
 rojo el PR que la traía**.
+
+### La superficie CONGELADA del kernel, vendorizada (module-toolkit#115)
+
+`contracts/kernel/` de este repo es la copia byte a byte de `contracts/kernel/` del hub: los seis
+ficheros que la ADR **«El Hub se CIERRA como KERNEL»** (2026-08-27) congela —rutas HTTP/WS, motor
+declarativo, contrato del guest WASM, tablas de sistema, tipos públicos de `@erplora/module-sdk` y
+su README—. No se escriben a mano en ningún lado: los **genera** el hub desde su propio código.
+
+Se vendorizan por lo mismo que el esquema del manifest: el gate de los 26 repos de módulo corre en
+un runner **sin** checkout del hub, así que la superficie contra la que se construye un módulo tiene
+que poder leerse aquí. Y por lo mismo llevan espejo: uno por fichero (el `diff` dice **cuál** se
+movió) más uno sobre el **conjunto**, para que el día que el hub congele una séptima superficie no
+pase inadvertida por no estar en la lista.
+
+**Refrescarlas es un solo comando**, nunca un `cp` a mano:
+
+```sh
+npm run sync-mirrors     # las 7 copias, desde la MISMA fuente que usan los espejos
+npm run sync-schema      # alias histórico del anterior
+```
+
+Sin hub que copiar —o con un hub que no trae un fichero— el script **falla nombrándolo**: copiar
+cero ficheros y salir en verde dejaría las copias tan viejas como estaban.
 
 ## El gate de CI de los repos de módulo (ERPlora/pm#107)
 
