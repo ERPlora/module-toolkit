@@ -52,6 +52,13 @@ export const RETIRED_FIELDS = [
     'lo declaran 7 commands de `inventory`/`services` y el runtime NUNCA lo implementó (hub#610): ' +
       'la validación que describe NO se ejecuta — usa `reads` + `expect_rows`',
   ],
+  [
+    'navigation[]',
+    'actions',
+    'acciones de topbar del «Nivel 2» de ADR-0048, RETIRADAS en hub#1237: el shell nunca las ' +
+      'pintó y `/api/navigation` nunca las sirvió, así que ningún evento `module-action` llegó a ' +
+      'un Web Component — declara el botón dentro de tu propio componente',
+  ],
 ];
 
 /** Resolves an internal `$ref` (`#/$defs/widget`) against the root of the schema. */

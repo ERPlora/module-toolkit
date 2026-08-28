@@ -286,7 +286,7 @@
           },
           "permission": {
             "type": "string",
-            "description": "Permiso que ABRE esta pestaña: `/api/navigation` no sirve la entrada a quien no lo tiene (hub#1052). Mismo contrato que `actions[].permission` un escalón más arriba — el manifest declara a quién le sirve la pestaña y el runtime revalida SIEMPRE la query/command real detrás: esto no es la puerta, es no enseñar una puerta cerrada. Ausente = visible para todos, que es como se comportan todos los manifests publicados hasta hoy. Sin este campo un módulo no tenía dónde escribir «esta pestaña es de admin», así que la pintaba para todo el mundo y el usuario descubría el límite estrellándose contra un 403."
+            "description": "Permiso que ABRE esta pestaña: `/api/navigation` no sirve la entrada a quien no lo tiene (hub#1052). El manifest declara a quién le sirve la pestaña y el runtime revalida SIEMPRE la query/command real detrás: esto no es la puerta, es no enseñar una puerta cerrada. Ausente = visible para todos, que es como se comportan todos los manifests publicados hasta hoy. Sin este campo un módulo no tenía dónde escribir «esta pestaña es de admin», así que la pintaba para todo el mundo y el usuario descubría el límite estrellándose contra un 403."
           },
           "chrome": {
             "type": "array",
@@ -298,42 +298,6 @@
               ]
             },
             "description": "Controles de chrome del shell que esta entrada de navegación pide en la topbar, por nombre (ADR-0048, Nivel 1). El botón y su lógica los pone y maneja el SHELL (no viajan en el módulo) → respeta ADR-0022; el módulo solo opta-in a una capacidad que ya es del shell, no inyecta chrome. Enum CERRADA que crece en el shell: añadir un control nuevo es tocar el shell, no solo el manifest. Hoy soportado: `fullscreen` (Fullscreen API sobre el documento; el botón se muestra solo en la vista que lo pide y solo si el navegador la soporta). El shell lo lee del `module.json` crudo (la API aún no lo re-sirve)."
-          },
-          "actions": {
-            "type": "array",
-            "default": [],
-            "description": "Acciones de topbar de ESTA pestaña (ADR-0048, Nivel 2): el shell las pinta en `slot=\"end\"` y al pulsar reenvía `module-action` al Web Component montado. El manifest declara el botón; el comportamiento vive en el componente. El runtime las parsea desde siempre (`manifest::NavAction`) — el schema las prohibía, así que un módulo que declarase una acción fallaba `erplora validate` sin motivo. Deriva corregida en hub#521, donde el desacuerdo pasó a ser un test.",
-            "items": {
-              "type": "object",
-              "required": [
-                "id",
-                "label"
-              ],
-              "additionalProperties": false,
-              "properties": {
-                "id": {
-                  "type": "string",
-                  "description": "Identificador de la acción; viaja en el evento `module-action` que recibe el Web Component."
-                },
-                "label": {
-                  "type": "string",
-                  "description": "Texto del botón, INGLÉS canónico (ADR-0055): la traducción viaja en `locales/<lang>.json`."
-                },
-                "icon": {
-                  "type": "string",
-                  "description": "Nombre del icono (set Iconify `ion:`)."
-                },
-                "primary": {
-                  "type": "boolean",
-                  "default": false,
-                  "description": "Botón destacado (color primario)."
-                },
-                "permission": {
-                  "type": "string",
-                  "description": "Permiso para MOSTRAR el botón (show/hide de UI). Rust revalida siempre el command real: esto no autoriza nada."
-                }
-              }
-            }
           }
         }
       }
