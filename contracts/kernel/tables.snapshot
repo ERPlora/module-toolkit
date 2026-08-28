@@ -1,0 +1,413 @@
+# Tablas de SISTEMA del hub (`hub_*`, `_*`) — reflejadas de un hub recién arrancado,
+# NO editar a mano. Es el namespace RESERVADO: ninguna migración de módulo puede tocarlo.
+# `UPDATE_KERNEL_CONTRACT=1 cargo test -p erplora-runtime --test kernel_contract_tables`
+# Contrato del kernel: ADR «El Hub se CIERRA como KERNEL».
+
+_elevation_audit.approved_by text NOT NULL
+_elevation_audit.command text NOT NULL
+_elevation_audit.created_at text NOT NULL
+_elevation_audit.created_by text NOT NULL
+_elevation_audit.credential_kind text NOT NULL
+_elevation_audit.credential_ref text NOT NULL
+_elevation_audit.hub_id text NOT NULL
+_elevation_audit.id text NOT NULL
+_elevation_audit.payload_fingerprint text NOT NULL
+_elevation_audit.permission text NOT NULL
+
+_event_delivery.delivered_at text NOT NULL
+_event_delivery.event_id text NOT NULL
+_event_delivery.hub_id text NOT NULL
+_event_delivery.listener_command text NOT NULL
+
+_event_outbox.attempts bigint NOT NULL
+_event_outbox.claim_expires_at text NULL
+_event_outbox.created_at text NOT NULL
+_event_outbox.delivered_at text NULL
+_event_outbox.depth bigint NOT NULL
+_event_outbox.discard_reason text NOT NULL
+_event_outbox.discarded_at text NULL
+_event_outbox.discarded_by text NULL
+_event_outbox.event_name text NOT NULL
+_event_outbox.failure_kind text NOT NULL
+_event_outbox.hub_id text NOT NULL
+_event_outbox.id text NOT NULL
+_event_outbox.last_error text NOT NULL
+_event_outbox.module_id text NOT NULL
+_event_outbox.next_attempt_at text NOT NULL
+_event_outbox.parent_event_id text NOT NULL
+_event_outbox.payload text NOT NULL
+_event_outbox.permissions text NOT NULL
+_event_outbox.run_id text NOT NULL
+_event_outbox.status text NOT NULL
+_event_outbox.user_id text NOT NULL
+
+_flow.created_at text NOT NULL
+_flow.created_by text NOT NULL
+_flow.definition text NOT NULL
+_flow.deleted_at text NULL
+_flow.deleted_by text NULL
+_flow.enabled integer NOT NULL
+_flow.hub_id text NOT NULL
+_flow.id text NOT NULL
+_flow.name text NOT NULL
+_flow.schema_version integer NOT NULL
+_flow.updated_at text NOT NULL
+_flow.updated_by text NOT NULL
+
+_flow_approvals.assignee_role text NOT NULL
+_flow_approvals.command text NOT NULL
+_flow_approvals.comment text NOT NULL
+_flow_approvals.created_at text NOT NULL
+_flow_approvals.decided_at text NULL
+_flow_approvals.decided_by text NOT NULL
+_flow_approvals.deleted_at text NULL
+_flow_approvals.error text NOT NULL
+_flow_approvals.expires_at text NULL
+_flow_approvals.flow_id text NOT NULL
+_flow_approvals.hub_id text NOT NULL
+_flow_approvals.id text NOT NULL
+_flow_approvals.kind text NOT NULL
+_flow_approvals.on_expire text NOT NULL
+_flow_approvals.on_reject text NOT NULL
+_flow_approvals.payload text NOT NULL
+_flow_approvals.reason text NOT NULL
+_flow_approvals.run_id text NOT NULL
+_flow_approvals.status text NOT NULL
+_flow_approvals.step_id text NOT NULL
+_flow_approvals.summary text NOT NULL
+_flow_approvals.title text NOT NULL
+_flow_approvals.updated_at text NOT NULL
+
+_flow_grants.created_at text NOT NULL
+_flow_grants.deleted_at text NULL
+_flow_grants.flow_id text NOT NULL
+_flow_grants.granted_by text NOT NULL
+_flow_grants.hub_id text NOT NULL
+_flow_grants.id text NOT NULL
+_flow_grants.kind text NOT NULL
+_flow_grants.revoked_by text NULL
+_flow_grants.value text NOT NULL
+
+_flow_run_steps.created_at text NOT NULL
+_flow_run_steps.deleted_at text NULL
+_flow_run_steps.error text NOT NULL
+_flow_run_steps.finished_at text NULL
+_flow_run_steps.hub_id text NOT NULL
+_flow_run_steps.id text NOT NULL
+_flow_run_steps.input text NOT NULL
+_flow_run_steps.kind text NOT NULL
+_flow_run_steps.output text NOT NULL
+_flow_run_steps.run_id text NOT NULL
+_flow_run_steps.started_at text NULL
+_flow_run_steps.status text NOT NULL
+_flow_run_steps.step_id text NOT NULL
+_flow_run_steps.step_index integer NOT NULL
+
+_flow_run_waits.correlate text NOT NULL
+_flow_run_waits.correlate_key text NOT NULL
+_flow_run_waits.correlate_value text NOT NULL
+_flow_run_waits.created_at text NOT NULL
+_flow_run_waits.deleted_at text NULL
+_flow_run_waits.event_name text NOT NULL
+_flow_run_waits.filter text NOT NULL
+_flow_run_waits.flow_id text NOT NULL
+_flow_run_waits.hub_id text NOT NULL
+_flow_run_waits.id text NOT NULL
+_flow_run_waits.kind text NOT NULL
+_flow_run_waits.max_wait bigint NULL
+_flow_run_waits.offset_seconds bigint NOT NULL
+_flow_run_waits.past_due_policy text NOT NULL
+_flow_run_waits.reschedules bigint NOT NULL
+_flow_run_waits.run_id text NOT NULL
+_flow_run_waits.status text NOT NULL
+_flow_run_waits.step_id text NOT NULL
+_flow_run_waits.step_index bigint NOT NULL
+_flow_run_waits.until_path text NOT NULL
+_flow_run_waits.updated_at text NOT NULL
+
+_flow_runs.attempts integer NOT NULL
+_flow_runs.claim_expires_at text NULL
+_flow_runs.created_at text NOT NULL
+_flow_runs.created_by text NOT NULL
+_flow_runs.current_step integer NOT NULL
+_flow_runs.deleted_at text NULL
+_flow_runs.depth integer NOT NULL
+_flow_runs.finished_at text NULL
+_flow_runs.flow_id text NOT NULL
+_flow_runs.hub_id text NOT NULL
+_flow_runs.id text NOT NULL
+_flow_runs.input text NOT NULL
+_flow_runs.last_error text NOT NULL
+_flow_runs.parent_event_id text NOT NULL
+_flow_runs.started_at text NULL
+_flow_runs.status text NOT NULL
+_flow_runs.trigger_id text NOT NULL
+_flow_runs.trigger_kind text NOT NULL
+_flow_runs.updated_at text NOT NULL
+_flow_runs.vars text NOT NULL
+_flow_runs.wake_at text NULL
+
+_flow_secrets.created_at text NOT NULL
+_flow_secrets.created_by text NOT NULL
+_flow_secrets.deleted_at text NULL
+_flow_secrets.deleted_by text NULL
+_flow_secrets.hub_id text NOT NULL
+_flow_secrets.id text NOT NULL
+_flow_secrets.name text NOT NULL
+_flow_secrets.updated_at text NOT NULL
+_flow_secrets.updated_by text NOT NULL
+_flow_secrets.value_enc text NOT NULL
+
+_flow_triggers.claim_expires_at text NULL
+_flow_triggers.created_at text NOT NULL
+_flow_triggers.cron text NOT NULL
+_flow_triggers.deleted_at text NULL
+_flow_triggers.enabled integer NOT NULL
+_flow_triggers.event_name text NOT NULL
+_flow_triggers.filter text NOT NULL
+_flow_triggers.flow_id text NOT NULL
+_flow_triggers.hub_id text NOT NULL
+_flow_triggers.id text NOT NULL
+_flow_triggers.input_map text NOT NULL
+_flow_triggers.kind text NOT NULL
+_flow_triggers.last_run text NULL
+_flow_triggers.next_run text NULL
+_flow_triggers.run_at text NOT NULL
+_flow_triggers.trigger_key text NOT NULL
+_flow_triggers.tz text NOT NULL
+_flow_triggers.updated_at text NOT NULL
+
+_hub_activity.hub_id text NOT NULL
+_hub_activity.last_activity_at text NOT NULL
+_hub_activity.last_reported_at text NULL
+_hub_activity.updated_at text NOT NULL
+
+_hub_badge_key.created_at text NOT NULL
+_hub_badge_key.hub_id text NOT NULL
+_hub_badge_key.key_hex text NOT NULL
+
+_hub_certificate.cert_version bigint NULL
+_hub_certificate.certificate_type text NOT NULL
+_hub_certificate.hub_id text NOT NULL
+_hub_certificate.kind text NOT NULL
+_hub_certificate.password text NOT NULL
+_hub_certificate.pkcs12_b64 text NOT NULL
+_hub_certificate.uploaded_at text NULL
+_hub_certificate.uploaded_by text NOT NULL
+
+_hub_fiscal_profile.activated_at text NOT NULL
+_hub_fiscal_profile.adopted_at text NOT NULL
+_hub_fiscal_profile.adopted_by text NOT NULL
+_hub_fiscal_profile.adopted_from text NOT NULL
+_hub_fiscal_profile.can_go_live integer NOT NULL
+_hub_fiscal_profile.closed_at text NOT NULL
+_hub_fiscal_profile.closed_by text NOT NULL
+_hub_fiscal_profile.country_code text NOT NULL
+_hub_fiscal_profile.environment text NOT NULL
+_hub_fiscal_profile.first_record_at text NOT NULL
+_hub_fiscal_profile.fiscal_system text NOT NULL
+_hub_fiscal_profile.fiscal_trigger_events text NOT NULL
+_hub_fiscal_profile.hub_id text NOT NULL
+_hub_fiscal_profile.needs_review integer NOT NULL
+_hub_fiscal_profile.representation_at text NOT NULL
+_hub_fiscal_profile.representation_status text NOT NULL
+_hub_fiscal_profile.status text NOT NULL
+_hub_fiscal_profile.system_id text NOT NULL
+_hub_fiscal_profile.taxpayer_id text NOT NULL
+
+_hub_fiscal_regime_registry.country_code text NOT NULL
+_hub_fiscal_regime_registry.note text NOT NULL
+_hub_fiscal_regime_registry.regime_key text NOT NULL
+_hub_fiscal_regime_registry.simplified_invoice_max_cents bigint NOT NULL
+_hub_fiscal_regime_registry.since text NOT NULL
+
+_hub_meta.key text NOT NULL
+_hub_meta.value text NOT NULL
+
+_hub_migrations.applied_at text NOT NULL
+_hub_migrations.filename text NOT NULL
+_hub_migrations.module_id text NOT NULL
+
+_hub_system_migrations.applied_at text NOT NULL
+_hub_system_migrations.name text NOT NULL
+_hub_system_migrations.version bigint NOT NULL
+
+_module_capability_grants.capability text NOT NULL
+_module_capability_grants.granted integer NOT NULL
+_module_capability_grants.granted_at text NULL
+_module_capability_grants.granted_by text NOT NULL
+_module_capability_grants.hub_id text NOT NULL
+_module_capability_grants.module_id text NOT NULL
+
+_print_host.device_id text NOT NULL
+_print_host.hub_id text NOT NULL
+_print_host.label text NOT NULL
+_print_host.last_seen_at text NOT NULL
+_print_host.registered_at text NOT NULL
+_print_host.registered_by text NOT NULL
+_print_host.role text NOT NULL
+_print_host.station_id text NOT NULL
+
+_print_queue.attempts bigint NOT NULL
+_print_queue.claimed_by text NOT NULL
+_print_queue.completed_at text NULL
+_print_queue.created_at text NOT NULL
+_print_queue.discard_reason text NOT NULL
+_print_queue.discarded_at text NULL
+_print_queue.discarded_by text NULL
+_print_queue.document text NOT NULL
+_print_queue.document_type text NOT NULL
+_print_queue.format text NOT NULL
+_print_queue.hub_id text NOT NULL
+_print_queue.job_id text NOT NULL
+_print_queue.last_error text NOT NULL
+_print_queue.lease_expires_at text NOT NULL
+_print_queue.role text NOT NULL
+_print_queue.seq bigint NOT NULL
+_print_queue.station_id text NOT NULL
+_print_queue.status text NOT NULL
+
+_print_route.document_type text NOT NULL
+_print_route.hub_id text NOT NULL
+_print_route.station_id text NOT NULL
+_print_route.updated_at text NOT NULL
+_print_route.updated_by text NOT NULL
+
+_print_station.created_at text NOT NULL
+_print_station.hub_id text NOT NULL
+_print_station.id text NOT NULL
+_print_station.key text NOT NULL
+_print_station.label text NOT NULL
+
+_public_claim.command text NOT NULL
+_public_claim.created_at text NOT NULL
+_public_claim.created_by text NOT NULL
+_public_claim.expires_at text NOT NULL
+_public_claim.hub_id text NOT NULL
+_public_claim.id text NOT NULL
+_public_claim.kind text NOT NULL
+_public_claim.public_fields text NOT NULL
+_public_claim.redeemed_at text NULL
+_public_claim.result_ref text NOT NULL
+_public_claim.sealed_payload text NOT NULL
+_public_claim.subject_id text NOT NULL
+_public_claim.token_hash text NOT NULL
+
+_public_claim_key.created_at text NOT NULL
+_public_claim_key.hub_id text NOT NULL
+_public_claim_key.key_hex text NOT NULL
+
+_scheduled_tasks.catch_up text NOT NULL
+_scheduled_tasks.claim_expires_at text NULL
+_scheduled_tasks.command text NOT NULL
+_scheduled_tasks.cron text NOT NULL
+_scheduled_tasks.last_run text NULL
+_scheduled_tasks.module_id text NOT NULL
+_scheduled_tasks.name text NOT NULL
+_scheduled_tasks.next_run text NOT NULL
+_scheduled_tasks.payload text NOT NULL
+
+_update_history.component text NOT NULL
+_update_history.component_id text NOT NULL
+_update_history.created_at text NOT NULL
+_update_history.created_by text NOT NULL
+_update_history.deleted_at text NULL
+_update_history.deleted_by text NULL
+_update_history.from_version text NOT NULL
+_update_history.hub_id text NOT NULL
+_update_history.id text NOT NULL
+_update_history.name text NOT NULL
+_update_history.outcome text NOT NULL
+_update_history.reason text NOT NULL
+_update_history.to_version text NOT NULL
+_update_history.updated_at text NOT NULL
+_update_history.updated_by text NOT NULL
+
+hub_api_key.created_at text NOT NULL
+hub_api_key.created_by text NOT NULL
+hub_api_key.hub_id text NOT NULL
+hub_api_key.id text NOT NULL
+hub_api_key.last_used_at text NULL
+hub_api_key.name text NOT NULL
+hub_api_key.prefix text NOT NULL
+hub_api_key.rate_limit_per_minute integer NOT NULL
+hub_api_key.scope_json text NOT NULL
+hub_api_key.secret_hash text NOT NULL
+hub_api_key.status text NOT NULL
+
+hub_api_key_rate_window.api_key_id text NOT NULL
+hub_api_key_rate_window.request_count bigint NOT NULL
+hub_api_key_rate_window.window_epoch_minute bigint NOT NULL
+
+hub_module.hub_id text NOT NULL
+hub_module.installed_at text NOT NULL
+hub_module.module_id text NOT NULL
+hub_module.pinned_version text NULL
+hub_module.status text NOT NULL
+hub_module.updated_at text NOT NULL
+hub_module.version text NOT NULL
+
+hub_module_package.hub_id text NOT NULL
+hub_module_package.module_id text NOT NULL
+hub_module_package.sha256 text NOT NULL
+hub_module_package.signature_json text NULL
+hub_module_package.stored_at text NOT NULL
+hub_module_package.version text NOT NULL
+hub_module_package.zip_base64 text NOT NULL
+
+hub_role_activation.activated_at text NOT NULL
+hub_role_activation.activated_by text NOT NULL
+hub_role_activation.hub_id text NOT NULL
+hub_role_activation.role_key text NOT NULL
+
+hub_session.created_at text NOT NULL
+hub_session.credential_kind text NOT NULL
+hub_session.credential_ref text NOT NULL
+hub_session.device_id text NULL
+hub_session.expires_at text NOT NULL
+hub_session.hub_id text NOT NULL
+hub_session.token text NOT NULL
+hub_session.user_id text NOT NULL
+
+hub_settings.hub_id text NOT NULL
+hub_settings.key text NOT NULL
+hub_settings.updated_at text NOT NULL
+hub_settings.updated_by text NOT NULL
+hub_settings.value text NOT NULL
+
+hub_trusted_device.device_id text NOT NULL
+hub_trusted_device.hub_id text NOT NULL
+hub_trusted_device.label text NOT NULL
+hub_trusted_device.mode text NOT NULL
+hub_trusted_device.mode_set_at text NOT NULL
+hub_trusted_device.mode_set_by text NOT NULL
+hub_trusted_device.name text NOT NULL
+hub_trusted_device.trusted_at text NOT NULL
+
+hub_user.badge_hash text NOT NULL
+hub_user.badge_index text NOT NULL
+hub_user.cloud_revoked_at text NOT NULL
+hub_user.cloud_user_id text NULL
+hub_user.created_at text NOT NULL
+hub_user.email text NOT NULL
+hub_user.hub_id text NOT NULL
+hub_user.id text NOT NULL
+hub_user.is_active bigint NOT NULL
+hub_user.name text NOT NULL
+hub_user.pin_hash text NOT NULL
+hub_user.role text NOT NULL
+
+hub_user_pref.hub_id text NOT NULL
+hub_user_pref.language text NOT NULL
+hub_user_pref.theme_mode text NOT NULL
+hub_user_pref.theme_palette text NOT NULL
+hub_user_pref.updated_at text NOT NULL
+hub_user_pref.user_id text NOT NULL
+
+hub_user_profile.avatar_path text NOT NULL
+hub_user_profile.email text NOT NULL
+hub_user_profile.first_name text NOT NULL
+hub_user_profile.hub_id text NOT NULL
+hub_user_profile.last_name text NOT NULL
+hub_user_profile.updated_at text NOT NULL
+hub_user_profile.user_id text NOT NULL

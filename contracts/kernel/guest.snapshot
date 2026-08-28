@@ -1,0 +1,35 @@
+# Contrato del guest WASM — generado desde `crates/guest-sdk` y `crates/wasm-host`,
+# NO editar a mano. Un `.wasm` ya publicado no se recompila: renombrar un campo de aquí
+# rompe a la vez a todos los handlers Tier 2 que hay instalados.
+# `UPDATE_KERNEL_CONTRACT=1 cargo test -p erplora-runtime --test kernel_contract_guest`
+# Contrato del kernel: ADR «El Hub se CIERRA como KERNEL».
+
+[input]
+<transparent>  # `Input` envuelve el JSON del host sin añadir ni un campo
+
+[output]
+error
+events
+operations
+result
+
+[output.operations[]]
+command
+kind
+params
+
+[output.events[]]
+name
+payload
+
+[output.error]
+code
+message
+
+[wasm_limits]
+memory_max_mb = 32
+fuel = 200000000
+timeout_ms = 5000
+
+[host_functions]
+(ninguna)  # el guest no llama al host: devuelve intenciones que el host valida

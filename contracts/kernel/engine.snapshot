@@ -1,0 +1,52 @@
+# Motor declarativo del kernel — generado desde `crates/runtime/src/**`, NO editar a mano.
+# `UPDATE_KERNEL_CONTRACT=1 cargo test -p erplora-runtime --test kernel_contract_engine`
+# Contrato del kernel: ADR «El Hub se CIERRA como KERNEL».
+
+[system_params]
+approved_by
+business_address
+business_legal_name
+business_tax_id
+caller_lang
+current_user_id
+has_certificate
+hub_id
+new_id
+now
+timezone
+
+[core_queries]
+hub.users.list
+hub.roles.list
+hub.setup.status
+hub.approvals.list
+hub.fiscal.limits
+hub.print.coverage
+hub.print.jobs
+
+[capabilities]
+network
+certificate
+printer
+notify
+manage_flows
+
+[command_origins]
+External
+Internal
+Automation
+
+[migration_kinds]
+expand
+backfill
+contract
+
+[row_gates]
+commands.*.min_affected_rows
+commands.*.expect_rows
+commands.*.expect_rows.op
+commands.*.expect_rows.n
+commands.*.expect_rows.error
+commands.*.expect_rows.message
+commands.*.expect_rows.statement
+commands.*.expect_rows.op = min

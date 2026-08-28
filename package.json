@@ -10,11 +10,13 @@
   "files": [
     "bin",
     "src",
-    "schemas"
+    "schemas",
+    "contracts"
   ],
   "scripts": {
     "test": "node --test",
-    "sync-schema": "cp \"${ERPLORA_HUB_DIR:-../hub}/schemas/module.schema.json\" schemas/module.schema.json",
+    "sync-mirrors": "node scripts/sync-hub-mirrors.mjs",
+    "sync-schema": "npm run --silent sync-mirrors",
     "smoke": "node bin/erplora.mjs build ../modules-workspace/modules/inventory && node bin/erplora.mjs build ../modules-workspace/modules/sales"
   },
   "dependencies": {

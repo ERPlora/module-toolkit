@@ -19,13 +19,12 @@
 # seconds. The public packages the running suites DO need are installed one by one below.
 #
 # The file list is EXPLICIT rather than a `validate-*` glob: `manifest-schema`,
-# `canonical-mirrors` (module-toolkit#30/#40), `hub-mirror` (#61), `run-batteries` (#50),
-# `run-vitest` (#74), `against-hub` (#110) and `gate-wiring` (ERPlora/hub#1097) need no dependency
-# either — `against-hub` injects `exec`/`probe`, so it checks the harness that starts containers
-# WITHOUT starting one — and leaving
-# them out of the pattern would mean a vendored schema that went missing or unparseable reached the
-# 26 module repos without a single check going red. (`bin-*` already covers `bin-test-batteries`
-# and `bin-test-typescript`.)
+# `canonical-mirrors` (module-toolkit#30/#40), `hub-mirror` (#61), `sync-hub-mirrors` (#115),
+# `run-batteries` (#50), `run-vitest` (#74), `against-hub` (#110) and `gate-wiring`
+# (ERPlora/hub#1097) need no dependency either — `against-hub` injects `exec`/`probe`, so it checks
+# the harness that starts containers WITHOUT starting one — and leaving them out of the pattern
+# would mean a vendored schema that went missing or unparseable reached the 26 module repos without
+# a single check going red. (`bin-*` already covers `bin-test-batteries` and `bin-test-typescript`.)
 #
 # 🔴 «A new dependency-free suite belongs on this line» used to be written here as a REQUEST, and a
 # request is not a check: `gate-wiring.test.mjs` was added, was green locally, and this CI ran 367
@@ -39,6 +38,13 @@
 # organization is on the free plan, where "organization-level secrets and variables are not
 # accessible by private repositories", so `secrets.GH_PAT` never arrives and a private ERPlora/hub
 # has no credential here.
+#
+# WHAT THE MIRRORS COVER (module-toolkit#115). Eight of them now, the widest being the hub's FROZEN
+# kernel surface: `contracts/kernel/` — routes, declarative engine, WASM guest, system tables and
+# the `@erplora/module-sdk` types — vendored whole into `contracts/` here, because the gate of the
+# 26 module repos cannot reach a hub either. `npm run sync-mirrors` is what refreshes every vendored
+# copy, and `test/sync-hub-mirrors.test.mjs` is what keeps that script from reporting a sync it did
+# not do.
 #
 # THE ALARM NOW RINGS ON BOTH SIDES (module-toolkit#90). There IS a hub on this runner, and there
 # has been since ERPlora/hub#1097: `module-sdk@develop` is a composite action of the hub, and
@@ -115,7 +121,7 @@ jobs:
           # cannot read into an ERROR, so a moved or renamed path fails loudly here rather than
           # switching the mirrors off and reporting green.
           hub=$(cd "$sdk/../.." && pwd)
-          for canonical in schemas/module.schema.json crates/runtime/src/manifest.rs apps/web/src/main.ts; do
+          for canonical in schemas/module.schema.json crates/runtime/src/manifest.rs apps/web/src/main.ts contracts/kernel/routes.snapshot; do
             [ -f "$hub/$canonical" ] || {
               echo "::error::el checkout del hub ($hub) no trae $canonical — los espejos canónicos no pueden compararse contra él"
               exit 1
@@ -189,6 +195,7 @@ jobs:
           test/manifest-schema.test.mjs
           test/canonical-mirrors.test.mjs
           test/hub-mirror.test.mjs
+          test/sync-hub-mirrors.test.mjs
           test/run-batteries.test.mjs
           test/run-vitest.test.mjs
           test/against-hub.test.mjs
