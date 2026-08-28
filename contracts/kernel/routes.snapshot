@@ -80,6 +80,7 @@ POST    /api/keys                                      auth:admin
 DELETE  /api/keys/:id                                  auth:admin
 POST    /api/keys/:id/rotate                           auth:admin
 GET     /api/marketplace/catalog                       auth:session
+GET     /api/marketplace/modules/:id                   auth:session
 DELETE  /api/media                                     auth:admin
 GET     /api/media                                     auth:session
 POST    /api/media/folder                              auth:admin
