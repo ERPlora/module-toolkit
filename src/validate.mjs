@@ -22,6 +22,7 @@ import { checkWasmArtifact } from './wasm.mjs';
 import { checkNotifyChannels } from './validate-notify-channels.mjs';
 import { checkHandlerPermissionCeiling } from './validate-handler-permissions.mjs';
 import { checkManifestKeys } from './validate-manifest-keys.mjs';
+import { checkBundleArtifact } from './bundle-freshness.mjs';
 import { checkErrorsCatalog } from './validate-errors-catalog.mjs';
 import { checkRowGates } from './validate-row-gates.mjs';
 
@@ -302,6 +303,24 @@ export async function validate(moduleDir, { pg = false } = {}) {
 
   const bundle = join(dir, 'dist', `${manifest.id}.esm.js`);
   if (existsSync(bundle)) assertCspSafe(readFileSync(bundle, 'utf8'), `${manifest.id} bundle`);
+
+  // module-toolkit#93: hasta aquí lo ÚNICO que esta puerta leía del bundle era la CSP, y el bundle
+  // se publica TAL CUAL (el zip lleva `dist/` verbatim, nadie lo reconstruye aguas abajo). O sea que
+  // ni la PROCEDENCIA ni la FRESCURA del artefacto que de verdad sirve el hub estaban miradas:
+  //  - `verifactu@63039d3^:dist/verifactu.esm.js` llevaba 8 comentarios de esbuild con una ruta
+  //    absoluta al scratchpad de otro agente — un build hecho desde un clone temporal, publicado.
+  //  - una PR que toca `ui/**` sin `erplora build` publica la pantalla VIEJA bajo el manifest nuevo;
+  //    el 28/08 `flows` ya estaba así: la clave `ui.tplNeedsModules` que mergeó flows#38 el 23/08 NO
+  //    está en su `dist/flows.esm.js`, o sea que el arreglo no llegó a ningún hub.
+  // Trinquete deliberado (ver `bundle-freshness.mjs`): con sello → error; sin sello → aviso, porque
+  // ninguno de los 27 módulos publicados lo tiene todavía y poner 27 repos en rojo por un cambio
+  // nuestro es como se desactiva un gate. La ruta de la máquina que compiló sí es error desde el día
+  // uno: se comprobó que CERO de los 27 bundles publicados lleva ninguna.
+  const bundleArtifact = checkBundleArtifact(dir, manifest);
+  for (const w of bundleArtifact.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (bundleArtifact.errors.length) {
+    throw new Error('bundle dist/ desfasado o con rutas de otra máquina (module-toolkit#93):\n  - ' + bundleArtifact.errors.join('\n  - '));
+  }
 
   // module-toolkit#32 (hole 3): the only door that does NOT guess — Postgres itself. Opt-in with
   // `--pg` because it needs a container; the lexical rules above always run.

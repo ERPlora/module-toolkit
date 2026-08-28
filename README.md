@@ -24,8 +24,8 @@ aporta las dependencias y la configuración de build.
 | `erplora g module <id>` | ✅ | Genera un módulo (repo propio): manifest + WC Lit (`ok-data-table`) + SQL + fixtures. |
 | `erplora g view\|command\|query <id> <n>` | ✅ | Añade piezas dentro de un módulo existente. |
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
-| `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe) **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
-| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un canal de `host.notify` sin transporte, una guarda de filas que no se puede armar (`min_affected_rows` sobre un lote, un ancla `expect_rows.statement` colgando — hub#1091) y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), y un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*). |
+| `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe, con las rutas normalizadas para que salga igual desde cualquier cwd — module-toolkit#93), deja el sello `dist/<id>.build.json` **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
+| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un `dist/<id>.esm.js` con rutas de la máquina que lo compiló o desfasado respecto de `ui/` (§ *El bundle publicado*), un canal de `host.notify` sin transporte, una guarda de filas que no se puede armar (`min_affected_rows` sobre un lote, un ancla `expect_rows.statement` colgando — hub#1091) y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), y un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*). |
 | `erplora test <id\|dir> [--list] [--against-hub [<imagen>]]` | ✅ | Corre **los tests que el módulo ya trae**: sus baterías `tests/**/*.test.py|.sh` (las que necesitan Postgres usan el contenedor de `ERPLORA_TEST_PG_CONTAINER`) **y sus tests de TypeScript** `ui/**/*.test.ts` bajo vitest + happy-dom (§ *Los tests que el módulo ya tenía*). Falla si queda un test que **nadie** va a ejecutar. `--list` los enumera sin correrlos — es lo que el gate lee para decidir qué instalar. Con `--against-hub` levanta el **kernel real** y corre contra él las baterías `*.hub.test.py|.sh` (§ *La batería contra el kernel REAL*). |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
 | `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
@@ -69,6 +69,42 @@ handler corren sobre el Rust, no sobre el binario). Pasó en `tables` y en `pric
   source. Para lo segundo se usa la mejor evidencia disponible — el sello, si no el historial de
   git (fuentes tocadas sin recompilar, o `handler/` commiteado después del binario) y, en último
   término, las fechas de fichero.
+
+## El bundle publicado (`ui/` → `dist/<id>.esm.js`) — module-toolkit#93
+
+El bundle **se publica tal cual**: el `module.zip` lleva `dist/` verbatim y nadie lo reconstruye
+aguas abajo. Hasta el 2026-08-28 lo único que `erplora validate` leía de ese fichero era la CSP, así
+que ni su **procedencia** ni su **frescura** estaban miradas — y las dos fallaron de verdad:
+
+- `ERPlora/verifactu@63039d3^:dist/verifactu.esm.js` llevaba **8 comentarios de esbuild con una ruta
+  a un scratchpad temporal de otro agente**. Alguien construyó desde un clone de usar y tirar y
+  commiteó el resultado.
+- Una PR que toca `ui/**` sin `erplora build` publica **la pantalla vieja** bajo el manifest nuevo.
+  En el barrido del 2026-08-28 sobre los 27 módulos publicados, `flows` estaba así: la clave
+  `ui.tplNeedsModules` que añadió flows#38 el 23/08 **no está** en su `dist`.
+
+**`erplora build`** normaliza las anotaciones de ruta que esbuild deja antes de cada entrada (las
+del módulo, relativas al módulo; las de una dependencia, por el `name` de su paquete), de modo que
+**el bundle sale byte a byte igual desde cualquier directorio de trabajo**, y escribe un **sello**
+`dist/<id>.build.json` (sha256 del árbol de `ui/` + sha256 del bundle).
+
+**`erplora validate`** (y por tanto `pack`) comprueba dos cosas sobre ese fichero:
+
+- **Procedencia — ERROR siempre.** El bundle no puede llevar rutas absolutas (`/Users/`, `/home/`,
+  `C:\`) ni rutas que entren en un directorio temporal o un scratchpad (`/tmp/`, `/private/tmp/`,
+  `/var/folders/`, `…/scratchpad/…`), **estén escritas en absoluto o en relativo** — la de
+  `verifactu` era relativa. Cero de los 27 bundles publicados lleva ninguna, así que aquí no hay
+  nada heredado.
+- **Frescura — con trinquete.** El bundle tiene que corresponder al `ui/` actual, con la misma
+  jerarquía de evidencia que el handler WASM: **sello** → **git** (cambios sin commitear, o `ui/`
+  commiteado después del bundle) → **fechas de fichero**. Los ficheros que nunca entran en el
+  artefacto (`*.test.ts`, `*.spec.ts`, `*.d.ts` y los directorios de apoyo a tests `ui/test/`,
+  `tests/`, `__tests__/`, `__mocks__/`) quedan fuera de las tres capas: un commit que solo toca un
+  test no desfasa nada, y decir lo contrario es como un gate se gana que nadie lo lea.
+
+  El trinquete: **con sello es ERROR, sin sello es AVISO**. Ninguno de los 27 módulos publicados
+  tiene sello todavía, y poner 27 repos en rojo por un cambio nuestro es como se acaba desactivando
+  un guardarraíl; en cuanto un módulo se construye una vez gana el sello y a partir de ahí falla.
 
 ## Que el SQL prepare de verdad (`--pg`) — module-toolkit#32
 
