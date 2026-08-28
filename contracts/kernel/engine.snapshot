@@ -41,6 +41,17 @@ expand
 backfill
 contract
 
+[migration_not_expand]
+ALTER COLUMN ... TYPE
+DELETE FROM
+DROP COLUMN
+DROP CONSTRAINT
+DROP TABLE
+RENAME COLUMN
+RENAME TO
+SET NOT NULL
+TRUNCATE
+
 [row_gates]
 commands.*.min_affected_rows
 commands.*.expect_rows
