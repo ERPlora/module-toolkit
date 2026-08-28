@@ -1,0 +1,211 @@
+# The release of the 27 module repos, in ONE place (module-toolkit#111 · ERPlora/hub#1239).
+#
+# Called from each module repo with a ~10-line stub, exactly like `module-gate.yml`. It does the two
+# things a module release is:
+#
+#   1. BUMP the patch of `module.json` and push it. That push is what publishes: the SaaS GitHub App
+#      receives it (`handle_push_event` → `sync_module_repository`) and rebuilds the package, but it
+#      only uploads a zip when that version does NOT exist yet in Object Storage — `modules/{id}/
+#      v{version}.zip` is CREATE-ONLY, because overwriting a published zip would break the SHA256
+#      already-deployed hubs verify at install time. So a merge WITHOUT a bump never reaches the
+#      marketplace, and the Hub never offers «an update is available» either.
+#
+#   2. TELL THE HUB. `ERPlora/hub`'s `test-hub-modules.yml` clones the ~27 modules by their
+#      PUBLISHED state and runs them against the runtime; since hub#1239 it accepts a
+#      `repository_dispatch` of type `module-published`. Without this notice that pass only happens
+#      on a nightly cron: hub#1215 was caused by a MODULE release (`invoice` v1.2.27, ADR-0405), no
+#      trigger on the hub could have caught it, and it sat red for a whole day with Actions green,
+#      until it surfaced inside somebody else's push. With it, the red appears at publish time and
+#      with the culprit's name in the run title.
+#
+# WHY THE RELEASE MOVES HERE. The bump used to be copied into all 27 `release.yml` — ~90 lines of
+# retry loop and anti-loop reasoning, 27 times. Adding the notice there would have been 27 more
+# copies of a step that carries a credential. The gate already proved the shape: everything that can
+# change lives in this repository, so a fix reaches the 27 repos without 27 pull requests.
+#
+# Implements the ADR «El Hub se CIERRA como KERNEL» (2026-08-27), §4 and §6 hole 1.
+name: Module release
+
+on:
+  workflow_call:
+    inputs:
+      path:
+        description: Path of the module inside the calling repository.
+        required: false
+        type: string
+        default: '.'
+    secrets:
+      HUB_DISPATCH_TOKEN:
+        description: >
+          Token that may POST `repos/ERPlora/hub/dispatches`. It CANNOT be the caller's
+          `GITHUB_TOKEN`: that one is scoped to the module's own repository, so a cross-repo
+          dispatch with it answers 404. It has to be a REPO secret of each module — organization
+          secrets do not reach private repositories while the org is on the Free plan, the same
+          failure mode that left `MODULES_DEPLOY_KEYS` and `CI_RUNNER_LABEL` empty.
+        required: false
+
+# The bump pushes to `main`. A reusable workflow can never hold MORE than the caller granted, so the
+# stub keeps its own `permissions: contents: write`.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: bump + aviso al hub
+    # The organization's own runner when `CI_RUNNER_LABEL` is set, GitHub's image when it is not —
+    # `vars` resolves against the CALLING repository. Without the fallback the 27 releases would
+    # queue forever against a label nobody answers to; without the switch the bump dies on a hosted
+    # image the Actions budget no longer pays for and `main` carries the merge with NO bump, which
+    # means the marketplace keeps serving the OLD code as if nothing had happened.
+    runs-on: ${{ vars.CI_RUNNER_LABEL || 'ubuntu-latest' }}
+    # Generous but finite: the job measures in seconds. A hung fetch must not burn the budget.
+    timeout-minutes: 10
+    #
+    # ── ANTI-LOOP, layer 2 of 3 ──────────────────────────────────────────────────────────────────
+    # Layer 1 is GitHub's: the bump is pushed with `GITHUB_TOKEN` and pushes made with that token do
+    # not trigger workflows, so no run is even created for the bot's `chore(release)` commit. If that
+    # ever changed (a PAT, a deploy key), this `if` skips any push whose head commit is a
+    # `chore(release)`: the run is created, the job does not execute. Layer 3 is inside the step.
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release)') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The bump is computed ON THE TIP of main, not on the sha that triggered the run. Two pushes in
+      # a row to main start two runs; each checkout stays pinned to its own sha, so the second would
+      # push from an already stale base (`[rejected] (fetch first)`) and would repeat the same
+      # version on top of that. Hence: resync with origin/main, and if another run already left the
+      # bump there, there is nothing to publish — and nothing to announce either.
+      - id: bump
+        name: Bump patch + push (dispara la sincronización del SaaS)
+        env:
+          MODULE_DIR: ${{ inputs.path }}
+        run: |
+          set -euo pipefail
+          git config user.name  "erplora-bot"
+          git config user.email "bot@erplora.com"
+
+          for attempt in 1 2 3; do
+            git fetch --quiet origin main
+            # `--force` so a retry starts from the new tip and not on top of its own failed bump.
+            git checkout --quiet --force FETCH_HEAD
+
+            # Anti-loop layer 3: the tip already is a release commit.
+            if git log -1 --pretty=%s | grep -q '^chore(release)'; then
+              echo "→ main is already bumped by another run: $(git log -1 --pretty=%s). Nothing to publish."
+              # A RE-RUN after a failed notice (empty secret, 401) lands HERE: the bump is already on
+              # main, so nothing publishes, the dispatch step is skipped and the run goes green — while
+              # the hub was never told. Green must not read as delivered: say it, and name the route.
+              TIP=$(python3 -c 'import json, os, pathlib; m = json.loads((pathlib.Path(os.environ["MODULE_DIR"]) / "module.json").read_text()); print(m["id"], m["version"])')
+              echo "::warning::this run did not notify ERPlora/hub about ${TIP% *} v${TIP#* }. If it is a RE-RUN after a failed notice, send it by hand: printf '{\"event_type\":\"module-published\",\"client_payload\":{\"module\":\"${TIP% *}\",\"version\":\"${TIP#* }\"}}' | gh api repos/ERPlora/hub/dispatches --input -"
+              echo "published=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            NEW=$(python3 - <<'PY'
+          import json, os, pathlib
+          d = pathlib.Path(os.environ['MODULE_DIR'])
+          mj = d / 'module.json'
+          data = json.loads(mj.read_text())
+          maj, mi, pa = data['version'].split('.')
+          new = f"{maj}.{mi}.{int(pa) + 1}"
+          data['version'] = new
+          mj.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n')
+          pj = d / 'package.json'
+          if pj.exists():
+              p = json.loads(pj.read_text())
+              p['version'] = new
+              pj.write_text(json.dumps(p, indent=2, ensure_ascii=False) + '\n')
+          print(new)
+          PY
+            )
+
+            # The module id is the one the hub is told about, and it comes from the manifest — never
+            # from the repository name, which is only conventionally the same.
+            ID=$(python3 -c 'import json, os, pathlib; print(json.loads((pathlib.Path(os.environ["MODULE_DIR"]) / "module.json").read_text())["id"])')
+
+            git add "$MODULE_DIR/module.json" "$MODULE_DIR/package.json" 2>/dev/null \
+              || git add "$MODULE_DIR/module.json"
+            git commit -m "chore(release): v$NEW"
+
+            if git push origin HEAD:main; then
+              echo "→ published $ID v$NEW"
+              {
+                echo "published=true"
+                echo "module=$ID"
+                echo "version=$NEW"
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "→ main moved during attempt $attempt; retrying on the new tip"
+          done
+
+          echo "::error::could not push the bump after 3 attempts"
+          exit 1
+
+      # ── El aviso al hub (module-toolkit#111 · ERPlora/hub#1239) ──────────────────────────────────
+      #
+      # Only when THIS run is the one that published: the run that found main already bumped would
+      # otherwise cry wolf about a version it did not create, and the receiver's concurrency group is
+      # per module — the duplicate would cancel the real verification.
+      #
+      # `curl` and not `gh`: `gh` is installed on `ci-runner-1` today, but it is not part of a bare
+      # Ubuntu and the hosted fallback is not where this must be decided either. curl also hands back
+      # the STATUS, which is the only proof of delivery — a 401 answers with a body and curl exits 0.
+      - name: Avisar al hub de que hay un módulo publicado
+        if: steps.bump.outputs.published == 'true'
+        env:
+          HUB_DISPATCH_TOKEN: ${{ secrets.HUB_DISPATCH_TOKEN }}
+          MODULE: ${{ steps.bump.outputs.module }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          # 🔴 An ABSENT secret arrives as an EMPTY STRING, never as an error — the mode that left
+          # `CI_RUNNER_LABEL` empty and sent jobs to `ubuntu-latest` in green. Checked explicitly, so
+          # «nobody set the token» never reads as «nothing to announce».
+          if [ -z "${HUB_DISPATCH_TOKEN}" ]; then
+            echo "::error::el secreto HUB_DISPATCH_TOKEN llegó VACÍO: el hub NO se ha enterado de esta publicación."
+            echo "Tiene que ser un secreto DEL REPO de este módulo (los de organización no alcanzan a"
+            echo "repos privados con la org en plan Free), con permiso para POST repos/ERPlora/hub/dispatches."
+            echo "Ponerlo:  gh secret set HUB_DISPATCH_TOKEN --repo ERPlora/<módulo> --body \"\$TOKEN\""
+            echo "Y NO re-lanzar este run: el bump ya está en main, la repetición no publica nada y no avisa."
+            echo "Mandar el aviso a mano:  printf '{\"event_type\":\"module-published\",\"client_payload\":{\"module\":\"${MODULE}\",\"version\":\"${VERSION}\"}}' | gh api repos/ERPlora/hub/dispatches --input -"
+            exit 1
+          fi
+
+          PAYLOAD=$(python3 - <<'PY'
+          import json, os
+          print(json.dumps({
+              'event_type': 'module-published',
+              'client_payload': {
+                  'module': os.environ['MODULE'],
+                  'version': os.environ['VERSION'],
+              },
+          }))
+          PY
+          )
+
+          body="$RUNNER_TEMP/hub-dispatch.json"
+          code=$(curl -sS -o "$body" -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer ${HUB_DISPATCH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            --data "$PAYLOAD" \
+            https://api.github.com/repos/ERPlora/hub/dispatches)
+
+          if [ "$code" != "204" ]; then
+            echo "::error::el aviso a ERPlora/hub devolvió HTTP $code (se espera 204). El catálogo publicado NO se ha verificado contra el kernel."
+            cat "$body" || true
+            echo "NO re-lanzar este run: el bump ya está en main, la repetición no publica nada y no avisa."
+            echo "Mandar el aviso a mano:  printf '{\"event_type\":\"module-published\",\"client_payload\":{\"module\":\"${MODULE}\",\"version\":\"${VERSION}\"}}' | gh api repos/ERPlora/hub/dispatches --input -"
+            exit 1
+          fi
+
+          echo "→ ERPlora/hub avisado: module-published ${MODULE} v${VERSION}"
+          {
+            echo "### Publicado \`${MODULE}\` v${VERSION}"
+            echo
+            echo "Avisado \`ERPlora/hub\` (\`repository_dispatch: module-published\`): el catálogo"
+            echo "publicado se prueba contra el kernel ahora, no en la pasada nocturna."
+          } >> "$GITHUB_STEP_SUMMARY"
