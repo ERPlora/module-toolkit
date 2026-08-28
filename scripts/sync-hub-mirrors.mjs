@@ -5,7 +5,7 @@
 // (`schemas/module.schema.json`) and read the hub's WORKING TREE. Both halves had to change when
 // the kernel contract arrived (module-toolkit#115, ADR «El Hub se CIERRA como KERNEL»):
 //
-//   * the schema stopped being the only vendored file — `contracts/kernel/` adds six more, and a
+//   * the schema stopped being the only vendored file — `contracts/kernel/` adds five more, and a
 //     file whose only way of being refreshed is by hand is a file that gets refreshed in a hurry,
 //     one at a time, by whoever the mirror happened to catch;
 //

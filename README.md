@@ -267,21 +267,31 @@ rojo el PR que la traía**.
 
 ### La superficie CONGELADA del kernel, vendorizada (module-toolkit#115)
 
-`contracts/kernel/` de este repo es la copia byte a byte de `contracts/kernel/` del hub: los seis
-ficheros que la ADR **«El Hub se CIERRA como KERNEL»** (2026-08-27) congela —rutas HTTP/WS, motor
-declarativo, contrato del guest WASM, tablas de sistema, tipos públicos de `@erplora/module-sdk` y
-su README—. No se escriben a mano en ningún lado: los **genera** el hub desde su propio código.
+`contracts/kernel/` de este repo es la copia byte a byte de `contracts/kernel/` del hub: los
+**cinco snapshots** que la ADR **«El Hub se CIERRA como KERNEL»** (2026-08-27) congela —rutas
+HTTP/WS, motor declarativo, contrato del guest WASM, tablas de sistema y tipos públicos de
+`@erplora/module-sdk`—. No se escriben a mano en ningún lado: los **genera** el hub desde su propio
+código.
+
+**El `README.md` del hub NO se espeja** (module-toolkit#121). Es prosa dirigida a quien trabaja
+*en el hub* —invocaciones de `cargo`, rutas `crates/runtime/tests/…`, nombres de workflow— que aquí
+ni existe ni se puede ejecutar, y que ningún módulo publicado consume. Espejarlo convertía **cada
+edición de documentación del hub** en un rojo de este repositorio: hub#1263 y hub#1265 no movieron
+ni una ruta, ni el motor, ni el guest, ni las tablas, ni el SDK, y aun así rompieron el espejo. Una
+alarma que salta por prosa se acaba silenciando, y entonces ya no avisa del `routes.snapshot` que sí
+importa. Queda **enumerado** (`KERNEL_CONTRACT_NOT_MIRRORED`), no simplemente fuera: un fichero sin
+nombrar en el directorio del hub es un fichero sin vigilar.
 
 Se vendorizan por lo mismo que el esquema del manifest: el gate de los 26 repos de módulo corre en
 un runner **sin** checkout del hub, así que la superficie contra la que se construye un módulo tiene
 que poder leerse aquí. Y por lo mismo llevan espejo: uno por fichero (el `diff` dice **cuál** se
-movió) más uno sobre el **conjunto**, para que el día que el hub congele una séptima superficie no
+movió) más uno sobre el **conjunto**, para que el día que el hub congele una sexta superficie no
 pase inadvertida por no estar en la lista.
 
 **Refrescarlas es un solo comando**, nunca un `cp` a mano:
 
 ```sh
-npm run sync-mirrors     # las 7 copias, desde la MISMA fuente que usan los espejos
+npm run sync-mirrors     # las 6 copias, desde la MISMA fuente que usan los espejos
 npm run sync-schema      # alias histórico del anterior
 ```
 

@@ -3,8 +3,8 @@
 # Contrato del kernel: ADR «El Hub se CIERRA como KERNEL».
 GET     /api/app/release                               auth:session
 POST    /api/assistant/chat/stream                     auth:any-credential
-POST    /api/assistant/checkout                        auth:none
-GET     /api/assistant/config                          auth:none
+POST    /api/assistant/checkout                        auth:admin
+GET     /api/assistant/config                          auth:session
 POST    /api/assistant/report                          auth:any-credential
 POST    /api/auth/badge                                auth:none
 POST    /api/auth/cloud                                auth:none
