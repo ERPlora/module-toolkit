@@ -193,6 +193,17 @@ export function contractsFileIsStale(dir, manifest) {
 // ── Universo y validación cruzada ─────────────────────────────────────────────────────────────
 
 /**
+ * Nombre de un entry de `commands[].emit`, en cualquiera de sus dos formas (ERPlora/hub#1076,
+ * ERPlora/module-toolkit#133): el string plano de siempre, o el objeto `{event, dedup_key}` que
+ * añade una clave de deduplicación en el outbox. El universo de eventos cuenta por NOMBRE en las
+ * dos formas — mirar solo la primera dejaría de ver como emisor a cualquier módulo que adopte
+ * `dedup_key`, exactamente el hueco que `events.emits` (arriba) ya cerró para el handler WASM.
+ */
+function emitName(entry) {
+  return typeof entry === 'string' ? entry : entry?.event;
+}
+
+/**
  * El universo del workspace: qué ofrece cada módulo (leído de sus module.json vecinos).
  * En el marketplace/install-plan el MISMO validador recibe otro universo — cambia el conjunto,
  * no el motor.
@@ -216,7 +227,7 @@ export function loadUniverse(modulesDir) {
     // los 32 eventos que tras hub#709 viven solo en la segunda (`sale.completed`, `order.fired`,
     // los 9 de `kitchen`): justo los del centro del hub.
     const emits = new Set(Array.isArray(m.events?.emits) ? m.events.emits : []);
-    for (const cmd of Object.values(m.commands ?? {})) for (const e of cmd.emit ?? []) emits.add(e);
+    for (const cmd of Object.values(m.commands ?? {})) for (const e of cmd.emit ?? []) emits.add(emitName(e));
     universe.set(m.id, {
       queries: new Set(Object.keys(m.queries ?? {})),
       commands: new Set(Object.keys(m.commands ?? {})),

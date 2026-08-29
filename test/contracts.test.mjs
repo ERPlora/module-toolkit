@@ -401,6 +401,25 @@ test('las dos fuentes se SUMAN: `commands[].emit` sigue contando (#35)', () => {
   assert.deepEqual(deferred, [], 'el evento sigue saliendo de commands[].emit');
 });
 
+// ── ERPlora/hub#1076 / module-toolkit#133: `commands[].emit` gana la forma objeto ────────────
+// `emit` acepta ahora el nombre plano de siempre O un objeto `{event, dedup_key}` (hub#1076): el
+// universo de eventos tiene que seguir contando por el NOMBRE del evento en las dos formas, o un
+// módulo que adopte `dedup_key` deja de figurar como emisor de lo que sigue emitiendo.
+test('un emit en forma objeto {event, dedup_key} cuenta por su `event` (hub#1076 / module-toolkit#133)', () => {
+  const { ws, alpha, beta } = fakeWorkspace();
+  const alphaManifest = JSON.parse(readFileSync(join(alpha, 'module.json'), 'utf8'));
+  alphaManifest.commands['alpha.items.create'].emit = [
+    { event: 'alpha.item.created', dedup_key: 'sku' },
+  ];
+  writeFileSync(join(alpha, 'module.json'), JSON.stringify(alphaManifest));
+
+  write(beta, 'ui/components/x.ts', `erplora().on('alpha.item.created', cb);`);
+  const manifest = readManifest(beta);
+  const { errors, deferred } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+  assert.deepEqual(errors, []);
+  assert.deepEqual(deferred, [], 'lo declara su emisor en forma objeto: no hay nada que aplazar');
+});
+
 // ── module-toolkit#37: escuchar un evento del CORE no es un typo ─────────────────────────────
 // `hub.` es el namespace RESERVADO del core (ADR-0192): esos eventos los escribe el runtime en
 // `_event_outbox` y no salen de ningún manifest, así que resolverlos contra lo que emiten los

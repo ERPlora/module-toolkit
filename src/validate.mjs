@@ -25,6 +25,7 @@ import { checkManifestKeys } from './validate-manifest-keys.mjs';
 import { checkBundleArtifact } from './bundle-freshness.mjs';
 import { checkErrorsCatalog } from './validate-errors-catalog.mjs';
 import { checkRowGates } from './validate-row-gates.mjs';
+import { checkEmitDedupKey } from './validate-emit-dedup-key.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -157,6 +158,12 @@ export async function validate(moduleDir, { pg = false } = {}) {
   // es un CONDICIONAL (`if min_affected_rows && sql.minItems 2 → then false`), que el walker no
   // evalúa. Sin esta puerta la restricción sería inerte aquí y cierta solo en el hub.
   errs.push(...checkRowGates(manifest));
+
+  // ERPlora/hub#1076 / module-toolkit#133: `dedup_key` de la forma objeto de `emit`. El schema
+  // canónico lo tipa `string` y lo exige, pero no puede llevar `minLength`/`pattern` sin divergir
+  // del schema del hub (`canonical-mirrors.test.mjs`), así que un valor vacío o que nunca podría
+  // nombrar un campo pasa `checkManifestKeys` en silencio.
+  errs.push(...checkEmitDedupKey(manifest));
 
   if (errs.length) throw new Error('manifest inválido:\n  - ' + errs.join('\n  - '));
 

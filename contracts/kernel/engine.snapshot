@@ -11,6 +11,7 @@ caller_lang
 current_user_id
 has_certificate
 hub_id
+is_demo_hub
 new_id
 now
 timezone
@@ -61,3 +62,8 @@ commands.*.expect_rows.error
 commands.*.expect_rows.message
 commands.*.expect_rows.statement
 commands.*.expect_rows.op = min
+
+[emit]
+commands.*.emit[] = string
+commands.*.emit[].event
+commands.*.emit[].dedup_key

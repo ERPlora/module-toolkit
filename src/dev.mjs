@@ -81,7 +81,10 @@ function collectModules(rootDir, single) {
   return { mods, fixtures, wcFiles };
 }
 
-function harnessEntry(manifests, fixtures, wcFiles, preselect) {
+// Exportada para test (module-toolkit#133): la fuente generada es lo que corre en el navegador, y
+// la única forma honesta de probar que el preview resuelve `emit` en sus dos formas
+// (ERPlora/hub#1076) es ejecutar ESTE texto, no una reimplementación en el test.
+export function harnessEntry(manifests, fixtures, wcFiles, preselect) {
   const ionicImports = IONIC.map(
     (c, i) => `import { defineCustomElement as i${i} } from '@ionic/core/components/ion-${c}.js';`,
   ).join('\n');
@@ -111,6 +114,9 @@ const PRESELECT = ${JSON.stringify(preselect || null)};
 // ── Cliente mock (transport en memoria) ─────────────────────────────────────────────────────
 const listeners = new Map();
 function emit(event, payload) { (listeners.get(event) || []).forEach((cb) => { try { cb(payload); } catch {} }); }
+// Nombre de un entry de \`emit\`, en cualquiera de sus dos formas (ERPlora/hub#1076,
+// ERPlora/module-toolkit#133): el string plano de siempre, o \`{event, dedup_key}\`.
+function emitName(e) { return typeof e === 'string' ? e : e.event; }
 const QByName = {};
 const CByName = {};
 for (const m of MODULES) { Object.assign(QByName, m.queries || {}); Object.assign(CByName, m.commands || {}); }
@@ -173,7 +179,7 @@ globalThis.erplora = {
     return r;
   },
   async command(name, payload) {
-    ((CByName[name] || {}).emit || []).forEach((ev) => emit(ev, payload));
+    ((CByName[name] || {}).emit || []).forEach((ev) => emit(emitName(ev), payload));
     return { ok: true, id: 'new-' + Math.floor(performance.now()) };
   },
   on(event, cb) {
@@ -329,7 +335,7 @@ window.addEventListener('DOMContentLoaded', () => {
     sec('Queries', Object.keys(m.queries || {}));
     sec('Commands', Object.keys(m.commands || {}));
     sec('Permisos', m.permissions || []);
-    sec('Eventos (emit)', [...new Set(Object.values(m.commands || {}).flatMap((c) => c.emit || []))]);
+    sec('Eventos (emit)', [...new Set(Object.values(m.commands || {}).flatMap((c) => c.emit || []).map(emitName))]);
   }
 
   function toggleOverlay(force) {
