@@ -288,6 +288,16 @@ export interface DiscardResult {
     discarded_by: string;
     discard_reason?: string;
 }
+export interface DiscardedEvent {
+    id: string;
+    event_name: string;
+    module_id: string;
+    last_error: string;
+    created_at: string;
+    discarded_at: string;
+    discarded_by: string;
+    discard_reason: string;
+}
 export interface CorrelatedEvent {
     id: string;
     event_name: string;
@@ -317,6 +327,7 @@ export declare class EventsApi {
         status: string;
     }>;
     discard(id: string, reason?: string): Promise<DiscardResult>;
+    discarded(): Promise<DiscardedEvent[]>;
     retryAll(): Promise<RetryAllResult>;
     trace(id: string): Promise<EventTrace>;
 }
