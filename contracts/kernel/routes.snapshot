@@ -39,6 +39,7 @@ POST    /api/hub/events/:id/retry                      auth:admin+capability
 GET     /api/hub/events/:id/trace                      auth:admin+capability
 GET     /api/hub/events/dead                           auth:admin+capability
 GET     /api/hub/events/dead/count                     auth:admin+capability
+GET     /api/hub/events/discarded                      auth:admin+capability
 POST    /api/hub/events/retry-all                      auth:admin+capability
 GET     /api/hub/events/shape                          auth:admin+capability
 POST    /api/hub/export                                auth:admin+any-credential
