@@ -11,6 +11,7 @@ caller_lang
 current_user_id
 has_certificate
 hub_id
+is_demo_hub
 new_id
 now
 timezone

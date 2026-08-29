@@ -362,7 +362,10 @@ export declare class ErploraClient {
         currency?: () => string;
         currencyDecimals?: () => number;
         timezone?: () => string;
+        installedModules?: () => ReadonlySet<string> | undefined;
     }, bridge?: BridgeTransport);
+    private static ownerModuleOf;
+    private isKnownAbsent;
     get peripherals(): BridgeTransport;
     fetchMediaBlob(ref: string, opts?: MediaFetchOptions): Promise<Blob | null>;
     forModule(moduleId: string): ErploraClient;
