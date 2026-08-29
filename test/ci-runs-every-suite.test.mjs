@@ -27,6 +27,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CANNOT_RUN_IN_CI = {
   'build-entry.test.mjs': 'builds the bundle: needs esbuild',
   'dev-collect.test.mjs': 'serves the preview: needs esbuild + lit',
+  'dev-emit-dedup-key.test.mjs': 'imports src/dev.mjs for `harnessEntry`: needs esbuild',
   'icons.test.mjs': 'needs @iconify-json/ion',
   'outfitkit-stamp.test.mjs': 'needs the @erplora/outfitkit checkout',
   'pack-include.test.mjs': 'packs a built module: needs esbuild',

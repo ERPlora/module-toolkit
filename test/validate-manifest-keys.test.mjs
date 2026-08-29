@@ -133,6 +133,49 @@ test('`erplora validate` lets the same manifest through once spelled right', asy
   }
 });
 
+// ── ERPlora/hub#1076 / module-toolkit#133: `commands.*.emit[]` gana la forma objeto ──────────
+test('`erplora validate` ACCEPTS `emit: [{event, dedup_key}]` (hub#1076 / module-toolkit#133)', async () => {
+  const manifest = {
+    ...base(),
+    commands: {
+      'demo.do': { permission: 'demo.write', emit: [{ event: 'demo.thing.done', dedup_key: 'external_id' }] },
+    },
+  };
+  const dir = moduleDir(manifest);
+  try {
+    await validate(dir); // does not throw
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('`erplora validate` REJECTS an empty `dedup_key` (hub#1076 / module-toolkit#133)', async () => {
+  const manifest = {
+    ...base(),
+    commands: { 'demo.do': { permission: 'demo.write', emit: [{ event: 'demo.thing.done', dedup_key: '' }] } },
+  };
+  const dir = moduleDir(manifest);
+  try {
+    await assert.rejects(() => validate(dir), /manifest inválido[\s\S]*dedup_key/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a `dedup_key` typo (e.g. `dedupKey`) is reported by name, not swallowed as free-form (hub#1076 / module-toolkit#133)', () => {
+  // Before the schema sync `commands.*.emit[]` was `{ type: 'string' }` with no `properties`, so
+  // the walker treated ANY shape there as free-form JSON and reported nothing — an object with a
+  // typo'd key would have passed silently. The object branch the hub added has closed properties
+  // (`additionalProperties: false`), so the walker can — and now does — name the typo.
+  const { warnings, errors } = checkManifestKeys({
+    ...base(),
+    commands: { 'demo.do': { permission: 'demo.write', emit: [{ event: 'demo.thing.done', dedupKey: 'x' }] } },
+  });
+  assert.deepEqual(errors, []);
+  assert.equal(warnings.length, 1, JSON.stringify({ warnings, errors }));
+  assert.match(warnings[0], /dedupKey/);
+});
+
 test('where the schema says nothing, the validator does not invent either', () => {
   // A scheduled task's `payload` is free JSON: there is no contract to judge in there, and a
   // validator with opinions would turn every business field into a warning.

@@ -477,8 +477,23 @@
           },
           "emit": {
             "type": "array",
+            "description": "Events this command emits. Each entry is either the plain event name (historical behaviour: emits once per EXECUTION) or an object that also declares `dedup_key` (hub#1076): the name of a field of the command's payload whose value derives the outbox row id, so a REPEATED emission with the SAME key (webhook redelivery, outbox relay retry) is absorbed instead of queuing a second event — the mechanism `insert_core_event_once` already uses for a core event. Opt-in: absent = historical behaviour.",
             "items": {
-              "type": "string"
+              "oneOf": [
+                { "type": "string" },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["event", "dedup_key"],
+                  "properties": {
+                    "event": { "type": "string" },
+                    "dedup_key": {
+                      "type": "string",
+                      "description": "Name of a field of the command's payload (the same namespace as a `:field` bind in its SQL) whose value uniquely identifies the emission, scoped to the hub. Two executions with the SAME value absorb the second one in the outbox; different values are different events. A field that is absent or not a scalar emits WITHOUT deduplication and is reported."
+                    }
+                  }
+                }
+              ]
             }
           },
           "min_affected_rows": {
