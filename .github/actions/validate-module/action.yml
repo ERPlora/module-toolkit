@@ -31,13 +31,21 @@
 # merged green. The same net applies backwards: a `.test.ts` (or `.spec.ts`) that no pattern picks
 # up FAILS the gate rather than disappearing.
 #
-# Three things stay out, and they are NAMED rather than faked:
+# And since module-toolkit#146 the handler's RUST tests too — the `#[cfg(test)] mod tests` of a
+# Tier-2 module, where its business logic lives. 21 modules carry them, 925 tests measured on
+# 2026-09-01, and the gate ran ZERO: `erplora validate` compiles the handler (#135) and `erplora
+# build` refuses to publish a stale wasm (#26), so the ARTEFACT was watched and what the artefact
+# DOES was not. ERPlora/kitchen#63 is the shape of the cost — the whole bug was one line of the
+# handler dropping `waiter_id`, and the two tests that pin it have never run anywhere but on the
+# laptop that wrote them. Same rule as the other two families: not run is not green.
 #
-#   1. compiling the handler to wasm32 and `cargo test` of `handler/` — the 21 modules with a
-#      handler depend on the hub's `guest-sdk` BY RELATIVE PATH and there is no checkout of
-#      ERPlora/hub here; fetching one means a read token for a private repo living in 25 repos,
-#      which is a security decision, not a CI detail. The validator says it out loud
-#      ("handler WASM SIN VERIFICAR");
+# Two things stay out, and they are NAMED rather than faked:
+#
+#   1. compiling the handler to WASM32 specifically. The validator builds the crate for the HOST
+#      (which is what catches a source that does not compile) and the `cargo test` above runs on the
+#      host too; producing the wasm32 artefact is `erplora build`'s job and the freshness guards of
+#      #26 are what stop a stale one from being published. What is NOT missing any more is the
+#      checkout: the `module-sdk` action leaves the whole hub on disk, which is what #146 uses;
 #   2. (was `@erplora/module-sdk`, and with it MOST of the TypeScript tests. CLOSED by
 #      ERPlora/hub#1097: the package still lives in the PRIVATE ERPlora/hub and is still unpublished,
 #      but it no longer has to be either — `module-gate.yml` calls a composite action of that repo,
@@ -180,10 +188,15 @@ runs:
         # for `setup-python`, and one with only `tests/*.py` must not pay for an `npm install`.
         py=$(printf '%s\n' "$files" | grep -cE '\.(py|sh)$' || true)
         ts=$(printf '%s\n' "$files" | grep -cE '\.test\.ts$' || true)
+        # module-toolkit#146: and the handler's Rust tests. Same rule as the other two — the count
+        # comes from the toolkit's own `--list`, never from an `ls` of `handler/`, so the step that
+        # installs the toolchain cannot disagree with the command that needs it.
+        rs=$(printf '%s\n' "$files" | grep -cE '\.rs$' || true)
         echo "count=$n" >> "$GITHUB_OUTPUT"
         echo "python=$py" >> "$GITHUB_OUTPUT"
         echo "typescript=$ts" >> "$GITHUB_OUTPUT"
-        echo "→ $n test file(s) in ${{ inputs.path }}: $py battery(ies), $ts TypeScript"
+        echo "rust=$rs" >> "$GITHUB_OUTPUT"
+        echo "→ $n test file(s) in ${{ inputs.path }}: $py battery(ies), $ts TypeScript, $rs Rust"
         printf '%s\n' "$files"
 
     # Only when there is a PYTHON/SHELL battery to run: 22 of the 25 modules carry none, and
@@ -307,11 +320,73 @@ runs:
         # self-hosted runner happens to carry from a previous job. Same shape as `ERPLORA_PYTHON`.
         echo "ERPLORA_VITEST=$deps/node_modules/vitest/vitest.mjs" >> "$GITHUB_ENV"
 
+    # ── The handler's RUST tests (module-toolkit#146) ────────────────────────────────────────────
+    #
+    # The third family, and the last one the gate was not running. 21 modules carry a Tier-2 handler
+    # with `#[cfg(test)] mod tests` — 925 tests measured on 2026-09-01 — and CI executed ZERO of
+    # them. `erplora validate` compiles the handler (#135) and `erplora build` refuses to publish a
+    # stale wasm (#26), so the ARTEFACT was watched; what the artefact DOES was not. In
+    # ERPlora/kitchen#63 the whole bug was one line of the handler dropping `waiter_id`, and the two
+    # tests that pin it run on the author's laptop and nowhere else.
+    #
+    # 🔴 THE HUB IS ALREADY HERE, WHICH IS THE WHOLE POINT. The 22 handlers reach the hub's
+    # `erplora-guest-sdk` by the relative path `../../../../hub/crates/guest-sdk`, and there is still
+    # no credential to check ERPlora/hub out from a module repo — that has been refused three times
+    # and is not what this changes. It does not have to: to execute the `module-sdk` composite action
+    # at all, the runner already brings the WHOLE hub down, and `module-sdk-path` points two levels
+    # inside it. The toolkit turns that checkout into the layout the relative path expects (a farm of
+    # symlinks in a scratch dir — `src/run-cargo.mjs`), so nothing is written outside `RUNNER_TEMP`
+    # and the six slots of `ci-runner-1` share no mutable state.
+    #
+    # Skipped outright for a module with no Rust test, so the 5 that have none pay nothing.
+    - name: Rust toolchain + the hub the handler compiles against
+      if: steps.batteries.outputs.rust != '0'
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        # The hub, derived exactly as this repository's own `ci.yml` has derived it since #90:
+        # `packages/module-sdk` sits two levels below the checkout root.
+        sdk="${{ inputs.module-sdk-path }}"
+        if [ -z "$sdk" ]; then
+          echo '::error::este módulo tiene tests de Rust en `handler/` y el gate no ha recibido `module-sdk-path`: sin el checkout de ERPlora/hub el `erplora-guest-sdk` no resuelve y no se pueden ejecutar. Lo entrega `ERPlora/hub/.github/actions/module-sdk` desde module-gate.yml (module-toolkit#146)'
+          exit 1
+        fi
+        hub=$(cd "$sdk/../.." && pwd)
+        if [ ! -f "$hub/crates/guest-sdk/Cargo.toml" ]; then
+          echo "::error::el checkout del hub ($hub) no trae crates/guest-sdk — los tests del handler no pueden compilar contra él (module-toolkit#146)"
+          exit 1
+        fi
+        echo "ERPLORA_HUB_DIR=$hub" >> "$GITHUB_ENV"
+        # Out of the module checkout on purpose: `RUNNER_TEMP` is reclaimed with the job, so the
+        # ~82 MB a handler's test profile costs (measured on `kitchen`) never accumulates on a
+        # machine whose ceiling is the disk.
+        echo "CARGO_TARGET_DIR=$RUNNER_TEMP/erplora-handler-target" >> "$GITHUB_ENV"
+        echo "→ handler compilará contra $hub/crates/guest-sdk"
+        # `ci-runner-1` is a bare Ubuntu and there is no first-party `setup-rust`. rustup's own
+        # installer, minimal profile, into the runner's `$HOME/.cargo`, which PERSISTS between jobs
+        # on a self-hosted runner — so this is paid once and is a no-op from then on.
+        if command -v cargo >/dev/null 2>&1; then
+          echo "→ cargo ya presente: $(cargo --version)"
+        else
+          . "$ACTION_PATH/../../scripts/ci-infra.sh"
+          # 🔴 Through `ci-infra.sh` (module-toolkit#138): a rustup download that dies on a full
+          # disk or a network blip is the MACHINE, and without this it would surface in a module's
+          # checks list as an unexplained non-zero exit — pinned on whoever opened the pull request.
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$RUNNER_TEMP/rustup.sh" \
+            || erplora_infra_fail 'no se ha podido descargar el instalador de rustup'
+          sh "$RUNNER_TEMP/rustup.sh" -y --profile minimal --default-toolchain stable --no-modify-path \
+            || erplora_infra_fail 'rustup no ha podido instalar la toolchain de Rust'
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          echo "→ rustup instalado en $HOME/.cargo"
+        fi
+
     # ALWAYS, with no `if:` — including on the modules that carry no battery at all. Without the
     # container the Postgres batteries cost nothing (they are reported as NOT RUN, not run), and a
     # `tests/` holding nothing but an invisible check is precisely the case a `count != 0` guard
     # would skip: it has zero batteries by definition (module-toolkit#55).
-    - name: erplora test (the module's own batteries + TypeScript tests)
+    - name: erplora test (the module's own batteries + TypeScript + Rust tests)
       shell: bash
       run: |
         set -euo pipefail

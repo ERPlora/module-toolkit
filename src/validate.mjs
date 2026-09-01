@@ -19,6 +19,7 @@ import { checkContracts } from './contracts.mjs';
 import { checkPgCompat } from './validate-pg.mjs';
 import { checkPrepare } from './validate-prepare.mjs';
 import { checkWasmArtifact } from './wasm.mjs';
+import { missingPathDeps } from './run-cargo.mjs';
 import { checkNotifyChannels } from './validate-notify-channels.mjs';
 import { checkHandlerPermissionCeiling } from './validate-handler-permissions.mjs';
 import { checkManifestKeys } from './validate-manifest-keys.mjs';
@@ -507,21 +508,11 @@ function restoreCargoLock(lockPath, before) {
 /**
  * Path dependencies declared in `handler/Cargo.toml` whose directory is NOT on disk.
  *
- * Deliberately a lexical read of the `path = "…"` entries and not a TOML parser: the toolkit ships
- * with no dependencies, and the shape in the 21 modules that have a handler is always the same one
- * line — `erplora-guest-sdk = { path = "../../../../hub/crates/guest-sdk" }`.
+ * 🔴 It MOVED to `run-cargo.mjs` (module-toolkit#146) and is re-exported here so the name keeps
+ * working. Both halves of the toolkit that touch the handler crate ask the same question — this one
+ * to decide whether the wasm can be verified, `runRustTests` to decide whether the handler's own
+ * tests can run — and answering it twice is exactly how the gate's `ls` of two suffixes ended up
+ * disagreeing with the toolkit's own discovery (#55). It cannot live HERE because `run-cargo.mjs`
+ * must stay importable without `typescript`, which this module pulls in through `contracts.mjs`.
  */
-export function missingPathDeps(handlerDir) {
-  const cargoToml = join(handlerDir, 'Cargo.toml');
-  if (!existsSync(cargoToml)) return [];
-  const out = [];
-  const text = readFileSync(cargoToml, 'utf8');
-  for (const line of text.split('\n')) {
-    const clean = line.split('#')[0];
-    const hit = /^\s*([A-Za-z0-9_-]+)\s*=\s*\{[^}]*\bpath\s*=\s*"([^"]+)"/.exec(clean);
-    if (!hit) continue;
-    const abs = resolve(handlerDir, hit[2]);
-    if (!existsSync(abs)) out.push({ dep: hit[1], path: hit[2], resolved: abs });
-  }
-  return out;
-}
+export { missingPathDeps };

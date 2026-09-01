@@ -26,7 +26,7 @@ aporta las dependencias y la configuración de build.
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
 | `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe, con las rutas normalizadas para que salga igual desde cualquier cwd — module-toolkit#93), deja el sello `dist/<id>.build.json` **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
 | `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un `dist/<id>.esm.js` con rutas de la máquina que lo compiló o desfasado respecto de `ui/` (§ *El bundle publicado*), un canal de `host.notify` sin transporte, una guarda de filas que no se puede armar (`min_affected_rows` sobre un lote, un ancla `expect_rows.statement` colgando — hub#1091) y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), y un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*). |
-| `erplora test <id\|dir> [--list] [--against-hub [<imagen>]]` | ✅ | Corre **los tests que el módulo ya trae**: sus baterías `tests/**/*.test.py|.sh` (las que necesitan Postgres usan el contenedor de `ERPLORA_TEST_PG_CONTAINER`) **y sus tests de TypeScript** `ui/**/*.test.ts` bajo vitest + happy-dom (§ *Los tests que el módulo ya tenía*). Falla si queda un test que **nadie** va a ejecutar. `--list` los enumera sin correrlos — es lo que el gate lee para decidir qué instalar. Con `--against-hub` levanta el **kernel real** y corre contra él las baterías `*.hub.test.py|.sh` (§ *La batería contra el kernel REAL*). |
+| `erplora test <id\|dir> [--list] [--against-hub [<imagen>]]` | ✅ | Corre **los tests que el módulo ya trae**: sus baterías `tests/**/*.test.py|.sh` (las que necesitan Postgres usan el contenedor de `ERPLORA_TEST_PG_CONTAINER`), **sus tests de TypeScript** `ui/**/*.test.ts` bajo vitest + happy-dom **y los tests Rust del handler** (`#[cfg(test)]` en `handler/**`, bajo `cargo test`; fuera del monorepo, con el checkout del hub de `ERPLORA_HUB_DIR`) (§ *Los tests que el módulo ya tenía*). Falla si queda un test que **nadie** va a ejecutar. `--list` los enumera sin correrlos — es lo que el gate lee para decidir qué instalar. Con `--against-hub` levanta el **kernel real** y corre contra él las baterías `*.hub.test.py|.sh` (§ *La batería contra el kernel REAL*). |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
 | `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
 | `erplora publish <id\|dir>` | 📋 guía | Imprime el flujo de publicación al marketplace (no automatizado: auth + confirmación). |
@@ -363,14 +363,15 @@ cero ficheros y salir en verde dejaría las copias tan viejas como estaban.
 
 ## Los tests que el módulo ya tenía
 
-Un repo de módulo trae sus propios tests y, hasta module-toolkit#50/#55/#74, el gate **no corría
-ninguno**: se paraba en `erplora validate`. Se escribían, pasaban en local, y romper uno mergeaba en
-verde. `erplora test` cierra las dos mitades, con la misma regla en las dos:
+Un repo de módulo trae sus propios tests y, hasta module-toolkit#50/#55/#74/#146, el gate **no
+corría ninguno**: se paraba en `erplora validate`. Se escribían, pasaban en local, y romper uno
+mergeaba en verde. `erplora test` cierra las tres familias, con la misma regla en todas:
 
 | Familia | Qué recoge | Cómo se corre |
 |---|---|---|
 | Baterías | cualquier `tests/**/*.test.py` o `*.test.sh` | el intérprete que toque; las que necesitan Postgres (por nombre `.pg.`/`.postgres.` **o porque leen el contenedor**) usan `ERPLORA_TEST_PG_CONTAINER` |
 | TypeScript | `ui/**/*.test.ts` — los Web Components, donde vive casi toda la lógica de pantalla | vitest + happy-dom, con la **config del toolkit** (`src/vitest.module.config.mjs`) |
+| Rust | `handler/**/*.rs` con `#[cfg(test)]` — la lógica de negocio de un módulo Tier 2 | `cargo test` sobre el crate del handler; fuera del monorepo necesita un checkout del hub en `ERPLORA_HUB_DIR` (§ *Los tests del handler*) |
 
 Tres reglas, y las tres son el motivo de que esto sea código y no tres líneas de YAML:
 
@@ -397,19 +398,70 @@ los 3 que lo llevan hacen `extends: '../../tsconfig.json'`, una ruta que solo ex
 workspace de desarrollo (con ella, el transform muere y el módulo recoge **cero** tests). Los dos
 casos están reproducidos sobre un checkout limpio en `test/run-vitest.test.mjs`.
 
-**Lo que todavía NO corre en CI, dicho en voz alta.** Montar un WC de módulo necesita cinco
-paquetes: `vitest`, `happy-dom`, `lit`, `@ionic/core` y `@erplora/outfitkit` salen de npm y el gate
-los instala; `@erplora/module-sdk` vive en `ERPlora/hub` —privado y sin publicar— y en un runner no
-hay credencial que lo alcance. Medido sobre los 25 repos: **35 de los 212 ficheros se ejecutan hoy**
-(`flows` 26, `appointments` 9, que no lo importan) y **177 se declaran «sin correr»** con el paquete
-que falta por nombre. Publicarlo es [ERPlora/hub#1097](https://github.com/ERPlora/hub/issues/1097);
-el día que exista, añadirlo al paso de instalación es **una línea** y los 177 se encienden solos.
+**El paquete que faltaba, y cómo dejó de faltar.** Montar un WC de módulo necesita cinco paquetes:
+`vitest`, `happy-dom`, `lit`, `@ionic/core` y `@erplora/outfitkit` salen de npm y el gate los
+instala; `@erplora/module-sdk` vive en `ERPlora/hub` —privado y sin publicar— y en un runner no hay
+credencial que lo alcance. Durante un tiempo eso dejó **177 de 212 ficheros** declarados «sin
+correr», con el paquete que falta por nombre y el gate en verde.
+[ERPlora/hub#1097](https://github.com/ERPlora/hub/issues/1097) lo cerró **sin publicar nada**: el
+hub comparte una composite action con la organización, GitHub la resuelve **sin credencial** y al
+resolverla deja el repo entero en disco. Desde entonces se corren todos, y «sin correr» dejó de ser
+un estado tolerado: un `.test.ts` que no se ejecuta **falla**.
 
 Y el estado de partida, medido antes de tocar nada (`npx vitest run` en `modules-workspace`):
 **212 ficheros · 2.290 tests · todos en verde**. No hay rojos preexistentes que repartir por módulo
 —al revés que en `outfitkit#66`, donde eran 9 ficheros—, así que esto entra de golpe y no en
 trinquete: no hace falta ningún `GRANDFATHERED`.
 
+
+### Los tests del handler (`cargo test`) — module-toolkit#146
+
+La tercera familia, y la última que el gate no corría. Un módulo Tier 2 lleva su lógica de negocio
+en `handler/src/*.rs`, con sus `#[cfg(test)] mod tests` al lado. `erplora validate` **compila** el
+handler (#135) y `erplora build` se niega a publicar un `dist/handler.wasm` desfasado (#26): el
+**artefacto** estaba vigilado. Lo que el artefacto **hace**, no. Medido el 2026-09-01 sobre
+`origin/main` de los 22 repos con handler: **21 módulos, 928 tests, y la CI ejecutaba cero**.
+
+Lo que costó, con nombre: en [ERPlora/kitchen#63](https://github.com/ERPlora/kitchen/issues/63) el
+bug entero era una línea del handler que construía la cabecera de la comanda sin `waiter_id`, así
+que cada ronda llegaba al KDS sin camarero. El arreglo trae dos tests en Rust que van del rojo al
+verde… y no los corría nadie más que quien los escribió.
+
+**Por qué no podía correr, y por qué ya sí.** Los 22 handlers alcanzan el `erplora-guest-sdk` del
+hub **por ruta relativa** (`../../../../hub/crates/guest-sdk`): cuatro niveles por encima de
+`handler/`, un layout que solo existe en el monorepo. En el repo de un módulo no hay checkout del
+`ERPlora/hub` privado ni credencial para hacerlo — y meter un PAT en 22 repos es una decisión de
+seguridad, no un detalle de CI. **No hace falta**: para poder ejecutar la composite action del SDK,
+el runner ya se trae el hub ENTERO a disco. Lo que faltaba nunca fue el checkout: era la **forma**.
+
+`src/run-cargo.mjs` la construye — una granja de symlinks en un directorio de scratch que pone el
+módulo y el hub a las profundidades que la ruta declarada espera, y le pasa a cargo el manifest *a
+través* de ella. No se escribe un byte fuera del scratch, así que las seis ranuras de `ci-runner-1`
+no comparten estado mutable. La profundidad se **deriva** de lo que declara el `Cargo.toml`, nunca
+se fija en cuatro.
+
+Cuatro alternativas medidas y descartadas, para que no se reabran como idea:
+
+| Alternativa | Por qué no |
+|---|---|
+| **Copiar** el crate a un sitio cómodo | No compila: los handlers hacen `include_str!("../../module.json")` y de sus schemas. Sobre `kitchen`, dos errores de compilación. |
+| `cargo --config 'paths=[…]'` | No funciona: una dependencia `path` tiene que **cargar** antes de que un override la sustituya. Pareció pasar una vez porque el shell había canonicalizado el cwd sobre el monorepo real. |
+| **Reescribir** `handler/Cargo.toml` al vuelo | Mutar el checkout bajo test, sobre un fichero que `dist/handler.build.json` hashea — la forma exacta que ya quemó a #31 con `Cargo.lock`. |
+| Un job aparte filtrado por `paths: handler/**` | Más barato y **equivocado**: los tests del handler leen `../../module.json` y `../../schemas/*.json`, así que un PR que solo toque el manifest o un schema cambia lo que afirman y el filtro lo saltaría. |
+
+**Coste, medido.** El `target/` del perfil de test de un handler pesa **82 MB** (sobre `kitchen`);
+va a `RUNNER_TEMP`, que se recupera con el job, en una máquina cuyo techo es el disco. El paso se
+salta entero para un módulo sin tests Rust (`invoice_series` es el único hoy). La toolchain se
+instala con rustup (perfil `minimal`) en el `$HOME/.cargo` del runner, que **persiste entre jobs**,
+así que se paga una vez; si la descarga muere, sale por `ci-infra.sh` como
+`ERPLORA_INFRA_FAILURE` — un disco lleno no puede parecer un módulo roto.
+
+**Y el control, que es lo único que hace creíble lo anterior.** `test/run-cargo.test.mjs` termina en
+una pareja que corre un `cargo test` **de verdad** sobre dos handlers de fixture que se diferencian
+en UNA aserción: el sano tiene que salir verde y el mutante **rojo**. Además se comprobó sobre el
+módulo real: reintroducir kitchen#63 en el `origin/main` de `kitchen` pone el gate en rojo nombrando
+`the_ticket_says_which_waiter_fired_it`. Un control que nunca ha visto el positivo es un control que
+nadie ha probado.
 
 ## La batería contra el kernel REAL (`--against-hub`) — module-toolkit#110
 

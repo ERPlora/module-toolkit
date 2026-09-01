@@ -61,7 +61,11 @@ const usage = () => {
                                  \`.pg.\`/\`.postgres.\` o porque leen el contenedor— usan el de
                                  \`ERPLORA_TEST_PG_CONTAINER\`) Y sus tests de TypeScript
                                  (\`ui/**/*.test.ts\` bajo vitest + happy-dom; el binario se puede
-                                 fijar con \`ERPLORA_VITEST\`). Falla si queda un test que nadie
+                                 fijar con \`ERPLORA_VITEST\`) Y los tests RUST del handler
+                                 (\`#[cfg(test)]\` en \`handler/**\`, bajo \`cargo test\`: fuera
+                                 del monorepo necesitan un checkout del hub en
+                                 \`ERPLORA_HUB_DIR\`, y sin él salen como «sin correr», nunca en
+                                 verde). Falla si queda un test que nadie
                                  va a ejecutar. \`--list\` solo los enumera.
                                  Con \`--against-hub\` levanta la imagen PUBLICADA del kernel
                                  (\`ghcr.io/erplora/hub:stable\` por defecto; \`dev\`, un
@@ -118,11 +122,21 @@ try {
       // checks where nearly all of the screen logic lives. 210 of them across the 25 repos, and
       // until this the gate ran zero.
       const { discoverTsTests, runTsTests } = await import('../src/run-vitest.mjs');
+      // module-toolkit#146: and the handler's RUST tests — the `#[cfg(test)] mod tests` of a Tier-2
+      // module, where its business logic lives. 925 of them across 21 repos, and until this the gate
+      // ran zero: the crate reaches the hub's guest-sdk by a relative path that only exists in the
+      // monorepo, so `run-cargo.mjs` builds the layout that path expects out of the hub checkout the
+      // gate already has on disk.
+      const { discoverRustTests, runRustTests } = await import('../src/run-cargo.mjs');
       // `--list`: what WOULD run, one path per line, and nothing else on stdout. The shared gate
       // asks the toolkit instead of re-implementing the discovery rule in YAML — which is how the
       // gate's own `ls` of two suffixes ended up disagreeing with the toolkit (module-toolkit#55).
       if (flags.has('--list')) {
-        const all = [...Object.values(discoverBatteries(dir)).flat(), ...discoverTsTests(dir)];
+        const all = [
+          ...Object.values(discoverBatteries(dir)).flat(),
+          ...discoverTsTests(dir),
+          ...discoverRustTests(dir),
+        ];
         for (const f of all.sort()) console.log(f);
         break;
       }
@@ -142,9 +156,13 @@ try {
         // hands over through `ERPLORA_VITEST` — the same door `ERPLORA_PYTHON` opens for the
         // batteries.
         const ts = runTsTests(dir);
-        const results = [...py.results, ...ts.results];
-        const errors = [...py.errors, ...ts.errors];
-        const notRun = [...py.notRun, ...ts.notRun];
+        // The Rust half needs a checkout of ERPlora/hub for the handler's `path` dependency to
+        // resolve; the gate hands it over in `ERPLORA_HUB_DIR`, the same door `ERPLORA_PYTHON` and
+        // `ERPLORA_VITEST` open for the other two families. Without it they are NOT RUN, by name.
+        const rust = runRustTests(dir);
+        const results = [...py.results, ...ts.results, ...rust.results];
+        const errors = [...py.errors, ...ts.errors, ...rust.errors];
+        const notRun = [...py.notRun, ...ts.notRun, ...rust.notRun];
         for (const r of results.filter((x) => x.ran)) console.log(`  ✓ ${r.file}`);
         // Never a silent pass: what did not run is named, every time.
         for (const n of notRun) console.warn(`  ⚠ ${n}`);

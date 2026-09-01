@@ -1,0 +1,22 @@
+# Fixture handler for module-toolkit#146 — the shape of the 21 real Tier-2 handlers, with the two
+# things that make this suite meaningful and NOTHING else:
+#
+#   · a `#[cfg(test)] mod tests` (what the gate was not running), and
+#   · an `include_str!("../../module.json")`, which is why the crate cannot simply be COPIED
+#     somewhere convenient: measured on ERPlora/kitchen, copying `handler/` out of the module dies
+#     with «couldn't read `src/../../module.json`».
+#
+# 🔴 ZERO dependencies on purpose. A fixture that reached crates.io would make this control depend
+# on the network, and a control that can go yellow is a control people learn to ignore.
+[package]
+name = "mutant-fixture-handler"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+
+[workspace]

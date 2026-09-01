@@ -143,6 +143,34 @@ jobs:
         with:
           python-version: '3.12'
 
+      # ── Rust, for the two CONTROLS of module-toolkit#146 ────────────────────────────────────────
+      #
+      # `test/run-cargo.test.mjs` ends in a matched pair that runs a REAL `cargo test` over two
+      # fixture handlers differing in one assertion: the healthy one must be green, the mutant one
+      # must be red. Everything above them injects a fake cargo, which proves the reporting and
+      # nothing about the wiring — they are the only reason to believe the gate would have caught
+      # ERPlora/kitchen#63.
+      #
+      # 🔴 So they must not be allowed to skip. A control that skips itself on the very runner it
+      # exists to protect is the disease #146 is about, wearing a passing badge — the same shape as
+      # the `python3` this file installs three lines up, and as the `@ionic/core` below it. rustup's
+      # own installer (minimal profile) into `$HOME/.cargo`, which persists between jobs on a
+      # self-hosted runner; the fixtures declare ZERO dependencies, so nothing here reaches
+      # crates.io and the controls cannot go yellow on a network blip.
+      - name: Rust for the handler-test controls
+        run: |
+          set -euo pipefail
+          if command -v cargo >/dev/null 2>&1; then
+            echo "→ cargo ya presente: $(cargo --version)"
+            exit 0
+          fi
+          . .github/scripts/ci-infra.sh
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o "$RUNNER_TEMP/rustup.sh" \
+            || erplora_infra_fail 'no se ha podido descargar el instalador de rustup'
+          sh "$RUNNER_TEMP/rustup.sh" -y --profile minimal --default-toolchain stable --no-modify-path \
+            || erplora_infra_fail 'rustup no ha podido instalar la toolchain de Rust'
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
       # Two public dependencies, installed one by one (never `npm install`, which would try to
       # resolve the three `file:` paths into sibling checkouts that do not exist on a runner).
       #
@@ -195,6 +223,7 @@ jobs:
           test/sync-hub-mirrors.test.mjs
           test/run-batteries.test.mjs
           test/run-vitest.test.mjs
+          test/run-cargo.test.mjs
           test/against-hub.test.mjs
           test/gate-wiring.test.mjs
           test/gate-infra-annotations.test.mjs
