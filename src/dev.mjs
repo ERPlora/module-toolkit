@@ -16,6 +16,12 @@ import { resolve, join, extname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { erploraResolvePlugin } from './resolve-plugin.mjs';
+import {
+  createBuildStatus,
+  buildStatusPlugin,
+  servesErrorOverlay,
+  overlayScript,
+} from './dev-build-status.mjs';
 
 // Ionic: componentes registrados en el preview (en el Hub real los provee el shell).
 const IONIC = [
@@ -435,6 +441,13 @@ export async function dev(moduleDir, opts = {}) {
   const outDir = join(tmpdir(), `erplora-dev-${preselect || 'workspace'}`);
   mkdirSync(outDir, { recursive: true });
 
+  // Every rebuild has to be VISIBLE (module-toolkit#81). `logLevel: 'silent'` stays — the plugin
+  // below prints a better report than esbuild's default and, crucially, also flips `status`, which
+  // is what stops the server handing out the stale bundle as if nothing had happened.
+  const status = createBuildStatus();
+  let firstBuilt;
+  const firstBuild = new Promise((r) => { firstBuilt = r; });
+
   const ctx = await esContext({
     stdin: { contents: harnessEntry(mods, fixtures, wcFiles, preselect), resolveDir: rootDir, sourcefile: 'workspace.dev.ts', loader: 'ts' },
     bundle: true,
@@ -445,16 +458,33 @@ export async function dev(moduleDir, opts = {}) {
     assetNames: '[name]',
     loader: { '.css': 'css', '.svg': 'dataurl', '.woff2': 'dataurl', '.woff': 'dataurl', '.ttf': 'dataurl', '.png': 'dataurl' },
     tsconfigRaw: TSCONFIG_RAW,
-    plugins: [erploraResolvePlugin()],
+    plugins: [erploraResolvePlugin(), buildStatusPlugin({ status, onFirstBuild: firstBuilt })],
     logLevel: 'silent',
   });
-  await ctx.rebuild();
+  // ONE startup build, not two. `ctx.watch()` performs its own initial build, so the `ctx.rebuild()`
+  // that used to precede it was a duplicate — harmless while everything was silent, but it made the
+  // preview announce `✓ recompilado` under its own banner as soon as rebuilds became visible.
+  // Waiting on the watcher's build instead keeps the guarantee the explicit rebuild was there for:
+  // the server never listens before there is something to serve.
+  //
+  // A first build that FAILS must not kill the preview either — the plugin has already printed the
+  // errors, and coming up anyway is what lets the browser show them and self-heal on the next save
+  // (`vite`/`ionic serve`, `shopify app dev`). Before this, the first error exited the process while
+  // every later error was swallowed in silence: two opposite treatments of the same fault.
   await ctx.watch();
+  await firstBuild;
 
   const server = createServer(async (req, res) => {
     try {
       const p = (req.url || '/').split('?')[0];
       if (p === '/') { res.writeHead(200, { 'Content-Type': MIME['.html'], 'Content-Security-Policy': CSP }); return res.end(INDEX_HTML(preselect || 'workspace')); }
+      // The bundle on disk is the last one that COMPILED. While the build is broken, serving it is
+      // the silent lie of module-toolkit#81 — hand out the error overlay instead, never a 200 with
+      // stale code. `no-store` so a fixed build is not hidden behind a cached error page.
+      if (servesErrorOverlay(status, p)) {
+        res.writeHead(200, { 'Content-Type': MIME['.js'], 'Content-Security-Policy': CSP, 'Cache-Control': 'no-store' });
+        return res.end(overlayScript(status.errors));
+      }
       const file = join(outDir, p.replace(/^\/+/, ''));
       if (!file.startsWith(outDir) || !existsSync(file)) { res.writeHead(404, { 'Content-Security-Policy': CSP }); return res.end('not found'); }
       const data = await readFile(file);
