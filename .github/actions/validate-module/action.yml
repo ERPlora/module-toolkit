@@ -124,6 +124,7 @@ runs:
       if: inputs.pg == 'true'
       shell: bash
       env:
+        ACTION_PATH: ${{ github.action_path }}
         # ONE container per job, never a shared name (module-toolkit#43). `ci-runner-1` runs two
         # jobs at once and keeps its Docker state between them: with the fixed name
         # `erplora-test-pg-5433`, the second job's `docker rm -f` killed the first job's Postgres
@@ -134,32 +135,18 @@ runs:
         # own. No port is published (`docker exec` is the transport), so ports cannot collide.
         PG_CONTAINER: erplora-test-pg-${{ github.run_id }}-${{ github.run_attempt }}
         POSTGRES_IMAGE: ${{ inputs.postgres-image }}
+      # 🔴 Every way this step can die because of the MACHINE goes through `ci-infra.sh`
+      # (module-toolkit#138), and not because sharing code is tidy: the previous version of these
+      # lines let a failed `docker run` — a full disk on the image pull — kill the step with NO
+      # annotation, so the check read «Process completed with exit code 125» in a MODULE's
+      # repository. The helper emits one annotation carrying `ERPLORA_INFRA_FAILURE`, says in its
+      # title that the module is not what broke, and prints what Docker said and how full the disk
+      # is, which is what the 25/08 investigation had to SSH into the runner to find out.
       run: |
         set -euo pipefail
-        if ! docker info >/dev/null 2>&1; then
-          echo '::error::this runner has no usable Docker, so validate --pg cannot PREPARE anything'
-          exit 1
-        fi
-        # Only OUR name is ever removed. A re-run of the same attempt cannot happen, so this only
-        # matters if a previous step of this very job left one behind; another job's container is
-        # never touched.
-        docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
-        docker run -d --name "$PG_CONTAINER" \
-          -e POSTGRES_PASSWORD=postgres \
-          "$POSTGRES_IMAGE"
-        # The validator reads the container from this variable (`defaultContainer()` in
-        # src/validate-prepare.mjs); without it it would look for the old fixed name.
-        echo "ERPLORA_TEST_PG_CONTAINER=$PG_CONTAINER" >> "$GITHUB_ENV"
-        for _ in $(seq 1 60); do
-          if docker exec "$PG_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
-            echo "→ postgres ready in $PG_CONTAINER"
-            exit 0
-          fi
-          sleep 1
-        done
-        echo "::error::the scratch Postgres ($PG_CONTAINER) never became ready — infrastructure, not the module"
-        docker logs "$PG_CONTAINER" 2>&1 | tail -20 || true
-        exit 1
+        . "$ACTION_PATH/../../scripts/ci-infra.sh"
+        erplora_require_docker
+        erplora_start_scratch_postgres
 
     - name: erplora validate
       shell: bash
