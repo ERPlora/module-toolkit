@@ -25,6 +25,7 @@ import { checkManifestKeys } from './validate-manifest-keys.mjs';
 import { checkBundleArtifact } from './bundle-freshness.mjs';
 import { checkErrorsCatalog } from './validate-errors-catalog.mjs';
 import { checkRowGates } from './validate-row-gates.mjs';
+import { checkHubScope } from './validate-hub-scope.mjs';
 import { checkEmitDedupKey } from './validate-emit-dedup-key.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
@@ -206,6 +207,29 @@ export async function validate(moduleDir, { pg = false } = {}) {
     throw new Error(
       'migraciones que el hub RECHAZARÍA al instalar (module-toolkit#51):\n  - ' +
         guard.errors.join('\n  - '),
+    );
+  }
+
+  // module-toolkit#80: TENANCY. El runtime inyecta `:hub_id` como BIND — nunca como columna ni como
+  // predicado (`system_params`, contrato del kernel; el motor de listas aporta búsqueda/orden/
+  // paginación, no el filtro). Así que un INSERT que no NOMBRE la columna deja NULL algo que la
+  // tabla declara NOT NULL —el command falla en TODOS los hubs— y un SELECT/UPDATE/DELETE sin
+  // `:hub_id` alcanza filas de otros hubs allí donde la BD está compartida.
+  //
+  // Ninguna puerta anterior podía verlo: el SQL PREPARA perfectamente (`validate --pg` VERDE), el
+  // mock de `erplora dev` responde `ok:true` sin tocar SQL, y `pack`/`sign` no leen semántica. El
+  // agujero se abre la primera vez que un hub de cliente EJECUTA la sentencia — que es como
+  // `erplora g module` llegó a andamiar un módulo cuyo único camino de escritura nacía roto.
+  //
+  // ERROR, y no rompe nada: el barrido de los 30 repos de módulo (`origin/main`, 01/09/2026) da
+  // CERO hallazgos — 166 tablas con `hub_id` y 911 ficheros SQL juzgados, con 30/30 mutantes
+  // cazados al quitarles el filtro a mano.
+  const hubScope = checkHubScope(dir, manifest);
+  for (const w of hubScope.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (hubScope.errors.length) {
+    throw new Error(
+      'SQL sin acotar por hub — agujero de tenancy (module-toolkit#80):\n  - ' +
+        hubScope.errors.join('\n  - '),
     );
   }
 
