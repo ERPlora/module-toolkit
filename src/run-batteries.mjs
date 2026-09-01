@@ -15,12 +15,17 @@
 // A skip is reported as a FAILURE when the container was supposed to be there, and as an explicit
 // "not run" when it was not.
 //
-// WHAT STAYS OUT, and why — said out loud instead of faked:
+// WHAT STAYED OUT, and why — said out loud instead of faked. Both entries are now CLOSED, and they
+// are kept because each one was right while it lasted and the reasoning is the reusable part:
 //
-//   * `cargo test` of `handler/`. The 21 modules with a handler depend on the hub's
-//     `erplora-guest-sdk` BY RELATIVE PATH (`../../hub/crates/guest-sdk`), and there is no checkout
-//     of ERPlora/hub on the runner. Fetching one means a token with read access to a private repo
-//     living in 25 module repos, which is a security decision, not a CI detail.
+//   * `cargo test` of `handler/`. CLOSED by module-toolkit#146, and NOT by acquiring the credential
+//     this paragraph said was needed. The 22 modules with a handler do reach the hub's
+//     `erplora-guest-sdk` by relative path, and there is still no token to check ERPlora/hub out
+//     from a module repo. There does not have to be: the `module-sdk` composite action already
+//     leaves the whole hub on the runner's disk (that is how GitHub resolves it without a
+//     credential), so what was missing was never the checkout — it was the LAYOUT. `run-cargo.mjs`
+//     builds it out of symlinks in a scratch directory. 925 tests in 21 modules went from NOT RUN
+//     to run; the day it landed, reintroducing ERPlora/kitchen#63 turned the gate red by name.
 //   * the vitest component tests. The `.test.ts` files DO live in the module repo, but the runner
 //     does not: vitest, `happy-dom`, `@erplora/outfitkit` and `@erplora/module-sdk` are
 //     devDependencies of `modules-workspace`, and the last two are `file:` paths into sibling

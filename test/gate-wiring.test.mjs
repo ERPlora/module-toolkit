@@ -110,3 +110,73 @@ test('the gate checks out the FULL history so the last chore(release) commit is 
   }
   assert.match(step.join('\n'), /fetch-depth:\s*0/, 'fetch-depth: 0 on the module checkout');
 });
+
+// ── The handler's Rust tests (module-toolkit#146) ────────────────────────────────────────────────
+//
+// One more chain written in YAML that nothing executes locally, and it is LONGER than the SDK one:
+//
+//   module-gate.yml  →  ERPlora/hub/.github/actions/module-sdk@develop   (the whole hub on disk)
+//                    →  passes its output into validate-module
+//   validate-module  →  derives the hub root two levels above `module-sdk-path`
+//                    →  exports it as ERPLORA_HUB_DIR
+//   run-cargo.mjs    →  reads ERPLORA_HUB_DIR and farms the layout the relative path expects
+//
+// Break any link and 21 gates stop running 925 tests — and, because «not run» is reported as a ⚠
+// and not as a red, they stop running them QUIETLY. That is the exact failure #74 spent a month
+// discovering. This is the pull request that would introduce it, caught here.
+
+test('validate-module derives the hub from the SDK path and hands it over as ERPLORA_HUB_DIR', () => {
+  assert.match(
+    VALIDATE,
+    /hub=\$\(cd "\$sdk\/\.\.\/\.\." && pwd\)/,
+    'the hub root is two levels above `packages/module-sdk` — the same derivation ci.yml uses',
+  );
+  assert.match(
+    VALIDATE,
+    /ERPLORA_HUB_DIR=\$hub" >> "\$GITHUB_ENV"/,
+    'and it must reach the toolkit through the environment variable run-cargo.mjs reads',
+  );
+});
+
+test('the variable the gate exports is the one the toolkit reads', async () => {
+  const { HUB_DIR_VAR } = await import('../src/run-cargo.mjs');
+  assert.match(
+    VALIDATE,
+    new RegExp(`${HUB_DIR_VAR}=`),
+    `run-cargo.mjs reads ${HUB_DIR_VAR}; the gate has to export that exact name`,
+  );
+});
+
+test('a hub checkout without the guest-sdk stops the gate instead of blaming the module', () => {
+  // The mirror of the `module-sdk-path` rule: a moved crate must fail HERE, where the wiring is,
+  // and not three steps later as a module whose handler «does not compile».
+  assert.match(
+    VALIDATE,
+    /crates\/guest-sdk\/Cargo\.toml[\s\S]{0,400}?exit 1/,
+    'validate-module must verify the guest-sdk is really under the hub it derived',
+  );
+});
+
+test('the Rust step is driven by the toolkit’s own count, never by an `ls` of handler/', () => {
+  // module-toolkit#55 in one line: the moment the gate re-implements discovery in YAML, the two
+  // disagree. The toolchain step keys on `steps.batteries.outputs.rust`, which comes from `--list`.
+  assert.match(VALIDATE, /rust=\$rs" >> "\$GITHUB_OUTPUT"/, 'the `--list` output is counted, not `handler/`');
+  assert.match(
+    VALIDATE,
+    /if:\s*steps\.batteries\.outputs\.rust\s*!=\s*'0'/,
+    'and the toolchain is installed only for a module that actually has Rust tests',
+  );
+});
+
+test('a rustup that dies on the machine is annotated as infrastructure, not as the module', () => {
+  // module-toolkit#138: a failed download on a full disk used to read «exit 125» in a MODULE's
+  // checks list. Every machine-caused death goes through the shared helper.
+  assert.match(VALIDATE, /erplora_infra_fail 'no se ha podido descargar el instalador de rustup'/);
+  assert.match(VALIDATE, /erplora_infra_fail 'rustup no ha podido instalar la toolchain de Rust'/);
+});
+
+test('this repository’s own CI installs Rust, so the #146 controls cannot skip', () => {
+  const CI = readFileSync(join(REPO, '.github/workflows/ci.yml'), 'utf8');
+  assert.match(CI, /sh\.rustup\.rs/, 'the two real-cargo controls must never be allowed to skip');
+  assert.match(CI, /test\/run-cargo\.test\.mjs/, 'and the suite that holds them must be in the list');
+});
