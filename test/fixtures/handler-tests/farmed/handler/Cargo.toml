@@ -1,0 +1,24 @@
+# Fixture handler for module-toolkit#149 — the shape of the 21 real Tier-2 handlers INCLUDING the
+# one thing `green`/`mutant` leave out: the path dependency on the hub.
+#
+# `green` and `mutant` declare no `path = "…"` dependency, so `runRustTests` never sends them
+# through the farm — they prove the reporting and the cargo wiring, never the farm itself. That gap
+# is how #147 shipped a farm that cannot be built from a relative directory and put 21 module gates
+# in red at once.
+#
+# 🔴 This path does NOT resolve from where the fixture lives (four levels up from here is `test/`,
+# and there is no `test/hub/`). That is the point: the dependency is unsatisfiable without the farm,
+# so a test using this fixture cannot accidentally pass without one.
+[package]
+name = "farmed-fixture-handler"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+erplora-guest-sdk = { path = "../../../../hub/crates/guest-sdk" }
+
+[workspace]

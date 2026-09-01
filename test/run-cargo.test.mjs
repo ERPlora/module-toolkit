@@ -188,6 +188,90 @@ test('the farm puts the hub exactly where `../../../../hub/crates/guest-sdk` loo
   }
 });
 
+// ── The farm is fed a RELATIVE directory, because that is what the gate feeds it (#149) ──────────
+//
+// 🔴 THE HOLE THE TESTS ABOVE LEFT OPEN, and it put 21 module gates in red the day #146 shipped.
+// Every one of them builds the farm from `m.dir`, which `mkdtempSync` returns ABSOLUTE. The gate
+// never calls it that way: `validate-module` runs `erplora test "${{ inputs.path }}"` and the 27
+// stubs leave `path` at its default `.`, so `dir` arrives RELATIVE — and `symlinkSync` stores the
+// target VERBATIM, resolving it against the LINK's own directory rather than the cwd. `module → .`
+// therefore pointed at its own parent inside the farm, and cargo was handed a manifest that is not
+// on disk:
+//
+//     error: manifest path `/tmp/erplora-handler-farm-v9N9sp/_0/_1/module/handler/Cargo.toml`
+//            does not exist                        (ERPlora/sales run 33559110775, 2026-09-01)
+//
+// The guard below the links could not see it either: it resolves the declared path LEXICALLY, so it
+// proved the `hub` link and never asked whether the module link led anywhere. Both are fixed here,
+// and both are pinned: the shape the gate uses, and a guard that names a farm it could not build.
+
+test('the farm is built from a RELATIVE module dir — the shape `erplora test .` gives it', () => {
+  const m = mod({
+    'handler/Cargo.toml': CARGO_TOML('demo-handler', SDK_DEP),
+    'handler/src/lib.rs': '#[cfg(test)]\nmod tests { #[test] fn t() {} }\n',
+  }, 'demo');
+  const hub = mkdtempSync(join(tmpdir(), 'erplora-hub-'));
+  const farm = mkdtempSync(join(tmpdir(), 'erplora-farm-'));
+  mkdirSync(join(hub, 'crates/guest-sdk'), { recursive: true });
+  writeFileSync(join(hub, 'crates/guest-sdk/Cargo.toml'), '[package]\nname = "erplora-guest-sdk"\n');
+  const cwd = process.cwd();
+  try {
+    process.chdir(m.dir);
+    const manifest = farmManifestPath('.', hub, { root: farm, id: 'demo' });
+    assert.ok(manifest, 'a relative dir is the gate’s normal case, not an unsupported shape');
+    // The assertion the absolute-path test never made: cargo opens this file, so it has to BE there.
+    assert.ok(existsSync(manifest), `${manifest} is not on disk — cargo cannot open it`);
+    assert.equal(
+      realpathSync(resolve(dirname(manifest), '../module.json')),
+      realpathSync(join(m.dir, 'module.json')),
+    );
+    // And the hub still lands where the declared path looks for it.
+    const sdk = resolve(dirname(manifest), '../../../../hub/crates/guest-sdk');
+    assert.equal(realpathSync(sdk), realpathSync(join(hub, 'crates/guest-sdk')));
+  } finally {
+    process.chdir(cwd);
+    m.clean();
+    rmSync(hub, { recursive: true, force: true });
+    rmSync(farm, { recursive: true, force: true });
+  }
+});
+
+test('a relative dir reaches cargo as a manifest that exists, and the family is not reported as not-run', () => {
+  // End to end through `runRustTests`, which is what `erplora test` calls: the defect surfaced as a
+  // `cargo test` exit 101 blamed on the MODULE, so the control asserts on the path actually handed
+  // over rather than on the farm helper alone.
+  const m = mod({
+    'handler/Cargo.toml': CARGO_TOML('demo-handler', SDK_DEP),
+    'handler/src/lib.rs': '#[cfg(test)]\nmod tests { #[test] fn t() {} }\n',
+  }, 'demo');
+  const hub = mkdtempSync(join(tmpdir(), 'erplora-hub-'));
+  mkdirSync(join(hub, 'crates/guest-sdk'), { recursive: true });
+  writeFileSync(join(hub, 'crates/guest-sdk/Cargo.toml'), '[package]\nname = "erplora-guest-sdk"\n');
+  const cwd = process.cwd();
+  try {
+    process.chdir(m.dir);
+    let handed = null;
+    let handedExists = null;
+    const out = runRustTests('.', {
+      env: { ERPLORA_HUB_DIR: hub },
+      // Checked INSIDE the stub: the scratch farm is removed as soon as `runRustTests` returns.
+      runCargo: (manifestPath) => {
+        handed = manifestPath;
+        handedExists = existsSync(manifestPath);
+        return { status: 0, stdout: 'test result: ok. 1 passed; 0 failed\n', stderr: '' };
+      },
+    });
+    assert.ok(handed, 'cargo must be spawned: the hub is within reach');
+    assert.equal(handedExists, true, `${handed} was handed to cargo and is not on disk`);
+    assert.deepEqual(out.notRun, [], 'the hub is right there — nothing may be reported as not run');
+    assert.deepEqual(out.errors, []);
+  } finally {
+    process.chdir(cwd);
+    m.clean();
+    rmSync(hub, { recursive: true, force: true });
+  }
+});
+
 // ── what does not run is NAMED, never green ──────────────────────────────────────────────────
 
 test('a module with no Rust test reports nothing at all', () => {
@@ -328,6 +412,57 @@ test('CONTROL — the MUTANT fixture (one assertion broken on purpose) turns the
     assert.match(out.errors[0], /FALLA/);
     assert.match(out.errors[0], /the_total_adds_the_lines/);
   } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+// ── the control the pair above could not give: a REAL cargo THROUGH THE FARM (#149) ──────────────
+//
+// 🔴 `green` and `mutant` declare no path dependency, so `runRustTests` never farms them: they prove
+// the reporting and the cargo wiring and say NOTHING about the farm. Every farm test was a unit test
+// over absolute `mkdtempSync` paths, and the gate calls `erplora test .`. That gap is the whole of
+// #149 — 21 module gates red on «manifest path … does not exist», with a green suite.
+//
+// The `farmed` fixture closes it: its `erplora-guest-sdk` is unsatisfiable where the fixture lives,
+// so cargo cannot compile it at all unless BOTH links of the farm are right, and its tests read
+// `../../module.json`, so the module link has to lead to the real directory and not merely exist.
+// Run twice on purpose — absolute, and relative, which is the shape the 27 stubs actually produce.
+
+const FARM_HUB = join(FIXTURES, 'farm-hub');
+
+test('CONTROL — a real `cargo test` THROUGH the farm is green (absolute path)', () => {
+  assert.ok(cargoAvailable(), 'cargo is required to run this suite: a control that skips proves nothing');
+  const target = mkdtempSync(join(tmpdir(), 'erplora-cargo-target-'));
+  try {
+    const out = runRustTests(join(FIXTURES, 'farmed'), {
+      env: { ERPLORA_HUB_DIR: FARM_HUB },
+      targetDir: target,
+    });
+    assert.deepEqual(out.notRun, [], 'the hub is handed over: nothing may be reported as not run');
+    assert.deepEqual(out.errors, []);
+    assert.equal(out.results[0].ran, true);
+    assert.equal(out.results[0].executed, 2, 'both tests have to EXECUTE — 0 executed is #146’s trap');
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test('CONTROL — and green from a RELATIVE path, which is the one the gate uses (#149)', () => {
+  assert.ok(cargoAvailable(), 'cargo is required to run this suite: a control that skips proves nothing');
+  const target = mkdtempSync(join(tmpdir(), 'erplora-cargo-target-'));
+  const cwd = process.cwd();
+  try {
+    // `validate-module` runs `erplora test "${{ inputs.path }}"` from the module checkout, and the
+    // 27 stubs leave `path` at `.`. Before #149 this exact call died with exit 101, blaming the
+    // module for a manifest the FARM had failed to build.
+    process.chdir(join(FIXTURES, 'farmed'));
+    const out = runRustTests('.', { env: { ERPLORA_HUB_DIR: FARM_HUB }, targetDir: target });
+    assert.deepEqual(out.notRun, []);
+    assert.deepEqual(out.errors, [], 'a relative path is the gate’s normal case, not an edge one');
+    assert.equal(out.results[0].ran, true);
+    assert.equal(out.results[0].executed, 2);
+  } finally {
+    process.chdir(cwd);
     rmSync(target, { recursive: true, force: true });
   }
 });
