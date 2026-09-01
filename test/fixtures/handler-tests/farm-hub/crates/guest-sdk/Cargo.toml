@@ -1,0 +1,21 @@
+# The stand-in for `ERPlora/hub/crates/guest-sdk` in the control of module-toolkit#149.
+#
+# It exists so a REAL `cargo test` has to resolve a REAL path dependency THROUGH the farm. Until
+# #149 every farm test used a directory that cargo never opened, which is precisely why a farm whose
+# module link pointed at nothing shipped green and put 21 module gates in red.
+#
+# 🔴 It is deliberately NOT at `test/hub/`, the place `../../../../hub/crates/guest-sdk` resolves to
+# from the fixture: if it were, the dependency would resolve on its own and the farm — the thing
+# under test — would never be built.
+#
+# ZERO dependencies, same rule as the `green`/`mutant` pair: a control that needs the network is a
+# control that can go yellow, and one that goes yellow is one people learn to ignore.
+[package]
+name = "erplora-guest-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+
+[workspace]

@@ -221,12 +221,23 @@ export function farmManifestPath(dir, hubDir, { root, id = 'module' } = {}) {
   const fillers = Array.from({ length: ups - 2 }, (_, i) => `_${i}`);
   const moduleLink = join(root, ...fillers, id);
   mkdirSync(dirname(moduleLink), { recursive: true });
-  linkOnto(moduleLink, dir);
-  linkOnto(join(root, tail[0]), hubDir);
+  // 🔴 ABSOLUTE, both of them, and this is the whole of module-toolkit#149. A symlink stores its
+  // target VERBATIM and resolves it against the LINK's own directory — never against the cwd. The
+  // gate runs `erplora test "${{ inputs.path }}"` and the 27 stubs leave `path` at its default `.`,
+  // so `dir` arrives here RELATIVE: `module → .` landed on its own parent inside the farm and cargo
+  // was handed a manifest that is not on disk. Green on every laptop, because `erplora test <ruta>`
+  // and every test above it pass an absolute one.
+  linkOnto(moduleLink, resolve(dir));
+  linkOnto(join(root, tail[0]), resolve(hubDir));
 
   const manifest = join(moduleLink, 'handler', 'Cargo.toml');
-  // Proven, not assumed: if the dependency still does not resolve through the farm, cargo would
-  // fail with a message about the MODULE, and the module is not what broke.
+  // Proven, not assumed — and BOTH links, which is the #149 half. `resolve()` is lexical, so the
+  // dependency check below walks straight past a module link that leads nowhere: it proved the hub
+  // and promised the module. Cargo opens this file, so its existence is the postcondition of the
+  // farm; without it a broken link surfaces as `cargo test` exit 101 blaming the MODULE.
+  if (!existsSync(manifest)) return null;
+  // And the dependency the farm exists for: if it still does not resolve, cargo would fail with a
+  // message about the MODULE, and the module is not what broke.
   if (!existsSync(resolve(dirname(manifest), declared, 'Cargo.toml'))) return null;
   return manifest;
 }
@@ -303,10 +314,15 @@ export function runRustTests(
     if (!farmed) {
       rmSync(scratch, { recursive: true, force: true });
       notRun.push(
-        `${named}: no se han corrido — \`${GUEST_SDK_CRATE}\` se declara como ` +
-          `\`${missing[0].path}\`, una forma que el toolkit no sabe satisfacer con el checkout del ` +
-          `hub (${hub}). Declárala como \`../../../../hub/crates/guest-sdk\`, igual que los demás ` +
-          'handlers (module-toolkit#146)',
+        // 🔴 Las DOS causas, sin afirmar la que no es (module-toolkit#149). Este brazo dejó de ser
+        // solo «la ruta tiene una forma rara»: desde #149 también se llega aquí cuando la granja no
+        // se ha podido montar, y mandar entonces a reescribir un `Cargo.toml` que ya es correcto
+        // manda al autor del módulo a arreglar algo que no está roto.
+        `${named}: no se han corrido — el toolkit no ha podido montar la granja de symlinks que ` +
+          `\`${GUEST_SDK_CRATE}\` necesita, declarado como \`${missing[0].path}\`, a partir del ` +
+          `checkout del hub (${hub}). Si esa ruta no tiene la forma ` +
+          '`../../../../hub/crates/guest-sdk` de los demás handlers, declárala así; si la tiene, ' +
+          'lo que ha fallado es el gate y no el módulo (module-toolkit#146/#149)',
       );
       return { results, errors, notRun };
     }
