@@ -187,6 +187,67 @@ los permisos de los commands que ese camino nombra literalmente, rol a rol (`rol
 > handler contra cada command con handler; repetido así aquí da 80 — los otros 77 son caminos que
 > ese command no recorre. La reachability por función es lo que separa una cosa de la otra.
 
+## La tabla guardia que no puede decir QUÉ falló (module-toolkit#92)
+
+`src/validate-gate-constraints.mjs`. Ojo con el nombre: **no** es `validate-row-gates.mjs` (aquella
+mira `min_affected_rows`/`expect_rows`, las guardas sobre cuántas FILAS tocó el `sql`). Esta mira la
+**tabla guardia** `<módulo>__gate`, que es como un command declarativo se niega en SQL: un assert
+inserta `(gate, ok)` con `ok = 1` solo si el invariante se cumple, y un `ok = 0` viola un CHECK que
+revierte la transacción entera del command.
+
+El patrón se copió con el CHECK **anónimo**, `CHECK (ok = 1)`. Postgres lo auto-nombra
+`<tabla>_ok_check`, así que **todos** los gates del módulo fallan con el mismo mensaje primario y el
+nombre del que saltó viaja en un campo aparte:
+
+```
+ERROR:   new row for relation "verifactu__gate" violates check constraint "verifactu__gate_ok_check"
+DETAIL:  Failing row contains (config_save_requires_issuer, 0).
+```
+
+**DETAIL no llega al llamante**: el rechazo sale como `sqlx::Error::Database` sobre
+`PgDatabaseError`, cuyo `Display` escribe solo el mensaje primario y cuyo `message()` lo descarta.
+El código que intente decir POR QUÉ se rechazó no puede casar nunca — en `verifactu` eso le contaba
+a un hub sin obligado tributario el problema del OTRO gate (verifactu#40).
+
+El arreglo canónico es el de `verifactu/migrations/postgres/012_named_gate_constraints.sql`: la
+identidad del gate se mueve de la FILA al NOMBRE de la constraint, que sí forma parte del mensaje
+primario. Una por gate, acotada a su propio valor —así solo UNA puede violarse por fila, y deja de
+hacer falta un orden de evaluación que Postgres no promete— más la lista blanca:
+
+```sql
+ALTER TABLE m__gate DROP CONSTRAINT IF EXISTS m__gate_ok_check;
+ALTER TABLE m__gate ADD CONSTRAINT stock_is_available
+    CHECK (gate <> 'stock_is_available' OR ok = 1);
+ALTER TABLE m__gate ADD CONSTRAINT m__gate_is_declared
+    CHECK (gate IN ('stock_is_available'));
+```
+
+Qué se comprueba, sobre el estado FINAL de la cadena de migraciones:
+
+- **ERROR** — queda viva una CHECK sobre `ok` que no discrimina por `gate` (anónima o nombrada: un
+  solo nombre para todos los gates es el mismo defecto con mejor letra).
+- **ERROR** — la tabla tuvo una CHECK sobre `ok` y se quedó **sin ninguna**. Es el riesgo que crea
+  esta misma puerta al pedir un `DROP`: media instrucción deja la tabla aceptando `ok = 0`, el
+  command responde OK y el invariante desaparece sin que falle nada.
+- **AVISO** — hay constraints por gate pero ninguna lista blanca sobre `gate`. Una fila cuyo `gate`
+  no case con ninguna no viola NADA: un gate mal escrito en un assert falla **abierto**. Es aviso y
+  no error porque fallar cerrado admite formas que un lector léxico no puede probar ausentes (una FK
+  a un registro, un trigger), y un rojo falso aquí es un módulo correcto que no puede publicar.
+
+> **Se lee la CADENA, no el fichero.** Las migraciones son append-only: `verifactu/010` sigue
+> creando la tabla con la CHECK anónima y `012` la retira. Un lector por fichero pondría en rojo
+> justo al módulo que hizo el trabajo — el falso positivo con el que un gate se convierte en ruido
+> que todo el mundo silencia. Por eso se replican las migraciones **en el orden que declara el
+> manifest** y se juzga el estado final.
+>
+> **Trinquete, no golpe.** El barrido de los 27 repos (`origin/main`, 01/09/2026) encuentra el
+> patrón en 5 módulos: `verifactu` (ya arreglado) y otros cuatro. Esos cuatro ficheros están en
+> `GRANDFATHERED` uno a uno **con su issue** (appointments#103, reservations#42, services#91,
+> tables#76): **avisan** en cada `erplora validate` —nunca en silencio— y no ponen en rojo un repo
+> publicado por una regla escrita hoy. La lista solo puede ENCOGER, hay un test que fija su
+> contenido exacto, y la tolerancia es por **fichero**: una tabla guardia nueva, incluso en uno de
+> esos cuatro módulos, nace en error.
+
 ## El `fill` que el hub NUNCA pinta (hub#760)
 
 `src/validate-ionic-fill.mjs`. Ionic lo decide en una línea
