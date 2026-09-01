@@ -4,6 +4,7 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { resolve, join, relative, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { writeContractsFile } from './contracts.mjs';
 
 const TOOLKIT_DIR = resolve(fileURLToPath(import.meta.url), '../..'); // …/module-toolkit
 const HUB_PACKAGES = resolve(TOOLKIT_DIR, '../hub/packages'); // …/hub/packages
@@ -170,6 +171,13 @@ function genModule(id) {
   put(join(dir, '.gitignore'), ['node_modules/', 'target/', 'build/', '*.log', '.DS_Store', ''].join('\n'));
   put(join(dir, 'README.md'), moduleReadme(id, comp));
 
+  // El contrato de interoperabilidad (ADR-0127) se DERIVA del manifest y del SQL que acabamos de
+  // escribir, así que el generador puede calcularlo — y tiene que hacerlo: sin él, el primer
+  // `erplora validate` de la desarrolladora sale en ROJO por un fichero que ella no puede saber
+  // que existía (module-toolkit#80). `erplora contracts <id>` lo regenera cuando el módulo cambie.
+  writeContractsFile(dir, JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8')));
+  console.log(`  ✓ ${relative(process.cwd(), join(dir, '.erplora/contracts.json'))}`);
+
   console.log(`\nMódulo '${id}' generado. Pruébalo:
   erplora dev ${id}        # preview con datos mock
   erplora build ${id}      # → modules/${id}/dist/${id}.esm.js`);
@@ -197,8 +205,14 @@ function genSql(kind, id, fullName) {
   const sub = kind === 'command' ? 'commands' : 'queries';
   const sql =
     kind === 'command'
-      ? `-- ${fullName}\n-- TODO: command declarativo. El runtime auto-inyecta hub_id + created_by/updated_by + soft-delete.\nUPDATE ${id}_${file} SET updated_at = CURRENT_TIMESTAMP WHERE id = :id;\n`
-      : `-- ${fullName}\nSELECT * FROM ${id}_items WHERE is_deleted = 0 ORDER BY name;\n`;
+      ? `-- ${fullName}\n` +
+        '-- Command declarativo. El runtime inyecta los BINDS (:hub_id, :current_user_id, :now…), no\n' +
+        '-- las columnas ni el filtro: `hub_id = :hub_id` lo escribes tú o la sentencia alcanza filas\n' +
+        '-- de otros hubs (module-toolkit#80).\n' +
+        `UPDATE ${id}_${file} SET updated_at = CURRENT_TIMESTAMP, updated_by = :current_user_id\nWHERE hub_id = :hub_id AND id = :id;\n`
+      : `-- ${fullName}\n` +
+        '-- Acotado por hub: sin `hub_id = :hub_id` la consulta lee filas de otros hubs.\n' +
+        `SELECT * FROM ${id}_items WHERE hub_id = :hub_id AND is_deleted = 0 ORDER BY name;\n`;
   put(join(dir, sub, `${file}.sql`), sql);
   console.log(`\nRegístralo en modules/${id}/module.json bajo "${kind === 'command' ? 'commands' : 'queries'}":
   "${fullName}": { "permission": "${id}.view_item", "sql": ${kind === 'command' ? `["${sub}/${file}.sql"]` : `"${sub}/${file}.sql"`} }`);
@@ -259,8 +273,10 @@ function moduleManifest(id, entity, comp) {
 }
 
 function initMigration(id, entity, dialect) {
-  return `-- ${id}: esquema inicial (${dialect}). El runtime añade hub_id + is_deleted/deleted_at +
--- created_by/updated_by/created_at/updated_at por contrato. Aquí solo el dominio.
+  return `-- ${id}: esquema inicial (${dialect}). Las columnas del CONTRATO DE FILA (hub_id,
+-- is_deleted/deleted_at, created_by/updated_by, created_at/updated_at) se declaran AQUÍ y las
+-- escribe el SQL del módulo: el runtime aporta los binds (:hub_id, :current_user_id…), no las
+-- columnas — creer lo contrario es lo que dejaba el INSERT sin hub_id (module-toolkit#80).
 -- OJO: ningun punto y coma dentro de un comentario. Los hubs pineados a tags parten el
 -- fichero por ahi y rechazan el modulo ENTERO al instalar (module-toolkit#70, hub#1027).
 CREATE TABLE IF NOT EXISTS ${id}_${entity} (
@@ -282,25 +298,31 @@ CREATE INDEX IF NOT EXISTS idx_${id}_${entity}_name ON ${id}_${entity}(hub_id, n
 
 function listQuery(id, entity) {
   return `-- ${id}.${entity}.list — el runtime aplica search/sort/filtros/paginación (motor de listas)
--- e inyecta hub_id. Devuelve la página + total para el pager.
+-- e inyecta el bind :hub_id. Devuelve la página + total para el pager.
+-- El FILTRO de tenancy lo escribe el módulo: el motor de listas no lo añade, y sin él la lista
+-- devuelve filas de OTROS hubs allí donde la base de datos está compartida (module-toolkit#80).
 SELECT id, name, code, amount, created_at
 FROM ${id}_${entity}
-WHERE is_deleted = 0;
+WHERE hub_id = :hub_id AND is_deleted = 0;
 `;
 }
 
 function getQuery(id, entity) {
-  return `-- ${id}.${entity}.get
+  return `-- ${id}.${entity}.get — acotado por hub: un id de otro hub no se lee desde aquí.
 SELECT id, name, code, amount, created_at, updated_at
 FROM ${id}_${entity}
-WHERE id = :id AND is_deleted = 0;
+WHERE hub_id = :hub_id AND id = :id AND is_deleted = 0;
 `;
 }
 
 function createCommand(id, entity) {
-  return `-- ${id}.${entity}.create — hub_id + created_by/updated_by los inyecta el runtime.
-INSERT INTO ${id}_${entity} (id, name, code, amount)
-VALUES (:id, :name, :code, :amount);
+  return `-- ${id}.${entity}.create
+-- El runtime inyecta los BINDS (:hub_id, :current_user_id, :now…) — nunca las COLUMNAS. Nombrarlas
+-- es cosa del módulo: un INSERT que no escriba \`hub_id\` deja NULL una columna NOT NULL y falla en
+-- TODOS los hubs (module-toolkit#80). PREPARA bien, así que \`validate --pg\` no lo vería: quien lo
+-- comprueba es la puerta de tenancy de \`erplora validate\`.
+INSERT INTO ${id}_${entity} (id, hub_id, name, code, amount, created_by, updated_by)
+VALUES (:id, :hub_id, :name, :code, :amount, :current_user_id, :current_user_id);
 `;
 }
 
