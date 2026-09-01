@@ -90,11 +90,12 @@ jobs:
           echo "node=$(node --version 2>/dev/null || echo 'absent (setup-node installs it)')"
           echo "npm=$(npm --version 2>/dev/null || echo absent)"
           echo "python3=$(python3 --version 2>&1 || echo absent)"
-          if ! docker info >/dev/null 2>&1; then
-            echo "::error::this runner has no usable Docker, and the PREPARE suites need a scratch Postgres"
-            exit 1
-          fi
-          echo "docker=$(docker --version)"
+          # The same helper the 27 module gates use (module-toolkit#138). A broken daemon here used
+          # to cost one annotation with no diagnostics, and answering «is the disk full?» meant an
+          # SSH session into the runner. This repository is where that helper is maintained, so it
+          # is the last place that should keep a second copy of it.
+          . .github/scripts/ci-infra.sh
+          erplora_require_docker
 
       # ── ¿Sigue llegando `@erplora/module-sdk`? (ERPlora/hub#1097) ─────────────────────────────
       #
@@ -168,20 +169,15 @@ jobs:
           # jobs at once and keeps Docker state between them, so a fixed name meant one job's
           # `docker rm -f` killed the other's Postgres. Only OUR name is ever removed.
           PG_CONTAINER: erplora-test-pg-${{ github.run_id }}-${{ github.run_attempt }}
+          # Pinned to the major that runs in production, same as the module gate's default.
+          POSTGRES_IMAGE: postgres:18
+        # Through the shared helper (module-toolkit#138): a `docker run` that dies on a full disk
+        # used to leave this job red with no annotation at all, which is indistinguishable from the
+        # validator's own tests failing.
         run: |
           set -euo pipefail
-          docker rm -f "$PG_CONTAINER" >/dev/null 2>&1 || true
-          docker run -d --name "$PG_CONTAINER" -e POSTGRES_PASSWORD=postgres postgres:18
-          echo "ERPLORA_TEST_PG_CONTAINER=$PG_CONTAINER" >> "$GITHUB_ENV"
-          for _ in $(seq 1 60); do
-            if docker exec "$PG_CONTAINER" pg_isready -U postgres >/dev/null 2>&1; then
-              echo "→ postgres ready in $PG_CONTAINER"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "::error::the scratch Postgres ($PG_CONTAINER) never became ready"
-          exit 1
+          . .github/scripts/ci-infra.sh
+          erplora_start_scratch_postgres
 
       # The PREPARE suites SKIP themselves when there is no container; the step above is what makes
       # them actually run. If they ever start skipping here the count drops, which is visible.
@@ -201,6 +197,7 @@ jobs:
           test/run-vitest.test.mjs
           test/against-hub.test.mjs
           test/gate-wiring.test.mjs
+          test/gate-infra-annotations.test.mjs
           test/release-dispatch.test.mjs
           test/scaffold-runs-on-postgres.test.mjs
           test/ci-runs-every-suite.test.mjs
