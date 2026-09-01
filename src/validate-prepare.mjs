@@ -99,6 +99,18 @@ function scanArgs(sql, open) {
   return null; // unbalanced: leave the call alone, validate-sql already refuses that SQL
 }
 
+/** Postgres expression that left-pads `value` to `width` WITHOUT ever truncating it
+ *  (ERPlora/hub#1378, mirror of `pad_to_min_width` in `hub/crates/db/src/lib.rs`).
+ *
+ *  Plain `lpad(text, width, fill)` imposes an EXACT width — it cuts the overflow — so
+ *  `lpad('10000', 4, '0')` is `'1000'` and document number 10.000 collided with 1.000 on the
+ *  UNIQUE index (ERPlora/sales#241). The bridge-function contract says width is a MINIMUM, so we
+ *  ask `lpad` for the greater of the requested width and the value's real length. `length()`
+ *  counts characters, not bytes. The value expression appears twice, so it must be non-volatile. */
+function padToMinWidth(value, width, fill) {
+  return `lpad((${value})::text, greatest(${width}, length((${value})::text)), ${fill})`;
+}
+
 /** Native Postgres expression a bridge call lowers to, or null on wrong arity (mirror of
  *  `render_bridge_fn` in `hub/crates/db/src/lib.rs`). */
 function renderBridgeFn(name, rawArgs) {
@@ -108,9 +120,9 @@ function renderBridgeFn(name, rawArgs) {
     case 'erp_now':
       return rawArgs.length === 0 || (arity(1) && !a[0]) ? 'now()' : null;
     case 'erp_pad':
-      return arity(2) ? `lpad((${a[0]})::text, ${a[1]}, '0')` : null;
+      return arity(2) ? padToMinWidth(a[0], a[1], "'0'") : null;
     case 'erp_lpad':
-      return arity(3) ? `lpad((${a[0]})::text, ${a[1]}, ${a[2]})` : null;
+      return arity(3) ? padToMinWidth(a[0], a[1], a[2]) : null;
     case 'erp_dt':
       return arity(1) ? `((${a[0]})::timestamptz)` : null;
     case 'erp_date':
@@ -130,7 +142,10 @@ function renderBridgeFn(name, rawArgs) {
     case 'erp_datediff_days':
       return arity(2) ? `(EXTRACT(EPOCH FROM ((${a[0]})::timestamptz - (${a[1]})::timestamptz)) / 86400.0)` : null;
     case 'erp_timefmt':
-      return arity(2) ? `(lpad((${a[0]})::text, 2, '0') || ':' || lpad((${a[1]})::text, 2, '0'))` : null;
+      // Same minimum-width contract (hub#1378): a 100 h duration rendered "10:00" before.
+      return arity(2)
+        ? `(${padToMinWidth(a[0], 2, "'0'")} || ':' || ${padToMinWidth(a[1], 2, "'0'")})`
+        : null;
     default:
       return null;
   }

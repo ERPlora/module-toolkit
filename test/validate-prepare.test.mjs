@@ -57,12 +57,32 @@ test('translate: a `:name` inside a literal or a comment stays verbatim (no phan
 });
 
 test('translate: the `erp_*` bridge functions are lowered like the runtime does', () => {
-  assert.equal(translateForPostgres('SELECT erp_pad(:n, 4)').sql, "SELECT lpad(($1)::text, 4, '0')");
+  assert.equal(
+    translateForPostgres('SELECT erp_pad(:n, 4)').sql,
+    "SELECT lpad(($1)::text, greatest(4, length(($1)::text)), '0')",
+  );
   assert.equal(
     translateForPostgres('SELECT erp_month_start(:now)').sql,
     "SELECT date_trunc('month', ($1)::timestamptz)",
   );
   assert.equal(translateForPostgres('SELECT erp_now()').sql, 'SELECT now()');
+});
+
+test('translate: `erp_pad`/`erp_lpad` width is a MINIMUM, never a ceiling (ERPlora/hub#1378)', () => {
+  // Postgres `lpad` TRUNCATES past the width, so the runtime used to render document number
+  // 10.000 as `1000` and collide with 1.000 on the UNIQUE index (ERPlora/sales#241). The
+  // validator prepares what the runtime runs, so it has to lower the call the same way.
+  for (const [call, expected] of [
+    ['erp_pad(:n, 4)', "lpad(($1)::text, greatest(4, length(($1)::text)), '0')"],
+    ['erp_lpad(:n, 8, \'*\')', "lpad(($1)::text, greatest(8, length(($1)::text)), '*')"],
+  ]) {
+    assert.equal(translateForPostgres(`SELECT ${call}`).sql, `SELECT ${expected}`);
+  }
+  assert.equal(
+    translateForPostgres('SELECT erp_timefmt(:h, :m)').sql,
+    "SELECT (lpad(($1)::text, greatest(2, length(($1)::text)), '0') || ':' || " +
+      "lpad(($2)::text, greatest(2, length(($2)::text)), '0'))",
+  );
 });
 
 test('translate: a `--` comment with an apostrophe does not swallow the bridge calls after it', () => {
