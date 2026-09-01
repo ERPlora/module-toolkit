@@ -1,0 +1,11 @@
+{
+  "id": "gatedemo",
+  "name": "Gate demo",
+  "version": "1.0.0",
+  "migrations": {
+    "postgres": [
+      "migrations/postgres/001_gate.sql",
+      "migrations/postgres/002_named_gate_constraints.sql"
+    ]
+  }
+}

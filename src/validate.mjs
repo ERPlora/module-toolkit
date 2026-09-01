@@ -25,6 +25,7 @@ import { checkManifestKeys } from './validate-manifest-keys.mjs';
 import { checkBundleArtifact } from './bundle-freshness.mjs';
 import { checkErrorsCatalog } from './validate-errors-catalog.mjs';
 import { checkRowGates } from './validate-row-gates.mjs';
+import { checkGateConstraints } from './validate-gate-constraints.mjs';
 import { checkHubScope } from './validate-hub-scope.mjs';
 import { checkEmitDedupKey } from './validate-emit-dedup-key.mjs';
 
@@ -207,6 +208,25 @@ export async function validate(moduleDir, { pg = false } = {}) {
     throw new Error(
       'migraciones que el hub RECHAZARÍA al instalar (module-toolkit#51):\n  - ' +
         guard.errors.join('\n  - '),
+    );
+  }
+
+  // module-toolkit#92 (verifactu#40): la TABLA GUARDIA. Un `CHECK (ok = 1)` anónimo hace que todos
+  // los rechazos del módulo salgan con el MISMO mensaje primario — el nombre del gate que saltó va
+  // en el DETAIL del error, que `PgDatabaseError` no entrega al llamante. El código que intenta
+  // decir POR QUÉ se rechazó no puede casar nunca, y el usuario recibe el problema de otro gate.
+  // La identidad se mueve al NOMBRE de la constraint (verifactu, migración 012).
+  //
+  // Se lee la CADENA de migraciones, no cada fichero: son append-only, así que el módulo que YA
+  // aplicó el arreglo conserva el `CREATE TABLE` anónimo en su migración vieja y un lector por
+  // fichero pondría en rojo justo al que hizo el trabajo. Trinquete: los 4 ficheros publicados con
+  // el patrón avisan con su issue (`GRANDFATHERED`, solo encoge); una tabla guardia nueva es error.
+  const gateConstraints = checkGateConstraints(dir, manifest);
+  for (const w of gateConstraints.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (gateConstraints.errors.length) {
+    throw new Error(
+      'tabla guardia con rechazos INDISTINGUIBLES (module-toolkit#92):\n  - ' +
+        gateConstraints.errors.join('\n  - '),
     );
   }
 
