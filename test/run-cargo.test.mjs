@@ -331,3 +331,109 @@ test('CONTROL — the MUTANT fixture (one assertion broken on purpose) turns the
     rmSync(target, { recursive: true, force: true });
   }
 });
+
+// ── the control the green/mutant pair CANNOT be: a REAL cargo THROUGH the farm ───────────────
+//
+// The green/mutant fixtures declare no path dependency, so `runRustTests` never farms them: they
+// prove the reporting and the cargo wiring, and nothing about the mechanism this whole file exists
+// for. The `farmed` fixture declares the guest-sdk by the SAME relative path the 22 production
+// handlers use, and its test CALLS the sdk — so this control only goes green when cargo resolved
+// the dependency through the symlink farm and linked against it. The manual measurement on
+// `kitchen` (46/46 through the farm) was one afternoon; this is that measurement, in the suite,
+// forever.
+
+test('CONTROL — a real `cargo test` THROUGH THE FARM: the handler links against the fixture hub', () => {
+  assert.ok(cargoAvailable(), 'cargo is required to run this suite: a control that skips proves nothing');
+  const target = mkdtempSync(join(tmpdir(), 'erplora-cargo-target-'));
+  try {
+    const out = runRustTests(join(FIXTURES, 'farmed'), {
+      env: { ERPLORA_HUB_DIR: join(FIXTURES, 'hub') },
+      targetDir: target,
+    });
+    assert.deepEqual(out.notRun, [], 'the hub WAS handed over: nothing may be left unrun');
+    assert.deepEqual(out.errors, []);
+    assert.equal(out.results[0].ran, true);
+    assert.ok(out.results[0].executed >= 2, `expected the 2 farmed tests to run, got ${out.results[0].executed}`);
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+// 🔴 Regression, found in review: the gate calls `erplora test "${{ inputs.path }}"` with the path
+// EXACTLY as the stub passed it — relative (`.` in every module stub) — and `target()` keeps it
+// relative. `symlinkSync` stores a relative target verbatim, so the farm's `module` link resolved
+// against the SCRATCH dir instead of the checkout and every `cargo test` died with «manifest path
+// does not exist»: a red pinned on the module, in all 21 repos at once, the moment this merged.
+// The farm has to resolve BOTH ends to absolute paths before linking — this test is the gate's
+// exact shape (relative module path, relative hub var) and must stay green forever.
+test('CONTROL — the farm serves a RELATIVE module path: the exact shape the gate passes', () => {
+  assert.ok(cargoAvailable(), 'cargo is required to run this suite: a control that skips proves nothing');
+  const target = mkdtempSync(join(tmpdir(), 'erplora-cargo-target-'));
+  const cwd = process.cwd();
+  try {
+    process.chdir(FIXTURES);
+    const out = runRustTests('farmed', { env: { ERPLORA_HUB_DIR: 'hub' }, targetDir: target });
+    assert.deepEqual(out.notRun, [], 'the hub WAS handed over: nothing may be left unrun');
+    assert.deepEqual(out.errors, [], 'a relative path is how the gate calls this — it cannot be a red');
+    assert.equal(out.results[0].ran, true);
+  } finally {
+    process.chdir(cwd);
+    rmSync(target, { recursive: true, force: true });
+  }
+});
+
+// ── an environment HANDED OVER but unusable is a FAILURE, never a quiet ⚠ ────────────────────
+//
+// The house rule of #50, verbatim from `run-batteries.mjs`: a Postgres battery without the
+// container is «not run», but a battery that skips itself WHEN the container was handed over is an
+// ERROR — infrastructure has to be loud. Same split here: no `ERPLORA_HUB_DIR` on a laptop is a
+// named «not run»; an `ERPLORA_HUB_DIR` that points at something that is not a hub, or a module
+// whose declared path the farm can never satisfy, means the Rust family would NEVER run in the
+// gate while the gate stays green — the exact silent skip #146 exists to end.
+
+test('ERPLORA_HUB_DIR handed over but NOT a hub is an ERROR, not a quiet «not run»', () => {
+  const bad = mkdtempSync(join(tmpdir(), 'erplora-nothub-'));
+  const m = mod({
+    'handler/Cargo.toml': CARGO_TOML('demo-handler', SDK_DEP),
+    'handler/src/lib.rs': '#[cfg(test)]\nmod tests { #[test] fn t() {} }\n',
+  });
+  try {
+    const out = runRustTests(m.dir, {
+      env: { ERPLORA_HUB_DIR: bad },
+      runCargo: () => assert.fail('cargo must not be spawned'),
+    });
+    assert.equal(out.notRun.length, 0, 'the hub was handed over: this cannot be a warning');
+    assert.equal(out.errors.length, 1);
+    assert.match(out.errors[0], /ERPLORA_HUB_DIR/);
+    assert.match(out.errors[0], /crates\/guest-sdk/);
+  } finally {
+    m.clean();
+    rmSync(bad, { recursive: true, force: true });
+  }
+});
+
+test('a declared sdk path the farm can never satisfy is an ERROR when the hub IS at hand', () => {
+  const hub = mkdtempSync(join(tmpdir(), 'erplora-hub-'));
+  mkdirSync(join(hub, 'crates/guest-sdk'), { recursive: true });
+  writeFileSync(join(hub, 'crates/guest-sdk/Cargo.toml'), '[package]\nname = "erplora-guest-sdk"\n');
+  const m = mod({
+    'handler/Cargo.toml': CARGO_TOML(
+      'demo-handler',
+      `${GUEST_SDK_CRATE} = { path = "/absolute/nowhere/guest-sdk" }`,
+    ),
+    'handler/src/lib.rs': '#[cfg(test)]\nmod tests { #[test] fn t() {} }\n',
+  });
+  try {
+    const out = runRustTests(m.dir, {
+      env: { ERPLORA_HUB_DIR: hub },
+      runCargo: () => assert.fail('cargo must not be spawned'),
+    });
+    assert.equal(out.notRun.length, 0, 'these tests will NEVER run in the gate: green would be a lie');
+    assert.equal(out.errors.length, 1);
+    assert.match(out.errors[0], new RegExp(GUEST_SDK_CRATE));
+    assert.match(out.errors[0], /\.\.\/\.\.\/\.\.\/\.\.\/hub\/crates\/guest-sdk/);
+  } finally {
+    m.clean();
+    rmSync(hub, { recursive: true, force: true });
+  }
+});

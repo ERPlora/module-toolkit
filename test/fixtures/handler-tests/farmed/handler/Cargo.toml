@@ -1,0 +1,23 @@
+# Fixture handler for the FARM control (module-toolkit#146/#147): unlike `green`/`mutant`, this one
+# declares the guest-sdk BY THE SAME RELATIVE PATH the 22 production handlers use, so running its
+# tests exercises the symlink farm with a REAL cargo — the link the green/mutant pair cannot reach
+# (they have no path dependency, so `runRustTests` never farms them).
+#
+# The dependency only resolves when `ERPLORA_HUB_DIR` points at a checkout holding
+# `crates/guest-sdk` — in the suite, the sibling `../hub` fixture.
+#
+# 🔴 ZERO third-party dependencies on purpose, same as the green/mutant fixtures: a control that
+# can go yellow on a network blip is a control people learn to ignore.
+[package]
+name = "farmed-fixture-handler"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+erplora-guest-sdk = { path = "../../../../hub/crates/guest-sdk" }
+
+[workspace]

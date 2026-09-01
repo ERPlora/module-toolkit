@@ -463,6 +463,17 @@ módulo real: reintroducir kitchen#63 en el `origin/main` de `kitchen` pone el g
 `the_ticket_says_which_waiter_fired_it`. Un control que nunca ha visto el positivo es un control que
 nadie ha probado.
 
+Esa pareja no pasa por la granja (sus fixtures no declaran dependencia por ruta), así que hay un
+tercer fixture, `farmed/`, que declara el guest-sdk por la ruta de producción y **llama** al SDK
+desde su test: solo sale verde si cargo resolvió y linkó a través de la granja. Corre dos veces —
+con la ruta del módulo **absoluta y relativa** — porque el gate llama `erplora test` con la ruta
+del stub tal cual (`.`), y un symlink con destino relativo se resuelve contra el directorio del
+enlace, no contra el cwd: la primera versión de la granja moría en CI con `manifest path does not
+exist` en los 21 módulos a la vez. Y dos reglas más, que son las de `run-batteries` desde #50: un
+entorno **entregado pero inservible** (un `ERPLORA_HUB_DIR` que no contiene `crates/guest-sdk`) es
+un ERROR, no un ⚠, y una declaración del guest-sdk que la granja **nunca** va a poder servir
+también — esos tests no correrían en ningún gate jamás, y el ⚠ mergearía en verde para siempre.
+
 ## La batería contra el kernel REAL (`--against-hub`) — module-toolkit#110
 
 Una batería de Postgres levanta una base de datos desde las migraciones del módulo y comprueba el

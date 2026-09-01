@@ -1,0 +1,16 @@
+# A stand-in for `ERPlora/hub/crates/guest-sdk`, holding the ONE property the farm control needs:
+# it is a real crate the fixture handler reaches by the same relative path the 22 production
+# handlers declare. Compiling and CALLING it through the symlink farm is what proves cargo resolves
+# the dependency through the farm and not through some canonicalised shortcut.
+#
+# 🔴 ZERO dependencies on purpose, same as the green/mutant fixtures: a control that can go yellow
+# on a network blip is a control people learn to ignore.
+[package]
+name = "erplora-guest-sdk"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+
+[workspace]

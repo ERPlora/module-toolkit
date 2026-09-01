@@ -208,6 +208,14 @@ function declaredSdkPath(handlerDir) {
  * run» instead of being silently mis-linked.
  */
 export function farmManifestPath(dir, hubDir, { root, id = 'module' } = {}) {
+  // 🔴 Absolute on BOTH ends before a single link is made. The gate calls
+  // `erplora test "${{ inputs.path }}"` with the path exactly as the stub passed it — relative,
+  // `.` in every module stub — and `symlinkSync` stores a relative target VERBATIM, resolved
+  // against the directory holding the link. A `module → .` link points at the scratch dir itself,
+  // and every `cargo test` dies with «manifest path does not exist»: a red pinned on the module,
+  // in all 21 repos at once.
+  dir = resolve(dir);
+  hubDir = resolve(hubDir);
   const declared = declaredSdkPath(join(dir, 'handler'));
   if (!declared) return null;
   const segments = declared.split('/').filter(Boolean);
@@ -225,8 +233,11 @@ export function farmManifestPath(dir, hubDir, { root, id = 'module' } = {}) {
   linkOnto(join(root, tail[0]), hubDir);
 
   const manifest = join(moduleLink, 'handler', 'Cargo.toml');
-  // Proven, not assumed: if the dependency still does not resolve through the farm, cargo would
-  // fail with a message about the MODULE, and the module is not what broke.
+  // Proven, not assumed — BOTH links, because each has failed for its own reason: the manifest
+  // itself (the module link — a broken one is how the relative-path red above was born) and the
+  // dependency through the farm (the hub link). If either does not resolve, cargo would fail with
+  // a message about the MODULE, and the module is not what broke.
+  if (!existsSync(manifest)) return null;
   if (!existsSync(resolve(dirname(manifest), declared, 'Cargo.toml'))) return null;
   return manifest;
 }
@@ -290,23 +301,38 @@ export function runRustTests(
   if (missing.length) {
     const hub = hubCheckout(env);
     if (!hub) {
-      notRun.push(
-        `${named}: sin un checkout de ERPlora/hub al alcance no se han corrido — el handler resuelve ` +
-          `\`${GUEST_SDK_CRATE}\` por la ruta relativa \`${missing[0].path}\`, que solo existe en el ` +
-          `monorepo. El gate lo entrega en \`${HUB_DIR_VAR}\` (module-toolkit#146); contarlos como ` +
-          'verdes sería certificar la lógica Tier 2 contra un compilador que nunca la vio',
-      );
+      // The split is the house rule of #50, verbatim from `run-batteries.mjs`: an environment
+      // NOBODY handed over is a named «not run» (a laptop with no sibling checkout); an environment
+      // HANDED OVER but unusable is an ERROR, because a quiet ⚠ here means the Rust family never
+      // runs in the gate while the gate stays green — the exact silent skip #146 exists to end.
+      if (env?.[HUB_DIR_VAR]) {
+        errors.push(
+          `handler/: \`${HUB_DIR_VAR}\` apunta a \`${env[HUB_DIR_VAR]}\` y ahí no hay ` +
+            `\`crates/guest-sdk/Cargo.toml\` — se ha entregado un checkout del hub que no sirve, y ` +
+            `sin él los tests del handler (${named}) no pueden correr (module-toolkit#146)`,
+        );
+      } else {
+        notRun.push(
+          `${named}: sin un checkout de ERPlora/hub al alcance no se han corrido — el handler resuelve ` +
+            `\`${GUEST_SDK_CRATE}\` por la ruta relativa \`${missing[0].path}\`, que solo existe en el ` +
+            `monorepo. El gate lo entrega en \`${HUB_DIR_VAR}\` (module-toolkit#146); contarlos como ` +
+            'verdes sería certificar la lógica Tier 2 contra un compilador que nunca la vio',
+        );
+      }
       return { results, errors, notRun };
     }
     scratch = mkdtempSync(join(tmpdir(), 'erplora-handler-farm-'));
     const farmed = farmManifestPath(dir, hub, { root: scratch, id: 'module' });
     if (!farmed) {
       rmSync(scratch, { recursive: true, force: true });
-      notRun.push(
-        `${named}: no se han corrido — \`${GUEST_SDK_CRATE}\` se declara como ` +
-          `\`${missing[0].path}\`, una forma que el toolkit no sabe satisfacer con el checkout del ` +
-          `hub (${hub}). Declárala como \`../../../../hub/crates/guest-sdk\`, igual que los demás ` +
-          'handlers (module-toolkit#146)',
+      // The hub IS at hand and the declaration still cannot be served: these tests will never run
+      // in the gate, on any runner, until the module fixes its manifest. A ⚠ would let that merge
+      // green forever — so it is an ERROR, the same way a stray file under `tests/` is one.
+      errors.push(
+        `handler/: \`${GUEST_SDK_CRATE}\` se declara como \`${missing[0].path}\`, una forma que el ` +
+          `toolkit no sabe satisfacer con el checkout del hub (${hub}) — los tests del handler ` +
+          `(${named}) no van a correr en NINGÚN gate hasta arreglarlo. Declárala como ` +
+          '`../../../../hub/crates/guest-sdk`, igual que los demás handlers (module-toolkit#146)',
       );
       return { results, errors, notRun };
     }
