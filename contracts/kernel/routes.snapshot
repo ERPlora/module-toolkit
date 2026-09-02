@@ -140,6 +140,7 @@ GET     /api/system/usage-series                       auth:session
 POST    /api/v1/:module/c/:command                     auth:api-key
 POST    /api/v1/:module/q/:query                       auth:api-key
 GET     /api/v1/openapi.json                           auth:session
+POST    /csp-report/                                   auth:none
 GET     /healthz                                       auth:none
 GET     /modules/:id/*path                             auth:none
 GET     /modules/:id/v/:version/*path                  auth:none

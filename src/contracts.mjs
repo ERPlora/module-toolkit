@@ -269,6 +269,9 @@ export const CORE_OPERATIONS = {
     'hub.approvals.list',
     // hub#297 — el techo de la simplificada como DATO: el core RESPONDE, el TPV DECIDE.
     'hub.fiscal.limits',
+    // hub#1453 — la VÍA por la que el hub transmite a la AEAT (delegada o certificado propio) es
+    // un DATO que el módulo lee: el core la resuelve, el TPV decide qué enseña.
+    'hub.fiscal.transmission',
     // hub#1107 — the print queue is READABLE by a module: coverage per station and the queue
     // as a status view (the document never travels; it leaves through the drain, ADR-0192).
     'hub.print.coverage',

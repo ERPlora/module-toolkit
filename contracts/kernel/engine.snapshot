@@ -8,6 +8,7 @@ business_address
 business_legal_name
 business_tax_id
 caller_lang
+capabilities_granted
 current_user_id
 has_certificate
 hub_id
