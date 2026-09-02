@@ -400,6 +400,7 @@ hub_user.created_at text NOT NULL
 hub_user.email text NOT NULL
 hub_user.hub_id text NOT NULL
 hub_user.id text NOT NULL
+hub_user.is_account_owner integer NOT NULL
 hub_user.is_active bigint NOT NULL
 hub_user.name text NOT NULL
 hub_user.pin_hash text NOT NULL
