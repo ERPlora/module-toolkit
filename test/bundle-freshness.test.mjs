@@ -28,6 +28,7 @@ import {
   checkBundleFreshness,
   checkBundleProvenance,
   collectUiSources,
+  hashLocaleSources,
   hashUiSources,
   normalizeBundlePaths,
   stableSourcePath,
@@ -413,5 +414,95 @@ test('mt#93: ui/lib/ IS a bundle source — a commit there still makes the bundl
   const out = checkBundleFreshness(dir, MANIFEST);
   assert.equal(out.warnings.length, 1, JSON.stringify(out));
   assert.match(out.warnings[0], /ui\/lib\/money\.ts/);
+  cleanup(dir);
+});
+
+// --- `locales/` is a bundle source too (module-toolkit#158) -------------------------------------
+//
+// The half of the pattern the #93 stamp did NOT cover. Every one of the 27 published modules writes
+// `import esLocale from '../../../locales/es.json'` in its component, so esbuild INLINES the
+// catalogue into `dist/<id>.esm.js` — a merge that only touches `locales/**` changes what the screen
+// says and leaves the artifact behind. It is not hypothetical and it is not rare: `locales/**` is a
+// trigger path of `release.yml`, so such a merge bumps the version and republishes, and a sweep of
+// `origin/main` on 2026-09-02 found **65 commits in 60 days**, across all 27 repos, that touched
+// `locales/` without touching `dist/` (`cash_register#69` is the one that was caught by hand).
+//
+// The ratchet of #93 is kept exactly: a stamp written before this change carries no
+// `locales_sha256`, and a module is never turned red for a change of ours — it is grandfathered
+// until it builds once more.
+
+/** Adds a `locales/` catalogue to a fixture, the way all 27 published modules carry one. */
+function withLocales(dir, es = { hello: 'hola' }) {
+  mkdirSync(join(dir, 'locales'), { recursive: true });
+  writeFileSync(join(dir, 'locales', 'es.json'), `${JSON.stringify(es, null, 2)}\n`);
+  writeFileSync(join(dir, 'locales', 'en.json'), `${JSON.stringify({ hello: 'hello' }, null, 2)}\n`);
+  return dir;
+}
+
+test('mt#158: a locales/ edit after the stamped build is an ERROR — the catalogue is inlined', () => {
+  const dir = withLocales(moduleFixture());
+  writeFileSync(join(dir, bundleStampFile('demo')), JSON.stringify(bundleBuildStamp(dir, MANIFEST)));
+  writeFileSync(join(dir, 'locales', 'es.json'), JSON.stringify({ hello: 'buenas' }));
+  const out = checkBundleFreshness(dir, MANIFEST);
+  assert.equal(out.errors.length, 1, JSON.stringify(out));
+  assert.match(out.errors[0], /locales/);
+  assert.match(out.errors[0], /erplora build/);
+  cleanup(dir);
+});
+
+test('mt#158: stampBundle records the catalogue hash, and an untouched module stays fresh', () => {
+  const dir = withLocales(moduleFixture());
+  const written = stampBundle(dir, MANIFEST);
+  const stamp = JSON.parse(readFileSync(written, 'utf8'));
+  assert.equal(stamp.locales_sha256, hashLocaleSources(dir));
+  const out = checkBundleFreshness(dir, MANIFEST);
+  assert.deepEqual(out.errors, []);
+  assert.deepEqual(out.warnings, []);
+  cleanup(dir);
+});
+
+test('mt#158: RATCHET — a stamp written before this change (no locales_sha256) is NOT turned red', () => {
+  // The 8 modules that already carry a #93 stamp must not go red for a change of ours. Their stamp
+  // simply does not speak about locales, so the catalogue is not checked until they build again.
+  const dir = withLocales(moduleFixture());
+  const legacy = bundleBuildStamp(dir, MANIFEST);
+  delete legacy.locales_sha256;
+  writeFileSync(join(dir, bundleStampFile('demo')), JSON.stringify(legacy));
+  writeFileSync(join(dir, 'locales', 'es.json'), JSON.stringify({ hello: 'buenas' }));
+  const out = checkBundleFreshness(dir, MANIFEST);
+  assert.deepEqual(out.errors, [], JSON.stringify(out));
+  cleanup(dir);
+});
+
+test('mt#158: without a stamp, git sees a locales-only commit — the ratchet keeps it a WARNING', () => {
+  const dir = withLocales(moduleFixture());
+  initGit(dir);
+  commit(dir, 'inicial', '2026-01-01T10:00:00Z');
+  writeFileSync(join(dir, 'locales', 'es.json'), JSON.stringify({ hello: 'buenas' }));
+  commit(dir, 'traducción sin rebuild', '2026-02-01T10:00:00Z');
+  const out = checkBundleFreshness(dir, MANIFEST);
+  assert.equal(out.warnings.length, 1, JSON.stringify(out));
+  assert.match(out.warnings[0], /locales\/es\.json/);
+  assert.deepEqual(out.errors, []);
+  cleanup(dir);
+});
+
+test('mt#158: a module with NO locales/ is unaffected — nothing to hash, nothing to flag', () => {
+  const dir = moduleFixture();
+  const written = stampBundle(dir, MANIFEST);
+  const stamp = JSON.parse(readFileSync(written, 'utf8'));
+  assert.equal(stamp.locales_sha256, hashLocaleSources(dir));
+  assert.deepEqual(checkBundleFreshness(dir, MANIFEST).errors, []);
+  assert.deepEqual(checkBundleFreshness(dir, MANIFEST).warnings, []);
+  cleanup(dir);
+});
+
+test('mt#158: the catalogue hash does not disturb the ui/ hash — old stamps still match on ui/', () => {
+  // `sources_sha256` keeps meaning exactly what it meant, so the 8 stamps already published stay
+  // valid evidence about `ui/`. Anything else would turn 8 repos red for a change of ours.
+  const dir = withLocales(moduleFixture());
+  const before = hashUiSources(dir);
+  writeFileSync(join(dir, 'locales', 'es.json'), JSON.stringify({ hello: 'buenas' }));
+  assert.equal(hashUiSources(dir), before);
   cleanup(dir);
 });

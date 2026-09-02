@@ -83,10 +83,18 @@ que ni su **procedencia** ni su **frescura** estaban miradas — y las dos falla
   En el barrido del 2026-08-28 sobre los 27 módulos publicados, `flows` estaba así: la clave
   `ui.tplNeedsModules` que añadió flows#38 el 23/08 **no está** en su `dist`.
 
+- Un merge que solo toca `locales/**` publica **las cadenas viejas**. Los 27 módulos escriben
+  `import esLocale from '../../../locales/es.json'` en su componente, así que esbuild **inlinea** el
+  catálogo en el bundle; y `locales/**` es ruta disparadora de `release.yml`, así que ese merge
+  **sube versión y republica** con el catálogo anterior dentro. Medido sobre `origin/main` el
+  2026-09-02: **65 commits en 60 días** tocaron `locales/` sin tocar `dist/`, y **4 de los 27
+  módulos publicados** (`invoice`, `invoice_series`, `sales`, `staff`) estaban en ese estado —
+  `sales` servía la pantalla de ajustes del TPV **sin ninguna de sus etiquetas en español**.
+
 **`erplora build`** normaliza las anotaciones de ruta que esbuild deja antes de cada entrada (las
 del módulo, relativas al módulo; las de una dependencia, por el `name` de su paquete), de modo que
 **el bundle sale byte a byte igual desde cualquier directorio de trabajo**, y escribe un **sello**
-`dist/<id>.build.json` (sha256 del árbol de `ui/` + sha256 del bundle).
+`dist/<id>.build.json` (sha256 del árbol de `ui/` + sha256 de `locales/` + sha256 del bundle).
 
 **`erplora validate`** (y por tanto `pack`) comprueba dos cosas sobre ese fichero:
 
@@ -95,16 +103,20 @@ del módulo, relativas al módulo; las de una dependencia, por el `name` de su p
   `/var/folders/`, `…/scratchpad/…`), **estén escritas en absoluto o en relativo** — la de
   `verifactu` era relativa. Cero de los 27 bundles publicados lleva ninguna, así que aquí no hay
   nada heredado.
-- **Frescura — con trinquete.** El bundle tiene que corresponder al `ui/` actual, con la misma
+- **Frescura — con trinquete.** El bundle tiene que corresponder al `ui/` **y al `locales/`**
+  actuales, con la misma
   jerarquía de evidencia que el handler WASM: **sello** → **git** (cambios sin commitear, o `ui/`
   commiteado después del bundle) → **fechas de fichero**. Los ficheros que nunca entran en el
   artefacto (`*.test.ts`, `*.spec.ts`, `*.d.ts` y los directorios de apoyo a tests `ui/test/`,
   `tests/`, `__tests__/`, `__mocks__/`) quedan fuera de las tres capas: un commit que solo toca un
   test no desfasa nada, y decir lo contrario es como un gate se gana que nadie lo lea.
 
-  El trinquete: **con sello es ERROR, sin sello es AVISO**. Ninguno de los 27 módulos publicados
-  tiene sello todavía, y poner 27 repos en rojo por un cambio nuestro es como se acaba desactivando
-  un guardarraíl; en cuanto un módulo se construye una vez gana el sello y a partir de ahí falla.
+  El trinquete: **con sello es ERROR, sin sello es AVISO**; poner 27 repos en rojo por un cambio
+  nuestro es como se acaba desactivando un guardarraíl, así que en cuanto un módulo se construye una
+  vez gana el sello y a partir de ahí falla. El mismo trinquete se aplica **campo a campo**: un
+  sello escrito antes de module-toolkit#158 no lleva `locales_sha256`, así que no responde por el
+  catálogo hasta que el módulo se vuelve a construir — y `sources_sha256` **sigue significando
+  exactamente `ui/`**, porque mover su significado pondría en rojo a los que ya tienen sello.
 
 ## Que el SQL prepare de verdad (`--pg`) — module-toolkit#32
 
