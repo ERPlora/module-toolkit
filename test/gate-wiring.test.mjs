@@ -180,3 +180,50 @@ test('this repository’s own CI installs Rust, so the #146 controls cannot skip
   assert.match(CI, /sh\.rustup\.rs/, 'the two real-cargo controls must never be allowed to skip');
   assert.match(CI, /test\/run-cargo\.test\.mjs/, 'and the suite that holds them must be in the list');
 });
+
+// ── The hub battery pairing is WIRED, and reuses the SDK step's checkout (#163) ─────────────
+// Same failure this file exists for, one chain further: the pairing guard is only reachable
+// because the `sdk` step already dragged the whole ERPlora/hub onto the runner. Delete that step,
+// rename its output, or drop this one, and the guard stops running — silently, on 27 repos, with
+// nothing red to say the pair is no longer being checked. hub#1381 is that exact defect.
+const PAIRING_ACTION = 'ERPlora/module-toolkit/.github/actions/check-hub-battery-pairing@main';
+
+test('the gate runs the hub battery pairing guard, fed by the SDK step', () => {
+  const step = stepUsing(GATE, PAIRING_ACTION);
+  assert.match(
+    step,
+    /sdk-path:\s*\$\{\{\s*steps\.sdk\.outputs\.path\s*\}\}/,
+    'the pairing guard must read the hub from the checkout the `sdk` step already fetched — '
+      + 'anything else would need a credential this repository cannot have',
+  );
+  assert.match(
+    step,
+    /base-sha:\s*\$\{\{\s*github\.event\.pull_request\.base\.sha\s*\}\}/,
+    'without the base sha the diff is empty and the guard passes everything',
+  );
+  assert.match(step, /path:\s*\$\{\{\s*inputs\.path\s*\}\}/);
+});
+
+test('the pairing guard runs on pull_request, where the other edit can still be demanded', () => {
+  const step = stepUsing(GATE, PAIRING_ACTION);
+  assert.match(
+    step,
+    /if:\s*github\.event_name == 'pull_request'/,
+    'the pair breaks at the MERGE, so the demand belongs on the pull request',
+  );
+});
+
+test('the pairing action exists and takes the three inputs the gate passes', () => {
+  const action = readFileSync(
+    join(REPO, '.github/actions/check-hub-battery-pairing/action.yml'),
+    'utf8',
+  );
+  for (const input of ['path:', 'sdk-path:', 'base-sha:']) {
+    assert.match(action, new RegExp(`\\n {2}${input.replace('-', '-')}`), `missing input ${input}`);
+  }
+  assert.match(
+    action,
+    /src\/check-hub-battery-pairing\.mjs/,
+    'the action must invoke the checked module, not reimplement it',
+  );
+});
