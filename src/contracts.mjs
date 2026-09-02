@@ -267,10 +267,10 @@ export const CORE_OPERATIONS = {
     'hub.roles.list',
     'hub.setup.status',
     'hub.approvals.list',
-    // hub#297 — el techo de la simplificada como DATO: el core RESPONDE, el TPV DECIDE.
+    // hub#297 — the simplified-invoice ceiling as DATA: the core ANSWERS, the POS DECIDES.
     'hub.fiscal.limits',
-    // hub#1453 — la VÍA por la que el hub transmite a la AEAT (delegada o certificado propio) es
-    // un DATO que el módulo lee: el core la resuelve, el TPV decide qué enseña.
+    // hub#1453 — the ROUTE the hub transmits to the AEAT through (delegated or own certificate)
+    // is DATA a module reads: the core resolves it, the POS decides what to show.
     'hub.fiscal.transmission',
     // hub#1107 — the print queue is READABLE by a module: coverage per station and the queue
     // as a status view (the document never travels; it leaves through the drain, ADR-0192).
