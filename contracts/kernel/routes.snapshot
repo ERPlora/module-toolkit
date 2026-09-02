@@ -18,6 +18,10 @@ DELETE  /api/business/certificate                      auth:admin
 GET     /api/business/certificate                      auth:session
 PUT     /api/business/certificate                      auth:admin
 POST    /api/business/fiscal-identity                  auth:admin+session
+DELETE  /api/business/gateway-identity                 auth:admin
+GET     /api/business/gateway-identity                 auth:session
+PUT     /api/business/gateway-identity/certificate     auth:admin
+POST    /api/business/gateway-identity/csr             auth:admin
 POST    /api/command                                   auth:any-credential
 GET     /api/device/mode                               auth:none
 PUT     /api/device/mode                               auth:admin

@@ -221,6 +221,14 @@ _hub_fiscal_regime_registry.regime_key text NOT NULL
 _hub_fiscal_regime_registry.simplified_invoice_max_cents bigint NOT NULL
 _hub_fiscal_regime_registry.since text NOT NULL
 
+_hub_gateway_identity.ca_pem text NOT NULL
+_hub_gateway_identity.certificate_pem text NOT NULL
+_hub_gateway_identity.common_name text NOT NULL
+_hub_gateway_identity.created_at text NOT NULL
+_hub_gateway_identity.hub_id text NOT NULL
+_hub_gateway_identity.private_key_pem text NOT NULL
+_hub_gateway_identity.updated_at text NOT NULL
+
 _hub_meta.key text NOT NULL
 _hub_meta.value text NOT NULL
 
