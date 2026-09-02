@@ -103,6 +103,23 @@ jobs:
       - id: sdk
         uses: ERPlora/hub/.github/actions/module-sdk@develop
 
+      # ── La otra mitad del par vive en el hub (ERPlora/hub#1439, #163) ─────────────────────────
+      # Una batería `*.hub.test.py|sh` y su línea en `scripts/ci/module-hub-batteries.txt` del hub
+      # son UN PAR, y hasta ahora solo el hub lo comprobaba: quien lo rompía mergeaba en verde y el
+      # rojo salía en OTRO repo, horas después, en el push de otra persona (inventory#77 → v1.2.44
+      # → 14 runs rojos, y con el crater de los 27 módulos sin ejecutarse un día entero, porque ese
+      # guard corre ANTES de `cargo test`).
+      #
+      # Va DESPUÉS del paso `sdk` porque reutiliza su salida: el checkout del hub que ese paso ya
+      # ha traído al runner es de donde se lee la lista, sin credencial y sin red. Y solo en
+      # `pull_request`, que es el momento en que se puede exigir la otra edición ANTES del merge.
+      - if: github.event_name == 'pull_request'
+        uses: ERPlora/module-toolkit/.github/actions/check-hub-battery-pairing@main
+        with:
+          path: ${{ inputs.path }}
+          sdk-path: ${{ steps.sdk.outputs.path }}
+          base-sha: ${{ github.event.pull_request.base.sha }}
+
       # Resolved without any token: this repository is private, but its actions are shared with the
       # organization (repo Settings → Actions → Access). Pinned to `main` on purpose — the gate is
       # meant to be the CURRENT validator, not the one that existed when the stub was written.

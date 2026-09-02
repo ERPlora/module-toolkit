@@ -1,0 +1,84 @@
+# A module PR that ADDS a hub battery must declare it in the hub — ERPlora/hub#1439 (#163).
+#
+# WHY IT IS A STEP OF THE MODULE'S GATE and not of the hub's CI. The two halves of the pair live in
+# different repositories and only the hub had a guard, so the break always surfaced on the wrong
+# machine: the module author merged green, published green, and the red appeared in ERPlora/hub,
+# hours later, in somebody else's push. inventory#77 → v1.2.44 → 14 red runs, and since that guard
+# runs BEFORE `cargo test`, the crater of the 27 published modules did not run for a whole day.
+#
+# WHY NOT `release.yml`. The hub reads the PUBLISHED catalogue, which is each module's `main`. The
+# pair therefore breaks at the MERGE, not at the version bump — a gate on publishing would announce
+# a break that already happened.
+#
+# WHY NO TOKEN, AND WHY THAT IS THE WHOLE MECHANISM. Reading a file out of the private ERPlora/hub
+# has no credential available: on the free plan organization secrets do not reach a private
+# repository, and a PAT in 27 module repos is a security decision, not a CI detail. Nothing is
+# fetched here. The gate already resolves `ERPlora/hub/.github/actions/module-sdk@develop`, and
+# resolving a composite action makes the runner clone that repository IN FULL — the list is simply
+# read off the disk, two levels above the SDK path that step already outputs. Same door
+# module-toolkit#61/#66 opened for the canonical mirrors.
+name: Check the hub battery pairing
+description: >
+  Fails when this pull request adds a `*.hub.test.py|sh` battery that
+  `ERPlora/hub:scripts/ci/module-hub-batteries.txt` does not declare, naming the exact line and the
+  file that is missing it.
+
+inputs:
+  path:
+    description: Path of the module inside the repository.
+    required: false
+    default: '.'
+  sdk-path:
+    description: >
+      The `@erplora/module-sdk` directory on the runner, as output by
+      `ERPlora/hub/.github/actions/module-sdk`. The hub checkout is its grandparent.
+    required: true
+  base-sha:
+    description: The pull request's base commit, to diff against.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: La batería nueva está declarada en el hub
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        MODULE_PATH: ${{ inputs.path }}
+        SDK_PATH: ${{ inputs.sdk-path }}
+        BASE_SHA: ${{ inputs.base-sha }}
+      run: |
+        set -euo pipefail
+        toolkit=$(cd "$ACTION_PATH/../../.." && pwd)
+
+        # 🔴 An unresolvable base is an ERROR, never an empty diff. `git diff` against a missing
+        # object would print nothing, the check would find no new battery, and the guard would go
+        # green on exactly the pull request it exists to stop.
+        if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --quiet --depth=1 origin "$BASE_SHA" 2>/dev/null || true
+        fi
+        if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            echo "❌ no se puede leer el commit base ($BASE_SHA): sin él, el diff saldría VACÍO y" >&2
+            echo "   este guardia daría verde justo en la PR que tiene que parar." >&2
+            exit 1
+        fi
+
+        module_dir=$(cd "$MODULE_PATH" && pwd)
+
+        # Three dots: what this branch ADDS since the common ancestor, which is the PR's own work
+        # and not whatever landed on the base meanwhile.
+        added=()
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            added+=(--added "$GITHUB_WORKSPACE/$f")
+        done < <(git diff --name-only --diff-filter=A "$BASE_SHA...HEAD" -- "$MODULE_PATH")
+
+        if [ ${#added[@]} -eq 0 ]; then
+            echo "· la PR no añade ficheros bajo $MODULE_PATH: nada que emparejar."
+            exit 0
+        fi
+
+        node "$toolkit/src/check-hub-battery-pairing.mjs" \
+            --module-dir "$module_dir" \
+            --sdk-path "$SDK_PATH" \
+            "${added[@]}"
