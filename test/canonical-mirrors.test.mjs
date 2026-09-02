@@ -138,7 +138,10 @@ test('the core capabilities the gate accepts are EXACTLY the runtime\'s (#297)',
 function grandfatheredOfTheRuntime(rust) {
   const block = /pub const GRANDFATHERED:[\s\S]*?=\s*&\[([\s\S]*?)\n\]\s*;/.exec(rust);
   assert.ok(block, 'GRANDFATHERED is no longer declared like this in migration_guard.rs — update the reader');
-  return [...block[1].matchAll(/\(\s*"([^"]+)",\s*"([^"]+)"\s*\)/g)].map((m) => [m[1], m[2]]);
+  // The optional trailing comma is rustfmt's: a tuple it wraps across lines gets one before the
+  // closing paren, and a reader that cannot see it silently DROPS those entries — which is how
+  // hub#1287's rewrap made this mirror report drift that did not exist (module-toolkit#162).
+  return [...block[1].matchAll(/\(\s*"([^"]+)",\s*"([^"]+)"\s*,?\s*\)/g)].map((m) => [m[1], m[2]]);
 }
 
 test('the grandfathered migrations are EXACTLY the runtime\'s (#51)', (t) => {
