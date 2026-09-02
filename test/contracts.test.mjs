@@ -575,3 +575,60 @@ test('un read opcional a un módulo PRESENTE con nombre inventado sigue siendo e
   assert.equal(errors.length, 1, 'opcional es la AUSENCIA del módulo, no un typo');
   assert.match(errors[0], /alpha\.no\.existe/);
 });
+
+// ═══ The core namespace: the hand-copied list against the VENDORED kernel contract ════════════
+//
+// `CORE_OPERATIONS.queries` (src/contracts.mjs) is copied BY HAND from the runtime's `CORE_QUERIES`
+// (`hub/crates/runtime/src/hub_users.rs`), and `test/canonical-mirrors.test.mjs` already compares
+// the two — but only where there is a hub to compare against, which is CI and nowhere else. It
+// skips itself otherwise, and a skip is not a denial: it stays open.
+//
+// So the same drift gets a second door, and this one needs no hub. `contracts/kernel/engine.snapshot`
+// is VENDORED here — the hub generates it from its own code, `npm run sync-mirrors` copies it, and
+// its `[core_queries]` section is the same list. Reading the copy that is already in the checkout
+// turns "the mirror was resynced and the hand-copied list was not" into a red test on the very pull
+// request that does the resync, on any runner, with the hub nowhere in sight.
+//
+// It is the exact hole this pair fell into (pm#232): mt#165 synced `engine.snapshot` for the core
+// query `hub.fiscal.transmission` that hub#1453 had just added, and left `CORE_OPERATIONS` behind —
+// the expensive direction of the drift, where a module consuming a REAL core query is told by the
+// gate that it does not exist.
+import { CORE_OPERATIONS } from '../src/contracts.mjs';
+import { VENDORED_KERNEL_CONTRACT_DIR } from '../src/kernel-contract.mjs';
+
+/** A `[section]` of a kernel snapshot → its lines, in order. Absent section = an error, never []. */
+function kernelSnapshotSection(file, section) {
+  const text = readFileSync(join(VENDORED_KERNEL_CONTRACT_DIR, file), 'utf8');
+  // No `m` flag on purpose: with it, `$` matches at every line break and the lazy group stops at
+  // the FIRST entry — which reads as a section of one and passes for a list that has just been
+  // emptied. The anchor is the string, so `^` is spelled out as "start, or after a newline".
+  const block = new RegExp(`(?:^|\\n)\\[${section}\\]\\n([\\s\\S]*?)(?=\\n\\[|$)`).exec(text);
+  assert.ok(block, `\`[${section}]\` is no longer a section of contracts/kernel/${file} — update the reader`);
+  return block[1].split('\n').filter((line) => line.trim() && !line.startsWith('#'));
+}
+
+test('the core queries the gate accepts are EXACTLY the vendored kernel contract (pm#232)', () => {
+  assert.deepEqual(
+    CORE_OPERATIONS.queries,
+    kernelSnapshotSection('engine.snapshot', 'core_queries'),
+    'contracts/kernel/engine.snapshot was resynced and CORE_OPERATIONS (src/contracts.mjs) was not: ' +
+      'a module consuming that core query is about to be rejected as a typo by the gate of 27 repos',
+  );
+});
+
+test('every core query on the list really passes the gate as a consumption (pm#232)', () => {
+  // The list is the DOOR, not decoration: `crossValidateFull` is what a module walks through.
+  // What this catches, verified by mutation: a door that stops consulting `CORE_OPERATIONS` and
+  // freezes a copy of its own goes red here while the mirror above stays green. What it does NOT
+  // catch — and cannot, because the list IS the definition of the namespace — is an invented name
+  // added to the list and to the snapshot alike; that one is the hub's own kernel-contract test.
+  // The negative half of the door is covered above: `hub.inventado.list` stays an error.
+  for (const query of CORE_OPERATIONS.queries) {
+    const { ws, beta } = fakeWorkspace();
+    write(beta, 'ui/components/x.ts', `await erplora().query('${query}');`);
+    const manifest = readManifest(beta);
+    const { errors, deferred } = crossValidateFull(manifest, buildContracts(beta, manifest), loadUniverse(ws));
+    assert.deepEqual(errors, [], `\`${query}\` is a core query and the gate rejects it`);
+    assert.deepEqual(deferred, [], `\`${query}\` must not be deferred: the core is always there`);
+  }
+});
