@@ -22,6 +22,7 @@ hub.roles.list
 hub.setup.status
 hub.approvals.list
 hub.fiscal.limits
+hub.fiscal.transmission
 hub.print.coverage
 hub.print.jobs
 
