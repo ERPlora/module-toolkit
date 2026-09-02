@@ -55,6 +55,20 @@ const TEST_SUPPORT_DIRS = new Set(['test', 'tests', '__tests__', '__mocks__']);
 const SOURCE_ROOTS = ['ui', 'src'];
 
 /**
+ * The translation catalogue (module-toolkit#158). It is NOT a second source root: every published
+ * module writes `import esLocale from '../../../locales/es.json'` in its component, so esbuild
+ * INLINES the catalogue into the bundle — a merge that only touches `locales/**` changes what the
+ * screen says and leaves `dist/` behind. `locales/**` is a trigger path of `release.yml`, so that
+ * merge bumps the version and republishes the OLD strings.
+ *
+ * It is hashed SEPARATELY, into `locales_sha256`, and never folded into `sources_sha256`: the eight
+ * modules that already carry a #93 stamp would all go red for a change of ours the moment the
+ * meaning of that field moved. Same ratchet as #93 — a stamp with no `locales_sha256` is not held
+ * to the catalogue until the module builds once more.
+ */
+const LOCALE_ROOTS = ['locales'];
+
+/**
  * Files that `resolveEntry`/`collectTs` (build.mjs) deliberately keep OUT of the artifact: the
  * co-located tests, and the ambient declarations. Hashing them would flag a bundle as stale for a
  * commit that provably cannot change a single byte of it — the cry-wolf that gets a gate ignored.
@@ -103,19 +117,35 @@ function walk(from, out) {
   return out;
 }
 
-/** sha256 of the Web Component sources: relative paths + contents, order-independent. */
-export function hashUiSources(dir) {
+/** Every translation catalogue of the module (absolute paths). Empty when it ships none. */
+export function collectLocaleSources(dir, out = []) {
+  for (const root of LOCALE_ROOTS) walk(join(dir, root), out);
+  return out;
+}
+
+/** sha256 of a set of files: relative paths + contents, order-independent. */
+function hashFiles(dir, paths) {
   const hash = createHash('sha256');
-  for (const path of collectUiSources(dir).sort()) {
+  for (const path of paths.sort()) {
     hash.update(relative(dir, path)).update('\0').update(readFileSync(path)).update('\0');
   }
   return hash.digest('hex');
 }
 
-/** Newest Web Component source: `{ path, mtimeMs }` (`path: null` when the module has none). */
+/** sha256 of the Web Component sources: relative paths + contents, order-independent. */
+export function hashUiSources(dir) {
+  return hashFiles(dir, collectUiSources(dir));
+}
+
+/** sha256 of the translation catalogues esbuild inlines into the bundle (module-toolkit#158). */
+export function hashLocaleSources(dir) {
+  return hashFiles(dir, collectLocaleSources(dir));
+}
+
+/** Newest file that goes INTO the bundle: `{ path, mtimeMs }` (`path: null` when there is none). */
 function newestUiSource(dir) {
   let newest = { path: null, mtimeMs: 0 };
-  for (const path of collectUiSources(dir)) {
+  for (const path of [...collectUiSources(dir), ...collectLocaleSources(dir)]) {
     const { mtimeMs } = statSync(path);
     if (mtimeMs > newest.mtimeMs) newest = { path, mtimeMs };
   }
@@ -128,6 +158,9 @@ export function bundleBuildStamp(dir, manifest, extra = {}) {
   return {
     file,
     sources_sha256: hashUiSources(dir),
+    // module-toolkit#158. Its own field, never folded into `sources_sha256`: moving the meaning of
+    // that one would turn the eight already-stamped modules red for a change of ours.
+    locales_sha256: hashLocaleSources(dir),
     bundle_sha256: createHash('sha256').update(readFileSync(join(dir, file))).digest('hex'),
     built_at: new Date().toISOString(),
     ...extra,
@@ -301,7 +334,9 @@ function lastCommittedUiFile(dir, roots) {
  */
 function gitBundleState(dir, file) {
   if (git(dir, ['rev-parse', '--is-inside-work-tree'])?.trim() !== 'true') return null;
-  const roots = SOURCE_ROOTS.filter((r) => existsSync(join(dir, r)));
+  // `locales/` is in here for the same reason it is in the stamp (module-toolkit#158): esbuild
+  // inlines the catalogue, so a commit that only touches it leaves the bundle behind.
+  const roots = [...SOURCE_ROOTS, ...LOCALE_ROOTS].filter((r) => existsSync(join(dir, r)));
   const uiDirty = git(dir, ['status', '--porcelain', '--', ...roots, ...GIT_EXCLUDE_NOT_IN_BUNDLE]);
   const bundleDirty = git(dir, ['status', '--porcelain', '--', file]);
   if (uiDirty === null || bundleDirty === null) return null;
@@ -347,15 +382,17 @@ function bundleState(dir, manifest) {
   const stamp = readStamp(dir, manifest.id, file);
   if (stamp) {
     const sourcesMatch = stamp.sources_sha256 === hashUiSources(dir);
+    // RATCHET (module-toolkit#158): a stamp written before the catalogue was hashed says nothing
+    // about it, so it is not held to it. `undefined` is "not stamped for locales", never "matches".
+    const localesMatch =
+      stamp.locales_sha256 === undefined || stamp.locales_sha256 === hashLocaleSources(dir);
     const bundleMatches =
       stamp.bundle_sha256 === createHash('sha256').update(readFileSync(path)).digest('hex');
-    if (sourcesMatch && bundleMatches) return { state: 'fresh', reason: 'stamp', file };
-    return {
-      state: 'stale',
-      reason: sourcesMatch ? 'stamp-bundle' : 'stamp-sources',
-      file,
-      source: relative(dir, source.path),
-    };
+    if (sourcesMatch && localesMatch && bundleMatches) return { state: 'fresh', reason: 'stamp', file };
+    let reason = 'stamp-bundle';
+    if (!sourcesMatch) reason = 'stamp-sources';
+    else if (!localesMatch) reason = 'stamp-locales';
+    return { state: 'stale', reason, file, source: relative(dir, source.path) };
   }
 
   // 2) git history, for modules not yet built with a toolkit that stamps.
@@ -382,6 +419,8 @@ function lagLabel(lagMs) {
 function staleReason(id, info) {
   const stamp = bundleStampFile(id);
   if (info.reason === 'stamp-sources') return `${info.source} ha cambiado desde el build que anotó ${stamp}`;
+  if (info.reason === 'stamp-locales')
+    return `locales/ ha cambiado desde el build que anotó ${stamp} — el catálogo va INLINE en el bundle`;
   if (info.reason === 'stamp-bundle') return `el bundle no es el que dejó el build anotado en ${stamp}`;
   if (info.reason === 'git-worktree') return `${info.source} tiene cambios que el bundle no lleva`;
   if (info.reason === 'git-history') return `${info.source} se commiteó ${lagLabel(info.lagMs)} después que el bundle`;
@@ -413,7 +452,7 @@ export function checkBundleFreshness(dir, manifest) {
     '(module-toolkit#93).';
 
   // Ratchet: only a module that already built with a stamping toolkit can be held to an error.
-  if (info.reason === 'stamp-sources' || info.reason === 'stamp-bundle') out.errors.push(message);
+  if (info.reason?.startsWith('stamp-')) out.errors.push(message);
   else out.warnings.push(`${message} Hoy es AVISO porque el módulo aún no tiene sello; en cuanto lo construyas una vez, será error.`);
   return out;
 }
