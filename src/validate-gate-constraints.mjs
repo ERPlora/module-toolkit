@@ -47,16 +47,15 @@ import { splitStatements, stripComments } from './validate-migration-guard.mjs';
 
 /**
  * The gate tables that carry the anonymous CHECK on `origin/main` today (measured 01/09/2026 over
- * the 27 module repos: these four, plus `verifactu`, which is already fixed).
+ * the 27 module repos: these three, plus `verifactu` and `appointments`, already fixed).
  *
- * A ratchet, not a permanent exemption. A hard error with no tolerance list would put four green,
+ * A ratchet, not a permanent exemption. A hard error with no tolerance list would put green,
  * published repos in red for a rule written here today — which is how a gate gets switched off
  * instead of obeyed. They are named ONE BY ONE with the issue that retires them, they WARN on every
  * run (never silent, unlike a plain exemption), and the list can only SHRINK: a gate table added
  * from today is born in error.
  */
 export const GRANDFATHERED = [
-  ['appointments', 'migrations/postgres/003_gate.sql', 'ERPlora/appointments#103'],
   ['reservations', 'migrations/postgres/002_gate.sql', 'ERPlora/reservations#42'],
   ['services', 'migrations/postgres/003_package_redemption.sql', 'ERPlora/services#91'],
   ['tables', 'migrations/postgres/002_gate.sql', 'ERPlora/tables#76'],

@@ -185,7 +185,6 @@ test('the tolerance list is exactly the corpus measured on origin/main (01/09/20
   assert.deepEqual(
     GRANDFATHERED.map(([m, f]) => `${m}:${f}`).sort(),
     [
-      'appointments:migrations/postgres/003_gate.sql',
       'reservations:migrations/postgres/002_gate.sql',
       'services:migrations/postgres/003_package_redemption.sql',
       'tables:migrations/postgres/002_gate.sql',
