@@ -16,6 +16,12 @@
 // ignoring a field leaves the module WRONG — a command without the guard its author declared, a
 // migration whose reach is not what it says — and that is REFUSED. Everywhere else the cost is a
 // screen, a button or a checklist item, and that is REPORTED.
+//
+// The ROOT is the one exception, and deliberately not through REFUSED_PATHS (module-toolkit#174):
+// mirroring it there would drag the runtime's install-time policy along for the ride, and the
+// install door has to stay lenient for whatever is already published. The author's door does not —
+// rejecting here only blocks a NEW publish, so it can be strict at the root even while the runtime
+// keeps warning. See `report()`.
 import { loadManifestSchema } from './manifest-schema.mjs';
 
 /**
@@ -259,6 +265,21 @@ function report(key, contractPath, displayPath, known, ctx) {
     ctx.errors.push(
       `${line} Aquí se rechaza porque cambia lo que se EJECUTA o quién puede ejecutarlo: ` +
         'el runtime la ignoraría en silencio y el módulo haría algo distinto de lo que dice.',
+    );
+  } else if (contractPath === '') {
+    // module-toolkit#174: la RAÍZ es su propia regla, deliberadamente fuera de REFUSED_PATHS.
+    // REFUSED_PATHS mirra la política de INSTALACIÓN del runtime (`refuses_unknown_fields`,
+    // `test/canonical-mirrors.test.mjs`) y esa mantiene la raíz como aviso — tocarla aquí también
+    // pondría el mirror en rojo en el hub sin que nadie lo haya cambiado allí. Pero la puerta del
+    // AUTOR puede ser más estricta que la de instalación sin ese riesgo: rechazar aquí solo bloquea
+    // publicaciones NUEVAS, nunca lo ya instalado. `modifiers` publicó `author` en la raíz en verde
+    // hasta la v0.1.7 — el único rojo posible vivía horas después, en el hub, para otra persona
+    // (ERPlora/hub#1500) — y el contrato de la raíz ya es cerrado en el schema
+    // (`additionalProperties: false`, ADR-0286).
+    ctx.errors.push(
+      `${line} La raíz del manifest es un contrato CERRADO (\`additionalProperties: false\`, ` +
+        'ADR-0286): una clave que el core no lee se publicaría en verde y el aviso solo aparecería, ' +
+        'ya instalado el módulo, en el hub de un cliente.',
     );
   } else {
     ctx.warnings.push(line);

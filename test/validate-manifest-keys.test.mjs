@@ -104,6 +104,30 @@ test('a retired field is NEVER also a known one (the list is not a junk drawer)'
   }
 });
 
+// ── An unknown ROOT key is an ERROR (module-toolkit#174) ──────────────────────────────────────
+//
+// `modifiers` published a root `author` in green across every version up to v0.1.7 — it was only
+// ever a WARNING, so it never blocked a publish, and the one red it ever produced lived hours
+// later, in the hub's own CI, for someone else (ERPlora/hub#1500). The root of the manifest is a
+// CLOSED contract (`schemas/module.schema.json`, `additionalProperties: false`, ADR-0286): this is
+// scoped to the root on purpose, so `commands.*.validates` — a RETIRED field `inventory` still
+// publishes — keeps warning exactly as it does today.
+test('an unknown ROOT key is an ERROR, not a warning (#174)', () => {
+  const { errors, warnings } = checkManifestKeys({ ...base(), author: 'Someone' });
+  assert.deepEqual(warnings, []);
+  assert.equal(errors.length, 1, 'the `modifiers` bug: a root key with no door catching it');
+  assert.match(errors[0], /^author: clave desconocida `author`/);
+});
+
+test('a RETIRED field elsewhere in the manifest keeps warning, unaffected by the root rule (#174)', () => {
+  const { errors, warnings } = checkManifestKeys({
+    ...base(),
+    commands: { 'demo.do': { sql: 'x.sql', validates: 'demo.check' } },
+  });
+  assert.deepEqual(errors, [], 'inventory\'s `commands.*.validates` gate must not go red');
+  assert.equal(warnings.length, 1);
+});
+
 // ── through the REAL door ────────────────────────────────────────────────────────────────────
 // The check on its own proves nothing if `erplora validate` does not run it: the door the bug
 // walked through is the command, not the function.
@@ -128,6 +152,15 @@ test('`erplora validate` lets the same manifest through once spelled right', asy
   const dir = moduleDir({ ...base(), events: { emits: ['demo.thing.created'] } });
   try {
     await validate(dir); // does not throw
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('`erplora validate` REJECTS a manifest carrying a root `author` (the `modifiers` fixture, #174)', async () => {
+  const dir = moduleDir({ ...base(), author: 'Someone' });
+  try {
+    await assert.rejects(() => validate(dir), /manifest inválido[\s\S]*author/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
