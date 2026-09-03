@@ -59,6 +59,10 @@ runs:
         toolkit=$(cd "$ACTION_PATH/../../.." && pwd)
         ts=$(node -p "require('$toolkit/package.json').dependencies.typescript")
         deps="$RUNNER_TEMP/erplora-mirror-deps"
+        # $RUNNER_TEMP is the slot's persistent _work/_temp, not wiped between jobs — wipe it
+        # ourselves so a half-installed tree left by a killed previous job can't trip npm's
+        # arborist (module-toolkit#171, reopened).
+        rm -rf "$deps"
         mkdir -p "$deps"
         npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error "typescript@$ts"
         mkdir -p "$toolkit/node_modules"

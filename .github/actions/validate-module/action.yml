@@ -119,6 +119,12 @@ runs:
         # validator it runs.
         ts=$(node -p "require('$toolkit/package.json').dependencies.typescript")
         deps="$RUNNER_TEMP/erplora-validator-deps"
+        # $RUNNER_TEMP on ci-runner-1 is the SLOT's own persistent _work/_temp, not wiped between
+        # jobs — a job killed mid-install here (OOM, a cancelled run) leaves $deps/node_modules
+        # half-installed for the NEXT job on that slot, and npm's arborist trips on that leftover
+        # tree (`Cannot read properties of null (reading 'edgesOut')`, module-toolkit#171,
+        # reopened — #172's private --cache did not touch this, the tree itself was stale).
+        rm -rf "$deps"
         mkdir -p "$deps"
         # Installed in a scratch prefix on purpose: installing INTO the toolkit would reify its
         # whole tree, `file:` dependencies included, and fail.
@@ -274,6 +280,11 @@ runs:
           ' "$mod/package.json" "$1" "$2"
         }
         deps="$RUNNER_TEMP/erplora-module-ui-deps"
+        # See the sibling `rm -rf "$deps"` above: this is the exact directory that reproduced
+        # module-toolkit#171 reopened (run 33757710972, taxes, with #172's private --cache already
+        # in place) — a leftover half-installed tree from a previous job on the same slot, not a
+        # cache race.
+        rm -rf "$deps"
         mkdir -p "$deps"
         # A scratch prefix, never the module itself: `npm install` inside the module would try to
         # resolve its `workspace:*` dependencies and fail as a whole.

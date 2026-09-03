@@ -182,6 +182,10 @@ jobs:
         run: |
           set -euo pipefail
           deps="$RUNNER_TEMP/erplora-validator-deps"
+          # $RUNNER_TEMP is the slot's persistent _work/_temp, not wiped between jobs — wipe it
+          # ourselves so a half-installed tree left by a killed previous job can't trip npm's
+          # arborist (module-toolkit#171, reopened).
+          rm -rf "$deps"
           mkdir -p "$deps" node_modules
           for pkg in typescript @ionic/core; do
             want=$(node -p "require('./package.json').dependencies['$pkg']")
@@ -232,6 +236,7 @@ jobs:
           test/scaffold-runs-on-postgres.test.mjs
           test/package-lock-in-sync.test.mjs
           test/npm-cache-isolation.test.mjs
+          test/npm-scratch-dir-is-clean.test.mjs
           test/ci-runs-every-suite.test.mjs
 
       # Nobody tidies up after a job on a self-hosted runner: without this, a Postgres stays holding
