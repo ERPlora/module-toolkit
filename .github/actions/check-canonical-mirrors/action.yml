@@ -60,7 +60,7 @@ runs:
         ts=$(node -p "require('$toolkit/package.json').dependencies.typescript")
         deps="$RUNNER_TEMP/erplora-mirror-deps"
         mkdir -p "$deps"
-        npm install --prefix "$deps" --no-audit --no-fund --loglevel=error "typescript@$ts"
+        npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error "typescript@$ts"
         mkdir -p "$toolkit/node_modules"
         # ESM ignores NODE_PATH, so the package has to be physically resolvable from the toolkit.
         ln -sfn "$deps/node_modules/typescript" "$toolkit/node_modules/typescript"

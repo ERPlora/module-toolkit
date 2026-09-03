@@ -122,7 +122,7 @@ runs:
         mkdir -p "$deps"
         # Installed in a scratch prefix on purpose: installing INTO the toolkit would reify its
         # whole tree, `file:` dependencies included, and fail.
-        npm install --prefix "$deps" --no-audit --no-fund --loglevel=error "typescript@$ts"
+        npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error "typescript@$ts"
         mkdir -p "$toolkit/node_modules"
         # ESM ignores NODE_PATH, so the package has to be physically resolvable from the toolkit.
         ln -sfn "$deps/node_modules/typescript" "$toolkit/node_modules/typescript"
@@ -282,7 +282,7 @@ runs:
         # hub#760 that `inventory`, `pricing` and `staff` carry) reads Ionic's own CSS through
         # `require.resolve`, to prove the rule it enforces still has a reason to exist. Without it
         # those three modules are red on «Cannot find module», not on their own logic.
-        npm install --prefix "$deps" --no-audit --no-fund --loglevel=error \
+        npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error \
           "vitest@$(ver vitest ^4.1.10)" \
           "happy-dom@$(ver happy-dom ^20.0.0)" \
           "lit@$(ver lit ^3.2.0)" \
