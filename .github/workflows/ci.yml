@@ -182,14 +182,18 @@ jobs:
         run: |
           set -euo pipefail
           deps="$RUNNER_TEMP/erplora-validator-deps"
-          # $RUNNER_TEMP is the slot's persistent _work/_temp, not wiped between jobs — wipe it
-          # ourselves so a half-installed tree left by a killed previous job can't trip npm's
-          # arborist (module-toolkit#171, reopened).
+          # Belt and braces: the runner wipes $RUNNER_TEMP at the start of every job (measured on
+          # ci-runner-1, 2026-09-03: every idle slot holds an empty _work/_temp), so this only matters
+          # if that cleanup ever fails — a scratch install must never depend on it (module-toolkit#171).
           rm -rf "$deps"
           mkdir -p "$deps" node_modules
+          # `--legacy-peer-deps`: npm 10's arborist (Node 22's npm) crashes computing a peer set the day
+          # a peer family bumps major on the registry — vitest 5.0.0 took the whole module CI down on
+          # 2026-09-03 (module-toolkit#171). A throwaway prefix with an explicit package list needs no
+          # peer resolution. Guard: test/npm-scratch-install-skips-peer-resolution.test.mjs
           for pkg in typescript @ionic/core; do
             want=$(node -p "require('./package.json').dependencies['$pkg']")
-            npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error "$pkg@$want"
+            npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error --legacy-peer-deps "$pkg@$want"
           done
           ln -sfn "$deps/node_modules/typescript" node_modules/typescript
           mkdir -p node_modules/@ionic
@@ -237,6 +241,7 @@ jobs:
           test/package-lock-in-sync.test.mjs
           test/npm-cache-isolation.test.mjs
           test/npm-scratch-dir-is-clean.test.mjs
+          test/npm-scratch-install-skips-peer-resolution.test.mjs
           test/ci-runs-every-suite.test.mjs
 
       # Nobody tidies up after a job on a self-hosted runner: without this, a Postgres stays holding

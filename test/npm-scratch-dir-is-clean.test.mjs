@@ -1,26 +1,19 @@
-// Every scratch npm-install directory on the shared gate must start EMPTY on every job —
-// module-toolkit#171 (reopened).
+// Every scratch npm-install directory on the shared gate starts EMPTY on every job —
+// module-toolkit#171 (reopened), kept as belt and braces.
 //
-// WHAT BROKE, TWICE. #172 (8dc31db) gave every scratch install a private `--cache "$deps/…"`,
-// on the theory that `ci-runner-1`'s six slots (module-toolkit#43) were racing on the shared
-// `$HOME/.npm`. That premise was true but not the cause: re-running the same six blocked module
-// PRs with the fix already on `main` still failed in the same place, same error — evidence
-// `33757710972` (taxes, 2026-09-03T16:23:23Z), with the PRIVATE `.npm-cache` already visible in
-// the failing log path.
+// WHAT THIS IS, AND WHAT IT IS NOT. The reopening of #171 hypothesised that `$deps`
+// (`$RUNNER_TEMP/erplora-…-deps`, a FIXED name) survived from one job to the next on a self-hosted
+// slot, half-installed, and tripped npm's arborist. Measured on ci-runner-1 on 2026-09-03 it does
+// not: the runner wipes `_work/_temp` at the start of every job (every idle slot holds an empty
+// `_temp`, mtime = the end of its last job), and the crash reproduced 4/4 in a FRESH prefix with a
+// FRESH cache. Its real cause is the vitest 5.0.0 release meeting npm 10's peer-set walker — the
+// story and the guard that closes it live in `npm-scratch-install-skips-peer-resolution.test.mjs`.
 //
-// THE REAL CAUSE. `$deps` (`$RUNNER_TEMP/erplora-…-deps`) is a FIXED name, and `$RUNNER_TEMP` on
-// a self-hosted runner is the slot's own persistent `_work/_temp` — it is not wiped between jobs
-// the way a GitHub-hosted runner's workspace is. So `$deps/node_modules` from a job that got
-// killed mid-install (OOM, a cancelled run, a `docker rm -f` racing it — module-toolkit#43 again)
-// survives to the NEXT job on that slot, half-installed: dangling symlinks, a partial dependency
-// tree. npm's arborist reads that leftover tree to compute what changed, and a half-installed
-// tree is exactly the shape that trips its `Cannot read properties of null (reading 'edgesOut')`
-// bug — no race needed, a stale directory is enough on its own.
-//
-// THE FIX. `rm -rf "$deps"` right before every `mkdir -p "$deps"`, so each job's scratch install
-// starts from nothing regardless of what a previous job on the same slot left behind — the same
-// place `--cache` was pinned, so this rides the identical `$deps` derivation #172 already proved
-// isolates by slot. This asserts the wipe is there, not merely that `mkdir -p` runs.
+// WHY THE WIPE STAYS. The runner's cleanup is best-effort on its side, and a scratch install must
+// never DEPEND on it having succeeded: `rm -rf "$deps"` right before every `mkdir -p "$deps"`
+// makes each job start its install from nothing regardless of what any previous job on the same
+// slot left behind — it rides the identical `$deps` derivation #172 already proved isolates by
+// slot. This asserts the wipe is there, not merely that `mkdir -p` runs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
