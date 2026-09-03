@@ -16,6 +16,12 @@
 // ignoring a field leaves the module WRONG — a command without the guard its author declared, a
 // migration whose reach is not what it says — and that is REFUSED. Everywhere else the cost is a
 // screen, a button or a checklist item, and that is REPORTED.
+//
+// The ROOT is the one exception, and deliberately not through REFUSED_PATHS (module-toolkit#174):
+// mirroring it there would drag the runtime's install-time policy along for the ride, and the
+// install door has to stay lenient for whatever is already published. The author's door does not —
+// rejecting here only blocks a NEW publish, so it can be strict at the root even while the runtime
+// keeps warning. See `report()`.
 import { loadManifestSchema } from './manifest-schema.mjs';
 
 /**
@@ -259,6 +265,27 @@ function report(key, contractPath, displayPath, known, ctx) {
     ctx.errors.push(
       `${line} Aquí se rechaza porque cambia lo que se EJECUTA o quién puede ejecutarlo: ` +
         'el runtime la ignoraría en silencio y el módulo haría algo distinto de lo que dice.',
+    );
+  } else if (contractPath === '') {
+    // module-toolkit#174: the ROOT is its own rule, deliberately outside REFUSED_PATHS. That list
+    // mirrors the runtime's INSTALL policy (`refuses_unknown_fields`, `test/canonical-mirrors.test.mjs`),
+    // which keeps the root as a warning — adding it there would turn the hub's mirror red with nobody
+    // having changed anything on that side. The AUTHOR's door can be stricter than the install door
+    // without that risk: refusing here only blocks a NEW publish, never what is already installed.
+    // `modifiers` published a root `author` in green up to v0.1.7 — the only red it could ever get
+    // lived hours later, in the hub, for someone else (ERPlora/hub#1500) — and the root contract is
+    // already closed in the schema (`additionalProperties: false`, ADR-0286).
+    //
+    // The second way this line goes red is a STALE TOOLKIT: the core just gained a root key
+    // (`protects`, `errors` of ADR-0398) and the copy running here predates the schema sync. Three
+    // cases in `architecture/_experience` (sales-221/227/235) met that as a warning; as an error the
+    // tempting "fix" is to delete a legitimate field from the manifest, so the message sends the
+    // author to update the toolkit first — the gate runs `toolkit@main`, which is never behind.
+    ctx.errors.push(
+      `${line} La raíz del manifest es un contrato CERRADO (\`additionalProperties: false\`, ` +
+        'ADR-0286): una clave que el core no lee se publicaría en verde y el aviso solo aparecería, ' +
+        'ya instalado el módulo, en el hub de un cliente. Si la clave la acaba de estrenar el core, ' +
+        'NO la borres: actualiza el toolkit (`git pull` en module-toolkit; el gate usa `toolkit@main`).',
     );
   } else {
     ctx.warnings.push(line);
