@@ -117,6 +117,12 @@ test('an unknown ROOT key is an ERROR, not a warning (#174)', () => {
   assert.deepEqual(warnings, []);
   assert.equal(errors.length, 1, 'the `modifiers` bug: a root key with no door catching it');
   assert.match(errors[0], /^author: clave desconocida `author`/);
+  // The other way this line goes red: the CORE just gained a root key (`protects`, `errors` of
+  // ADR-0398) and the toolkit running here is behind. Three cases in `architecture/_experience`
+  // (sales-221/227/235) hit exactly that as a warning; as an error, the tempting "fix" is to delete
+  // a legitimate field from the manifest — so the message has to send the author to update the
+  // toolkit BEFORE touching the manifest.
+  assert.match(errors[0], /actualiza(r)? el toolkit/i, 'names the stale-toolkit case and its fix');
 });
 
 test('a RETIRED field elsewhere in the manifest keeps warning, unaffected by the root rule (#174)', () => {
