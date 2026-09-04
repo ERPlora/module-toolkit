@@ -94,7 +94,6 @@ export const FILL_GRANDFATHERED = [
   ['payment_gateways', 'ui/components/erp-payment-gateways-transactions/erp-payment-gateways-transactions.ts', 5],
   ['payments', 'ui/components/erp-payments-list/erp-payments-list.ts', 5],
   ['reservations', 'ui/components/erp-reservations-availability/erp-reservations-availability.ts', 6],
-  ['reservations', 'ui/components/erp-reservations-list/erp-reservations-list.ts', 5],
   ['reservations', 'ui/components/erp-reservations-waitlist/erp-reservations-waitlist.ts', 5],
   ['schedules', 'ui/components/erp-schedules-hours/erp-schedules-hours.ts', 14],
   ['services', 'ui/components/erp-services-categories/erp-services-categories.ts', 3],
