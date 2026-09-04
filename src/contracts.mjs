@@ -27,6 +27,10 @@ export const RECOGNIZERS = {
   // is in the universe.
   queryAllOptional: { kind: 'query', argument: 0, required: false },
   command: { kind: 'command', argument: 0, required: true },
+  // hub#1428 (ADR-0438): the same OPTIONAL door as `queryOptional`, but for WRITING — a module
+  // with `depends_on: []` inserting a row into a module that may not be installed. Optional
+  // like its reading sibling: no `depends_on`, but the name must exist if the owner is known.
+  commandOptional: { kind: 'command', argument: 0, required: false },
   on: { kind: 'event', argument: 0 },
   loadSlot: { kind: 'slot', argument: 0 },
   createListController: { kind: 'query', argument: 1, required: true },
@@ -34,6 +38,31 @@ export const RECOGNIZERS = {
 
 /** Nombre con namespace: `modulo.operacion[...]`. El primer segmento identifica al dueño. */
 const NAME_RE = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/;
+
+/**
+ * Las claves de `consumes`, en el orden en que se serializan: cada superficie obligatoria seguida
+ * de su hermana opcional.
+ */
+const CONSUMES_KEYS = ['queries', 'optional_queries', 'commands', 'optional_commands', 'events', 'slots'];
+
+/**
+ * Claves que se OMITEN cuando están vacías, en vez de emitirse como `[]`.
+ *
+ * `.erplora/contracts.json` se commitea y `erplora validate` lo compara byte a byte con el
+ * generado: emitir `optional_commands: []` en todos los módulos habría dejado obsoletos de golpe
+ * los 36 artefactos ya commiteados del workspace — y como el gate de cada módulo corre
+ * `module-gate.yml@main`, los 27 repos se habrían puesto en rojo el día del merge sin haber
+ * cambiado ni una línea. La clave aparece cuando hay algo que poner en ella, que es justo cuando
+ * el módulo regenera su artefacto de todas formas.
+ */
+const OMIT_WHEN_EMPTY = new Set(['optional_commands']);
+
+/** En qué lista de `consumes` cae un reconocedor: la superficie, partida por obligatorio/opcional. */
+function bucketFor({ kind, required }) {
+  if (kind === 'query') return required === false ? 'optional_queries' : 'queries';
+  if (kind === 'command') return required === false ? 'optional_commands' : 'commands';
+  return kind === 'event' ? 'events' : 'slots';
+}
 
 const IGNORE_MARK = 'erplora-contracts: ignore';
 
@@ -74,7 +103,7 @@ function lineIsIgnored(source, node) {
  *     jamás se persiste — líneas en el contrato = diffs irrelevantes al mover código)
  */
 export function extractContracts(dir, manifest) {
-  const sets = { queries: new Set(), optional_queries: new Set(), commands: new Set(), events: new Set(), slots: new Set() };
+  const sets = Object.fromEntries(CONSUMES_KEYS.map((k) => [k, new Set()]));
   const violations = [];
   const refs = [];
 
@@ -119,17 +148,7 @@ export function extractContracts(dir, manifest) {
           if (arg && (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))) {
             const name = arg.text;
             if (NAME_RE.test(name)) {
-              const bucket =
-                recognized.kind === 'query' && recognized.required === false
-                  ? 'optional_queries'
-                  : recognized.kind === 'query'
-                    ? 'queries'
-                    : recognized.kind === 'command'
-                      ? 'commands'
-                      : recognized.kind === 'event'
-                        ? 'events'
-                        : 'slots';
-              sets[bucket].add(name);
+              sets[bucketFor(recognized)].add(name);
               refs.push({ kind: recognized.kind, required: recognized.required !== false, name, file: rel, line: line + 1 });
             }
             // Un literal SIN namespace en on()/loadSlot() no es un contrato de dominio (p.ej. un
@@ -152,7 +171,8 @@ export function extractContracts(dir, manifest) {
   }
 
   const consumes = {};
-  for (const k of ['queries', 'optional_queries', 'commands', 'events', 'slots']) {
+  for (const k of CONSUMES_KEYS) {
+    if (sets[k].size === 0 && OMIT_WHEN_EMPTY.has(k)) continue;
     consumes[k] = [...sets[k]].sort();
   }
   return { consumes, violations, refs };
@@ -306,6 +326,9 @@ export function crossValidateFull(manifest, contracts, universe) {
   const checkOperation = (name, opKind, { optional = false } = {}) => {
     const owner = name.split('.')[0];
     const surface = opKind === 'command' ? 'commands' : 'queries';
+    // El consejo tiene que nombrar el helper de SU superficie: mandar a `queryOptional` a quien
+    // está ESCRIBIENDO es un mensaje que no se puede seguir (hub#1428, ADR-0438).
+    const optionalHelper = opKind === 'command' ? 'commandOptional' : 'queryOptional';
     // El CORE no es un módulo (ADR-0192): `hub.` es su namespace reservado en el dispatcher. No se
     // declara en `depends_on` (no hay nada que instalar ni que ordenar topológicamente) y siempre
     // está presente. Pero el nombre sí se comprueba: un typo aquí también es un contrato roto.
@@ -323,23 +346,26 @@ export function crossValidateFull(manifest, contracts, universe) {
     }
     if (!universe.has(owner)) {
       // Dueño desconocido: para lo OBLIGATORIO con dep declarada ya quedó aplazado arriba; para
-      // queryOptional a un módulo fuera del universo, se resuelve en la instalación.
+      // queryOptional/commandOptional a un módulo fuera del universo, se resuelve en la instalación.
       if (!optional && !missingDeps.has(owner) && !deps.has(owner)) {
         errors.push(`\`${name}\`: llamada a \`${owner}\` que no está en depends_on de \`${me}\``);
       }
       return;
     }
     if (!optional && !deps.has(owner)) {
-      errors.push(`\`${name}\`: llamada a \`${owner}\` que no está en depends_on de \`${me}\` (si la integración es opcional, usa queryOptional)`);
+      errors.push(`\`${name}\`: llamada a \`${owner}\` que no está en depends_on de \`${me}\` (si la integración es opcional, usa ${optionalHelper})`);
     }
     if (!universe.get(owner)[surface].has(name)) {
-      errors.push(`\`${name}\`: no existe en el manifest de \`${owner}\`${optional ? ' (queryOptional permite AUSENCIA del módulo, no contratos rotos)' : ''}`);
+      errors.push(`\`${name}\`: no existe en el manifest de \`${owner}\`${optional ? ` (${optionalHelper} permite AUSENCIA del módulo, no contratos rotos)` : ''}`);
     }
   };
 
   for (const q of contracts.consumes.queries) checkOperation(q, 'query');
   for (const q of contracts.consumes.optional_queries) checkOperation(q, 'query', { optional: true });
   for (const c of contracts.consumes.commands) checkOperation(c, 'command');
+  // `optional_commands` se omite del artefacto cuando está vacía (ver OMIT_WHEN_EMPTY), y este
+  // validador también recibe contratos LEÍDOS del marketplace, generados por toolkits anteriores.
+  for (const c of contracts.consumes.optional_commands ?? []) checkOperation(c, 'command', { optional: true });
 
   // reads (ADR-0069): declarados en el manifest — el handler corre en un sandbox y solo verá lo
   // que estas queries devuelvan; una read con typo se omitía EN SILENCIO en runtime.
