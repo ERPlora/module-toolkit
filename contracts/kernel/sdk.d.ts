@@ -378,6 +378,7 @@ export declare class ErploraClient {
     queryAll<T = unknown>(name: string, params?: ListParams): Promise<T[]>;
     queryAllOptional<T = unknown>(name: string, params?: ListParams): Promise<T[] | undefined>;
     command<T = unknown>(name: string, payload?: Record<string, unknown>): Promise<T>;
+    commandOptional<T = unknown>(name: string, payload?: Record<string, unknown>): Promise<T | undefined>;
     on(event: string, cb: (payload: unknown) => void): () => void;
     hasPermission(perm: string): boolean;
     notify(n: Notification): void;
