@@ -151,6 +151,20 @@ test('queryAllOptional is recorded as OPTIONAL, just like queryOptional (ERPlora
   assert.deepEqual(consumes.queries, [], 'optional: it is NOT a mandatory consumption');
 });
 
+test('commandOptional se registra APARTE, en `optional_commands` (hub#1428, ADR-0438)', () => {
+  // La MISMA puerta opcional de `queryOptional`, pero para ESCRIBIR: un módulo con `depends_on: []`
+  // que da de alta una fila en un módulo que puede no estar instalado. Sin reconocerla, la llamada
+  // no aparece en NINGÚN sitio de contracts.json — ni obligatoria ni opcional — y un contrato que
+  // nadie declara es un contrato que nadie comprueba: ni aquí, ni al publicar, ni al instalar.
+  const { beta } = fakeWorkspace();
+  write(beta, 'ui/components/x.ts', `
+    const created = await erplora().commandOptional<Item>('alpha.items.create', { name: 'Corte' });
+  `);
+  const { consumes } = extractContracts(beta, readManifest(beta));
+  assert.deepEqual(consumes.optional_commands, ['alpha.items.create']);
+  assert.deepEqual(consumes.commands, [], 'opcional: NO es un consumo obligatorio');
+});
+
 test('queryAllOptional does NOT require depends_on, and DOES require the contract to exist (sales#186)', () => {
   assert.deepEqual(
     validateBeta(`await erplora().queryAllOptional('alpha.items.list');`, (m) => { m.depends_on = []; }),
@@ -227,6 +241,47 @@ test('genera contracts.json mínimo, ordenado y determinista (sin líneas ni tim
   assert.equal(a.module, 'beta');
   assert.deepEqual(a.consumes.queries, ['alpha.items.get', 'beta.things.list'], 'ordenado y sin duplicados');
   for (const k of Object.keys(a)) assert.ok(!['generated_at', 'sources'].includes(k), 'sin timestamps ni líneas');
+});
+
+test('`optional_commands` solo se emite cuando SE USA: los contracts.json ya commiteados no quedan obsoletos', () => {
+  // `.erplora/contracts.json` se COMMITEA y `erplora validate` falla si difiere byte a byte del
+  // generado. Emitir la clave nueva SIEMPRE (también vacía) habría dejado obsoletos de golpe los
+  // 36 contracts.json ya commiteados del workspace — y como el gate de cada módulo corre
+  // `module-toolkit/.github/workflows/module-gate.yml@main`, los 27 repos se habrían puesto en
+  // rojo el día del merge sin haber cambiado ni una línea. La clave aparece cuando hay algo que
+  // poner en ella, que es justo cuando el módulo regenera su artefacto de todas formas.
+  const { beta } = fakeWorkspace();
+  write(beta, 'ui/components/x.ts', `await erplora().query('alpha.items.get');`);
+  const manifest = readManifest(beta);
+
+  assert.deepEqual(
+    Object.keys(buildContracts(beta, manifest).consumes),
+    ['queries', 'optional_queries', 'commands', 'events', 'slots'],
+    'sin commandOptional, la forma es EXACTAMENTE la de siempre',
+  );
+
+  // Un artefacto de los que ya están commiteados (5 claves, sin la nueva) sigue AL DÍA.
+  mkdirSync(join(beta, '.erplora'), { recursive: true });
+  writeFileSync(
+    join(beta, '.erplora', 'contracts.json'),
+    JSON.stringify(
+      {
+        schema_version: 1,
+        module: 'beta',
+        consumes: { queries: ['alpha.items.get'], optional_queries: [], commands: [], events: [], slots: [] },
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  assert.equal(contractsFileIsStale(beta, manifest), false, 'el artefacto heredado NO queda obsoleto');
+
+  write(beta, 'ui/components/x.ts', `await erplora().commandOptional('alpha.items.create');`);
+  assert.deepEqual(
+    Object.keys(buildContracts(beta, manifest).consumes),
+    ['queries', 'optional_queries', 'commands', 'optional_commands', 'events', 'slots'],
+    'en cuanto se usa, la clave aparece junto a su hermana obligatoria',
+  );
 });
 
 test('contractsFileIsStale: al día = false, desactualizado o ausente = true', () => {
@@ -325,6 +380,32 @@ test('…pero queryOptional SÍ exige que el contrato exista si el módulo es co
 test('queryOptional a un módulo DESCONOCIDO no es error en build (se resuelve en instalación)', () => {
   const errs = validateBeta(`await erplora().queryOptional('gamma.stuff.list');`);
   assert.deepEqual(errs, []);
+});
+
+test('commandOptional NO exige depends_on…', () => {
+  const errs = validateBeta(`await erplora().commandOptional('alpha.items.create');`, (m) => {
+    m.depends_on = [];
+  });
+  assert.deepEqual(errs, [], 'la optionalidad es del MÓDULO: sin dependencia dura');
+});
+
+test('…pero commandOptional SÍ exige que el contrato exista si el módulo es conocido', () => {
+  const errs = validateBeta(`await erplora().commandOptional('alpha.items.destroy');`, (m) => {
+    m.depends_on = [];
+  });
+  assert.equal(errs.length, 1, 'proveedor conocido + command inexistente = contrato roto, no optionalidad');
+  assert.match(errs[0], /alpha\.items\.destroy/);
+});
+
+test('commandOptional a un módulo DESCONOCIDO no es error en build (se resuelve en instalación)', () => {
+  const errs = validateBeta(`await erplora().commandOptional('gamma.stuff.create');`);
+  assert.deepEqual(errs, []);
+});
+
+test('commandOptional contra el PROPIO módulo sigue cazando el typo (la ausencia opcional es de OTRO)', () => {
+  const errs = validateBeta(`await erplora().commandOptional('beta.things.destroy');`);
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /beta\.things\.destroy/);
 });
 
 test('detecta reads inexistentes (declarados en el manifest, no en el TS)', () => {
