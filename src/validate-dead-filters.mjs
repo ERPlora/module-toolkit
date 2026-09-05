@@ -197,6 +197,8 @@ const NEQ = new RegExp(String.raw`^\s*${REF}\s*(?:<>|!=)\s*(${LITERAL})\s*$`, 'i
 const IS_NULL = new RegExp(String.raw`^\s*${REF}\s+IS\s+NULL\s*$`, 'i');
 const IS_BOOL = new RegExp(String.raw`^\s*${REF}\s+IS\s+(TRUE|FALSE)\s*$`, 'i');
 const IN_LIST = new RegExp(String.raw`^\s*${REF}\s+IN\s*\(([^()]*)\)\s*$`, 'i');
+/** One whole value that is nothing but a literal — what makes a single-element `IN (…)` a pin. */
+const LITERAL_ONLY = new RegExp(String.raw`^${LITERAL}$`, 'i');
 
 /**
  * Every column the top-level WHERE of this SQL pins to ONE possible value.
@@ -222,8 +224,12 @@ export function pinnedColumns(sql, { columnTypes = null } = {}) {
     let m = EQ.exec(blanked) ?? IS_NULL.exec(blanked) ?? IS_BOOL.exec(blanked);
     if (!m) {
       const inList = IN_LIST.exec(blanked);
-      // `IN` pins only when the list holds exactly ONE value; two literals leave a choice.
-      if (inList && inList[3].split(',').filter((v) => v.trim()).length !== 1) continue;
+      // `IN` pins only when the list holds exactly ONE value AND that value is a literal: two literals
+      // leave a choice, and a bind, a column or a subquery inside the parentheses can move.
+      if (inList) {
+        const values = inList[3].split(',').map((v) => v.trim()).filter(Boolean);
+        if (values.length !== 1 || !LITERAL_ONLY.test(values[0])) continue;
+      }
       m = inList;
     }
     if (!m) {

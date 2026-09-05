@@ -273,14 +273,21 @@ SELECT id, is_active FROM b WHERE is_active = 1`;
 });
 
 test('pinnedColumns ignores a constant written inside a comment', () => {
-  const sql = `SELECT id, is_active FROM t
+  // Two shapes on purpose. The full-line comment alone passed WITHOUT blanking (two WHEREs at depth
+  // 0 → «more than one WHERE» → nothing judged); the trailing comment is what only blanking removes.
+  const standalone = `SELECT id, is_active FROM t
 -- WHERE is_active = 1 (removed in v2)
 WHERE hub_id = :hub_id`;
-  assert.equal(pinnedColumns(sql).size, 0);
+  assert.equal(pinnedColumns(standalone).size, 0);
+  const trailing = `SELECT id, is_active FROM t
+WHERE hub_id = :hub_id -- legacy filter: AND is_active = 1`;
+  assert.equal(pinnedColumns(trailing).size, 0, 'the predicate lives in the comment, not in the WHERE');
 });
 
 test('pinnedColumns does not read a WHERE that lives inside a string literal', () => {
-  const sql = `SELECT id, label FROM t WHERE hub_id = :hub_id AND label <> 'x AND is_active = 1'`;
+  // `AND` on BOTH sides of the pin inside the string: split without blanking, `is_active = 1` comes out
+  // as a clean conjunct and pins. Blanked, it is a run of spaces inside a literal.
+  const sql = `SELECT id, label FROM t WHERE hub_id = :hub_id AND label <> 'x AND is_active = 1 AND y'`;
   assert.deepEqual([...pinnedColumns(sql).keys()], [], 'the quoted text is data, not a predicate');
 });
 
@@ -349,4 +356,31 @@ test('the grandfathered list is the measurement of 2026-09-05 and may only SHRIN
     seen.add(key);
     assert.ok(entry[1].startsWith(`${entry[0]}.`), `${entry[1]} is not a query of ${entry[0]}`);
   }
+});
+
+// ---------------------------------------------------------------------------------------------
+// 7. What the review's mutation run found unpinned (module-toolkit#190).
+// ---------------------------------------------------------------------------------------------
+
+test('`IN (…)` pins only when what is inside is a LITERAL — a bind, a column or a subquery can move', () => {
+  // Before this test `IN (:status)` was a pin: the `IN` arm counted values without asking what they
+  // were, so a query taking `status` as a PARAMETER and declaring a `status` filter went red for a
+  // filter that works — the caller moves the bind. Same for a column and for a subquery.
+  for (const inside of [':status', 'other_col', 'SELECT s FROM u']) {
+    const sql = `SELECT id, status, other_col FROM t WHERE hub_id = :hub_id AND status IN (${inside})`;
+    assert.deepEqual([...pinnedColumns(sql).keys()], [], `IN (${inside}) is not a constant`);
+    const { errors } = deadFilterFindings('m', [q('m.list', sql, { status: { op: 'eq' } })]);
+    assert.deepEqual(errors, [], `IN (${inside}) must not be refused`);
+  }
+});
+
+test('a nested WHERE does not hide a pin that sits in the TOP-level WHERE', () => {
+  // Two WHERE keywords, one at depth 0. Counting them without looking at their depth bails out
+  // («more than one WHERE») and ships a dead filter green the moment the query carries an EXISTS.
+  const sql = `SELECT id, is_active FROM m_thing t
+WHERE t.hub_id = :hub_id AND t.is_active = 1
+  AND EXISTS (SELECT 1 FROM m_link l WHERE l.thing_id = t.id)`;
+  assert.deepEqual([...pinnedColumns(sql).keys()], ['t.is_active']);
+  const { errors } = deadFilterFindings('m', [q('m.list', sql, { is_active: { op: 'eq' } })]);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
 });

@@ -234,3 +234,15 @@ test('a module with no tests/ at all is not a finding', () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('a battery that already branches on `isinstance` knows the entry may be an object — what it does next is not this rule\'s finding', () => {
+  // Pins the `isinstance` arm of NORMALISED on its own: every other normalised fixture above also
+  // carries `["file"]`, so dropping `isinstance` from the pattern survived the whole suite
+  // (module-toolkit#190 review). This loop never meets the TypeError: it skips what is not a string.
+  const src = `for entry in MANIFEST["migrations"]["postgres"]:
+    if not isinstance(entry, str):
+        continue  # contracts are applied by the harness, not here
+    psql([], db=DB, stdin=(MODULE_DIR / entry).read_text())
+`;
+  assert.deepEqual(batteryMigrationLoops(src), []);
+});
