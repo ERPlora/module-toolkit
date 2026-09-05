@@ -9,6 +9,7 @@ POST    /api/assistant/report                          auth:any-credential
 POST    /api/auth/badge                                auth:none
 POST    /api/auth/cloud                                auth:none
 POST    /api/auth/courier                              auth:none
+POST    /api/auth/handoff                              auth:session
 POST    /api/auth/logout                               auth:none
 POST    /api/auth/pin                                  auth:none
 POST    /api/auth/set-pin                              auth:session
