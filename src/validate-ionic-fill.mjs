@@ -61,6 +61,12 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * gate on a stale entry, which fixes the order of a sweep: the two-line pull request that deletes
  * the entry goes FIRST, and the module's fix merges behind it.
  *
+ * It fails the module that SHIPS components — the only one that can have deleted or renamed the
+ * file. A manifest with no `ui/` at all is not the module the line talks about (a fixture, or a
+ * third party who reused a published id): it is WARNED, never blocked for somebody else's
+ * allowance (module-toolkit#189; `test/validate-grandfathered-scope.test.mjs` holds that line for
+ * every grandfathered list in `src/`).
+ *
  * WHERE THE SWEEP IS — 141 dead controls left, in 22 files across 12 modules. It started at 275 in
  * 45 files across 22 the day the check landed.
  *
@@ -252,15 +258,26 @@ export function checkIonicFill(dir, manifest) {
   // have said nothing — grandfathering had turned into a standing permit. Everything above asks
   // «is the module worse than the list?»; this asks the question nobody was asking, «is the list
   // looser than the module?».
+  //
+  // Whether this manifest is the module the lines are about AT ALL. Reusing a published id —
+  // `taxes`, `appointments`, `services`… — is enough to inherit its allowances, and a ratchet that
+  // blocks on ABSENCE puts red a manifest over components it never had, naming files it cannot
+  // delete (module-toolkit#189, same split as `FILTER_OPS_GRANDFATHERED` and
+  // `DEAD_FILTERS_GRANDFATHERED`). A module that DOES ship components is the one that can have
+  // renamed or deleted the file, so there the stale line still BLOCKS — which is what pm#152 asked
+  // for and what fixes the order of the two pull requests.
+  const shipsComponents = deadPerFile.size > 0;
+
   for (const [file, allowed] of grandfatheredFor(moduleId)) {
     const today = deadPerFile.get(file);
     if (today === undefined) {
-      errors.push(
+      const stale =
         `${file}: su entrada en \`FILL_GRANDFATHERED\` (${allowed} control(es) tolerados) apunta a un ` +
-          'fichero que ya no está en `ui/` — se borró o se renombró. Una tolerancia sin fichero al ' +
-          'que aplicar no protege nada y sobrevive a su motivo: bórrala de ' +
-          '`module-toolkit/src/validate-ionic-fill.mjs` (ERPlora/pm#152).',
-      );
+        'fichero que ya no está en `ui/` — se borró o se renombró. Una tolerancia sin fichero al ' +
+        'que aplicar no protege nada y sobrevive a su motivo: bórrala de ' +
+        '`module-toolkit/src/validate-ionic-fill.mjs` (ERPlora/pm#152).';
+      if (shipsComponents) errors.push(stale);
+      else warnings.push(stale);
       continue;
     }
     if (today === 0) {
