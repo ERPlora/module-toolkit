@@ -20,8 +20,21 @@
 //      org is on the Free plan, where organization secrets do not reach private repos). Needs the
 //      full history on disk: the gate checks out with `fetch-depth: 0`.
 //
+//   4. MALFORMED — the block is there and its SHAPE is wrong, on either side (module-toolkit#197,
+//      #196). This used to be «the JSON Schema's job», except no door reads the schema's VALUES:
+//      `validate-manifest-keys.mjs` takes the admitted KEYS from it and stops there. So a catalog
+//      carrying the message TEXT where the hub expects the code's STATE passed green and then
+//      failed to INSTALL (`BTreeMap<String, ErrorDecl>`, `crates/runtime/src/manifest.rs`), and a
+//      locale catalog could hold a leftover nested cube nobody reads, a key of ANOTHER module's
+//      namespace (or the core's) — a module putting words in another's mouth — or a value that is
+//      not a text at all. The hub's SDK defends itself from the core names by shape, but it cannot
+//      know WHO owns the catalog it is handed; the validator knows `manifest.id`.
+//
 // No `errors` block at all is the shape of the modules that have not migrated yet: emitting codes
-// without a catalog is a WARNING until the 27 published modules carry the block (ADR-0398 §5).
+// without a catalog is a WARNING until the 27 published modules carry the block (ADR-0398 §5). The
+// old NESTED locale shape under the module's own id is the same story and stays a WARNING with a
+// message that says what the contract is — it is where the last five live (customers,
+// online_booking, tasks, tickets, whatsapp_inbox), each with its migration issue open.
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -41,6 +54,82 @@ function validDomainCode(moduleId, code) {
     CODE_RE.test(code) &&
     code.startsWith(`${moduleId}.`)
   );
+}
+
+/**
+ * The only field an entry of the catalog carries — mirror of `ERROR_FIELDS`
+ * (`hub/crates/runtime/src/manifest.rs`), where the value deserializes into
+ * `ErrorDecl { deprecated: Option<String> }`. Anything else there is an install the hub refuses.
+ */
+const ERROR_DECL_FIELDS = ['deprecated'];
+
+/** What is wrong with one `errors.<code>` value, or `null` when it carries the contract's shape. */
+function errorDeclProblem(code, decl) {
+  if (decl === null || typeof decl !== 'object' || Array.isArray(decl)) {
+    return (
+      `errors: \`${code}\` carries ${typeof decl === 'string' ? 'the message text' : `a ${Array.isArray(decl) ? 'list' : typeof decl}`} ` +
+      'as its value — the value is the code\'s STATE (an object with at most `deprecated`), never its text, which lives in ' +
+      '`locales/<lang>.json → errors.<code>` (ADR-0055). The hub reads the block as a map of objects and REFUSES the install (ADR-0398)'
+    );
+  }
+  const unknown = Object.keys(decl).filter((key) => !ERROR_DECL_FIELDS.includes(key));
+  if (unknown.length) {
+    return `errors: \`${code}\` declares \`${unknown.join('`, `')}\` — an entry carries only \`deprecated\` (ADR-0398)`;
+  }
+  if ('deprecated' in decl && typeof decl.deprecated !== 'string') {
+    return `errors: \`${code}\` has a non-string \`deprecated\` — it is the module VERSION that announced the retirement, e.g. "1.2.0" (ADR-0398)`;
+  }
+  return null;
+}
+
+/**
+ * The shape of one `locales/<lang>.json → errors` block: FLAT keys `<module>.<snake_case>` (the
+ * module's own namespace) with a text as value, which is all the hub's SDK indexes.
+ *
+ * `migrated` (the manifest carries an `errors` catalog) only decides the severity of the OLD nested
+ * shape under the module's own id: a warning while the last five modules migrate, an error once the
+ * module has declared its catalog — there the cube is a leftover that reads like a translation and
+ * changes nothing anyone sees. A nested cube under someone ELSE's namespace is an error either way.
+ *
+ * A key the manifest DECLARES is judged there and skipped here: the manifest is the authority on
+ * the catalog's own codes, and a module that declares `sales.oops` should read one message about
+ * it, not the same mistake again once per language.
+ */
+function localeCatalogProblems({ file, texts }, moduleId, { migrated, declared }) {
+  const errors = [];
+  const warnings = [];
+  for (const [key, value] of Object.entries(texts)) {
+    if (declared && Object.hasOwn(declared, key)) continue;
+    if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+      if (!migrated && key === moduleId) {
+        warnings.push(
+          `${file}: \`errors.${key}\` is the old NESTED shape — the contract is FLAT (\`errors."${moduleId}.<snake_case>"\`), ` +
+            'which is the only form the hub indexes: translating the nested one changes nothing anyone sees (ADR-0398)',
+        );
+        continue;
+      }
+      errors.push(
+        `${file}: \`errors.${key}\` is a nested block — the contract is FLAT (\`errors."${moduleId}.<snake_case>"\`) and the hub ` +
+          `indexes nothing else, so this ${key === moduleId ? 'leftover' : 'foreign'} cube is dead weight that reads like a translation (ADR-0398)`,
+      );
+      continue;
+    }
+    if (typeof value !== 'string') {
+      errors.push(`${file}: \`errors.${key}\` is not a text (${value === null ? 'null' : Array.isArray(value) ? 'list' : typeof value}) — the UI shows this string to the person (ADR-0055)`);
+      continue;
+    }
+    if (!CODE_RE.test(key) || key.length > MAX_CODE_LEN) {
+      errors.push(`${file}: \`${key}\` is not a domain code — the hub indexes \`<module>.<snake_case>\` keys and ignores the rest (ADR-0205)`);
+      continue;
+    }
+    if (!key.startsWith(`${moduleId}.`)) {
+      errors.push(
+        `${file}: \`${key}\` belongs to \`${key.slice(0, key.indexOf('.'))}\`, not to this module — a module translates its OWN codes; ` +
+          'texting someone else\'s puts words in their mouth, and the SDK cannot tell whose catalog it was handed (ADR-0398)',
+      );
+    }
+  }
+  return { errors, warnings };
 }
 
 /** Every `.rs` under `handler/src`, recursively, with its path relative to the module. */
@@ -142,6 +231,23 @@ function localeErrors(dir, lang) {
   }
 }
 
+/**
+ * Every `locales/<lang>.json` on disk with its `errors` block, sorted by language. The shape is
+ * checked wherever it is written, not only in the two languages a declared code MUST carry
+ * (`REQUIRED_LOCALES`): a key of someone else's namespace is theirs in `fr.json` too.
+ */
+function localeCatalogs(dir) {
+  const root = join(dir, 'locales');
+  if (!existsSync(root)) return [];
+  const out = [];
+  for (const name of readdirSync(root).sort()) {
+    if (!name.endsWith('.json')) continue;
+    const texts = localeErrors(dir, name.slice(0, -'.json'.length));
+    if (texts) out.push({ file: `locales/${name}`, texts });
+  }
+  return out;
+}
+
 function git(dir, args) {
   const res = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
   return res.status === 0 ? (res.stdout ?? '') : null;
@@ -173,14 +279,22 @@ function releaseLabel(previous) {
 /**
  * Validates the module's domain-error catalog. Returns `{ errors, warnings }`.
  *
- * Shape of the block (object of `code → {deprecated?}`) is the JSON Schema's job; here anything
- * that is not an object is treated as absent rather than reported twice in two vocabularies.
+ * The SHAPE of both sides is checked here (module-toolkit#197/#196), not left to the JSON Schema:
+ * no door of the toolkit reads the schema's values, so a catalog holding the message text where
+ * the hub expects `{deprecated?}` used to pass green and fail at install. A whole `errors` block
+ * that is not an object is still treated as absent rather than reported twice in two vocabularies.
  */
 export function checkErrorsCatalog(dir, manifest, { previous = previousReleaseManifest(dir) } = {}) {
   const errors = [];
   const warnings = [];
   const moduleId = manifest.id;
   const declared = manifest.errors && typeof manifest.errors === 'object' ? manifest.errors : null;
+
+  for (const catalog of localeCatalogs(dir)) {
+    const found = localeCatalogProblems(catalog, moduleId, { migrated: Boolean(declared), declared });
+    errors.push(...found.errors);
+    warnings.push(...found.warnings);
+  }
 
   const emitted = handlerErrorLiterals(dir, moduleId, { notCodes: manifestNames(manifest) });
   const expectRows = [];
@@ -200,10 +314,12 @@ export function checkErrorsCatalog(dir, manifest, { previous = previousReleaseMa
     return { errors, warnings };
   }
 
-  for (const code of Object.keys(declared)) {
+  for (const [code, decl] of Object.entries(declared)) {
     if (!validDomainCode(moduleId, code)) {
       errors.push(`errors: \`${code}\` is not a domain code of this module (expected \`${moduleId}.<snake_case>\`, ADR-0205)`);
     }
+    const problem = errorDeclProblem(code, decl);
+    if (problem) errors.push(problem);
   }
 
   for (const [code, file] of emitted) {
