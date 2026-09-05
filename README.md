@@ -258,8 +258,9 @@ Qué se comprueba, sobre el estado FINAL de la cadena de migraciones:
 > tables#76): **avisan** en cada `erplora validate` —nunca en silencio— y no ponen en rojo un repo
 > publicado por una regla escrita hoy. La lista solo puede ENCOGER, hay un test que fija su
 > contenido exacto, y la tolerancia es por **fichero**: una tabla guardia nueva, incluso en uno de
-> esos módulos, nace en error. `appointments` y `reservations` (05/09/2026, reservations#42) ya
-> salieron al mergear sus constraints nombradas; quedan `services` y `tables`.
+> esos módulos, nace en error. `appointments`, `reservations` (reservations#42) y `tables`
+> (tables#76) ya salieron al mergear sus constraints nombradas —las dos últimas el 05/09/2026—;
+> queda `services`.
 
 ## El `fill` que el hub NUNCA pinta (hub#760)
 

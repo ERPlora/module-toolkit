@@ -42,15 +42,40 @@ test('an anonymous CHECK (ok = 1) on the gate table is refused, naming the fix',
 
 test('the real published SQL of tables/002_gate.sql is the defect', () => {
   const sql = fixture('tables_002_gate.sql');
-  // As published it is on the tolerance list, so it warns and does not block the repo (below).
-  const published = findings('tables', [{ file: 'migrations/postgres/002_gate.sql', sql }]);
-  assert.deepEqual(published.errors, []);
-  assert.equal(published.warnings.length, 1, JSON.stringify(published.warnings));
-  assert.match(published.warnings[0], /tables__gate/);
-  // The same bytes outside the list are the error: what is tolerated is the FILE, not the pattern.
-  const fresh = findings('tables', [{ file: 'migrations/postgres/012_new_gate.sql', sql }]);
-  assert.equal(fresh.errors.length, 1, JSON.stringify(fresh.errors));
-  assert.match(fresh.errors[0], /tables__gate/);
+  // `tables` LEFT the tolerance list when it landed the named constraints (tables#76, migration
+  // 011). So those bytes on their own are now the error, with no warning to soften them — which is
+  // the whole point of a ratchet: the entry goes and the file stops being special.
+  const { errors, warnings } = findings('tables', [{ file: 'migrations/postgres/002_gate.sql', sql }]);
+  assert.deepEqual(warnings, [], 'nothing tolerates this file any more');
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /tables__gate/, 'names the table');
+  assert.match(errors[0], /002_gate\.sql/, 'names the file to edit');
+});
+
+// ...and the reason the entry could go: the module's REAL chain. 002 still creates the table with
+// the anonymous check — migrations are append-only and that file is published — and 011 swaps it
+// for one named constraint per gate plus the whitelist. The verdict is on the END state, so the
+// module is green WITHOUT any tolerance. This is what makes retiring the entry a measurement and
+// not a promise: break 011 and this test goes red, exactly like the module's own battery.
+test('tables is green on its own merits: 002 + 011 leaves no anonymous CHECK', () => {
+  const chain = [
+    { file: 'migrations/postgres/002_gate.sql', sql: fixture('tables_002_gate.sql') },
+    { file: 'migrations/postgres/011_named_gate_constraints.sql', sql: fixture('tables_011_named_gate_constraints.sql') },
+  ];
+  assert.deepEqual(findings('tables', chain), { errors: [], warnings: [] });
+
+  // And it is 011 that earns it: drop its whitelist and the door says so (a gate that matches no
+  // constraint violates nothing, so an assert typo would fail OPEN).
+  const withoutWhitelist = fixture('tables_011_named_gate_constraints.sql').replace(
+    /ALTER TABLE tables__gate ADD CONSTRAINT tables__gate_is_declared[\s\S]*$/,
+    '',
+  );
+  const { warnings } = findings('tables', [
+    chain[0],
+    { file: 'migrations/postgres/011_named_gate_constraints.sql', sql: withoutWhitelist },
+  ]);
+  assert.equal(warnings.length, 1, JSON.stringify(warnings));
+  assert.match(warnings[0], /lista blanca/);
 });
 
 // The header of `appointments/003_gate.sql` says, in prose, «ok = 0 violates CHECK (ok = 1)». A
@@ -180,13 +205,12 @@ test('a grandfathered file warns naming its issue, and does not block', () => {
   assert.match(warnings[0], /#\d+/, 'the warning carries the issue that retires it');
 });
 
-test('the tolerance list is exactly what is still owed (reservations left in reservations#42)', () => {
+test('the tolerance list is exactly what is still owed (reservations#42 and tables#76 left)', () => {
   // Pinned so growing it is a deliberate act somebody reviews, never a quiet `push`.
   assert.deepEqual(
     GRANDFATHERED.map(([m, f]) => `${m}:${f}`).sort(),
     [
       'services:migrations/postgres/003_package_redemption.sql',
-      'tables:migrations/postgres/002_gate.sql',
     ],
     'the list only SHRINKS: an entry goes when its module lands the named constraints',
   );
@@ -209,13 +233,20 @@ test('a module that landed the named constraints is OUT of the list, and goes re
   assert.deepEqual(warnings, [], 'no tolerance left to soften it');
 });
 
+// Written against whatever is FIRST on the list rather than a module named here, so retiring an
+// entry (which is the only direction the list moves) never drags this test with it — naming
+// `tables` is what made it fail the day `tables` landed its fix. When the list finally empties,
+// this test and the ratchet above have no subject left and go with it: that is the end state the
+// whole mechanism is aiming at, not a regression.
 test('grandfathering is per FILE, not per module: a new gate table in an old module is an error', () => {
-  const { errors } = findings('tables', [
-    { file: 'migrations/postgres/002_gate.sql', sql: 'CREATE TABLE tables__gate (gate TEXT NOT NULL, ok INTEGER NOT NULL CHECK (ok = 1));' },
-    { file: 'migrations/postgres/011_second_gate.sql', sql: 'CREATE TABLE tables__gate_hold (gate TEXT NOT NULL, ok INTEGER NOT NULL CHECK (ok = 1));' },
+  const [moduleId, file] = GRANDFATHERED[0];
+  const anonymous = (table) => `CREATE TABLE ${table} (gate TEXT NOT NULL, ok INTEGER NOT NULL CHECK (ok = 1));`;
+  const { errors } = findings(moduleId, [
+    { file, sql: anonymous(`${moduleId}__gate`) },
+    { file: 'migrations/postgres/099_second_gate.sql', sql: anonymous(`${moduleId}__gate_hold`) },
   ]);
   assert.equal(errors.length, 1, JSON.stringify(errors));
-  assert.match(errors[0], /tables__gate_hold/);
+  assert.match(errors[0], new RegExp(`${moduleId}__gate_hold`));
 });
 
 // ---------------------------------------------------------------------------------------------

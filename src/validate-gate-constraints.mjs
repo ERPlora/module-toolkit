@@ -50,8 +50,10 @@ import { splitStatements, stripComments } from './validate-migration-guard.mjs';
  *
  * Measured 01/09/2026 over the 27 module repos as FIVE — `verifactu` and `appointments` had already
  * landed the named constraints. `reservations` left on 05/09/2026 with its own
- * `004_named_gate_constraints.sql` (ERPlora/reservations#42), so its `002_gate.sql` is an ERROR
- * from here on: that is what retiring an entry BUYS, and why the list may only shrink.
+ * `004_named_gate_constraints.sql` (ERPlora/reservations#42), and `tables` the same day with
+ * `011_named_gate_constraints.sql` (ERPlora/tables#76), so their `002_gate.sql` is an ERROR from
+ * here on: that is what retiring an entry BUYS, and why the list may only shrink. `services` is
+ * the last one owed (ERPlora/services#91).
  *
  * A ratchet, not a permanent exemption. A hard error with no tolerance list would put green,
  * published repos in red for a rule written here today — which is how a gate gets switched off
@@ -61,7 +63,6 @@ import { splitStatements, stripComments } from './validate-migration-guard.mjs';
  */
 export const GRANDFATHERED = [
   ['services', 'migrations/postgres/003_package_redemption.sql', 'ERPlora/services#91'],
-  ['tables', 'migrations/postgres/002_gate.sql', 'ERPlora/tables#76'],
 ];
 
 function grandfatheredIssue(moduleId, file) {
