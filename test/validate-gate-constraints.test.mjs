@@ -180,17 +180,33 @@ test('a grandfathered file warns naming its issue, and does not block', () => {
   assert.match(warnings[0], /#\d+/, 'the warning carries the issue that retires it');
 });
 
-test('the tolerance list is exactly the corpus measured on origin/main (01/09/2026)', () => {
+test('the tolerance list is exactly what is still owed (reservations left in reservations#42)', () => {
   // Pinned so growing it is a deliberate act somebody reviews, never a quiet `push`.
   assert.deepEqual(
     GRANDFATHERED.map(([m, f]) => `${m}:${f}`).sort(),
     [
-      'reservations:migrations/postgres/002_gate.sql',
       'services:migrations/postgres/003_package_redemption.sql',
       'tables:migrations/postgres/002_gate.sql',
     ],
     'the list only SHRINKS: an entry goes when its module lands the named constraints',
   );
+});
+
+test('a module that landed the named constraints is OUT of the list, and goes red if it regresses', () => {
+  // `reservations` shipped `004_named_gate_constraints.sql` (reservations#42), so its entry left.
+  // What that buys is this: the SAME file that was tolerated yesterday is an ERROR today, which is
+  // the only way the ratchet stops a module from quietly putting the anonymous check back.
+  assert.equal(
+    GRANDFATHERED.some(([m]) => m === 'reservations'),
+    false,
+    'the entry goes with the fix, or the next `__gate` added here would warn instead of failing',
+  );
+  const { errors, warnings } = findings('reservations', [
+    { file: 'migrations/postgres/002_gate.sql', sql: 'CREATE TABLE reservations__gate (gate TEXT NOT NULL, ok INTEGER NOT NULL CHECK (ok = 1));' },
+  ]);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /reservations__gate/);
+  assert.deepEqual(warnings, [], 'no tolerance left to soften it');
 });
 
 test('grandfathering is per FILE, not per module: a new gate table in an old module is an error', () => {
