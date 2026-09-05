@@ -29,6 +29,7 @@ import { checkRowGates } from './validate-row-gates.mjs';
 import { checkGateConstraints } from './validate-gate-constraints.mjs';
 import { checkHubScope } from './validate-hub-scope.mjs';
 import { checkEmitDedupKey } from './validate-emit-dedup-key.mjs';
+import { checkFilterOps } from './validate-filter-ops.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -251,6 +252,27 @@ export async function validate(moduleDir, { pg = false } = {}) {
     throw new Error(
       'SQL sin acotar por hub — agujero de tenancy (module-toolkit#80):\n  - ' +
         hubScope.errors.join('\n  - '),
+    );
+  }
+
+  // ADR-0125 / module-toolkit#183: la caja de filtro tiene que SIGNIFICAR lo que parece. Una caja de
+  // texto libre invita a teclear un trozo; con `op: "eq"` el runtime exige el valor entero y la
+  // lista vuelve VACÍA, sin error — la recepcionista lee «no está la clienta» y la da de alta otra
+  // vez. La regla tenía guard (`modules-workspace/guards/filter-ops.test.ts`) pero
+  // `modules-workspace/` no es repo ni tiene workflows: nadie lo corría y llevaba semanas rojo.
+  // Aquí sí corre, en cada PR de módulo y antes de `pack`/`sign`/`publish`.
+  //
+  // Juzga lo que el módulo DECLARA de sí mismo —el `filterType` que pinta su componente y el tipo
+  // que escribe su migración—, no el nombre de la columna: barrido sobre `origin/main` de los 27
+  // repos (05/09/2026), la regla vieja «`like` fuera de la lista blanca» daba 18 hallazgos y 18
+  // FALSOS POSITIVOS. Trinquete: los 40 filtros ya publicados avisan (`FILTER_OPS_GRANDFATHERED`,
+  // ERPlora/pm#244) y la lista solo encoge; uno nuevo es error.
+  const filterOps = checkFilterOps(dir, manifest);
+  for (const w of filterOps.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (filterOps.errors.length) {
+    throw new Error(
+      'la caja de filtro no significa lo que parece (ADR-0125, module-toolkit#183):\n  - ' +
+        filterOps.errors.join('\n  - '),
     );
   }
 
