@@ -41,14 +41,21 @@ const DOORS = {
   'validate-gate-constraints.mjs:GRANDFATHERED': { check: checkGateConstraints, list: GATE_GRANDFATHERED },
 };
 
-/** `<file>:<export>` for every grandfathered list `src/` declares, read off the sources. */
+/**
+ * `<file>:<name>` for every grandfathered list ONE source declares: any top-level `const` whose name
+ * carries `GRANDFATHERED`, exported or not. A list the file keeps to itself, or one spelled
+ * `GRANDFATHERED_X` instead of `X_GRANDFATHERED`, is still a list — the census names it and the test
+ * below then asks for it to be exported and judged. A narrower pattern is how a sixth is born outside.
+ */
+function listsIn(file, body) {
+  return [...body.matchAll(/^(?:export )?const ([A-Z0-9_]*GRANDFATHERED[A-Z0-9_]*)\b/gm)].map((m) => `${file}:${m[1]}`);
+}
+
+/** `<file>:<name>` for every grandfathered list `src/` declares, read off the sources. */
 function everyListInSrc() {
   const found = [];
   for (const file of readdirSync(SRC).filter((f) => f.endsWith('.mjs')).sort()) {
-    const body = readFileSync(join(SRC, file), 'utf8');
-    for (const m of body.matchAll(/^export const ((?:[A-Z][A-Z_]*_)?GRANDFATHERED)\b/gm)) {
-      found.push(`${file}:${m[1]}`);
-    }
+    found.push(...listsIn(file, readFileSync(join(SRC, file), 'utf8')));
   }
   return found;
 }
@@ -72,6 +79,15 @@ test('every grandfathered list in `src/` is judged here — a sixth cannot be bo
     'a grandfathered list is missing from `DOORS` (or one there no longer exists): add it with its ' +
       'check, so reusing a published id keeps being proven harmless at that door too',
   );
+});
+
+test('the census sees a list however it is spelled: unexported, or `GRANDFATHERED_X`', () => {
+  // The two ways a probe found to be born outside the guard (review of module-toolkit#195): a list
+  // the file keeps to itself, and the suffix spelling. Both are lists; both must reach `DOORS`.
+  assert.deepEqual(listsIn('a.mjs', 'const ZZZ_GRANDFATHERED = [];\n'), ['a.mjs:ZZZ_GRANDFATHERED']);
+  assert.deepEqual(listsIn('b.mjs', 'export const GRANDFATHERED_IDS = new Set();\n'), ['b.mjs:GRANDFATHERED_IDS']);
+  assert.deepEqual(listsIn('c.mjs', 'export const GRANDFATHERED = [];\n'), ['c.mjs:GRANDFATHERED']);
+  assert.deepEqual(listsIn('d.mjs', '  const GRANDFATHERED = 1; // not top-level\n'), []);
 });
 
 test('a manifest that declares nothing but a published id is GREEN at every door', () => {
