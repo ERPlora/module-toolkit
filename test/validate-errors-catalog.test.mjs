@@ -340,3 +340,218 @@ test('STILL FAILS: a literal the manifest declares nowhere is an emitted code (#
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── the SHAPE of the catalog, on both sides (module-toolkit#197 + #196) ───────────────────────
+//
+// The block's shape was «the JSON Schema's job», except no door ever read the schema's VALUES:
+// `validate-manifest-keys.mjs` takes the admitted KEYS from it and nothing else. Measured on
+// `tasks` (ERPlora/tasks#37) against origin/main@0e209f9, four malformed catalogs came out GREEN:
+//
+//   * `errors.<code>` carrying the TEXT of the message instead of the code's STATE. The hub reads
+//     the block as `BTreeMap<String, ErrorDecl>` (`crates/runtime/src/manifest.rs`), so the module
+//     publishes and then FAILS TO INSTALL — the validator exists to stop exactly that.
+//   * a leftover NESTED cube (`errors: { tasks: { … } }`) living next to the flat form in
+//     `locales/<lang>.json`: the hub's SDK only indexes first-level `<module>.<snake_case>` keys,
+//     so whoever translates the nested one changes nothing anyone sees.
+//   * a key of ANOTHER module's namespace — or of the core's (`flow.`, `hub.`) — in the locale
+//     catalog: a module putting words in another's mouth. The SDK can defend itself from the core
+//     names but cannot know WHO owns the catalog it is handed; the validator knows `manifest.id`.
+//   * a value that is not a string at all.
+//
+// The one shape that stays a WARNING is the old nested form UNDER THE MODULE'S OWN ID with no
+// `errors` block in the manifest: the shape of a module that has not migrated. The fleet's five
+// (customers, online_booking, tasks, tickets, whatsapp_inbox) did on 2026-09-05/06 — measured
+// against the 27 `origin/main` manifests the day this landed: 0 red, 0 nested — so today it guards
+// a third-party module in the old shape, and it turns red together with the no-catalog warning
+// (ADR-0398 §5), never on its own; the specific message shortens the migration instead.
+
+const OWN = 'appointments.overlap';
+const flat = (extra = {}) => ({ errors: { [OWN]: 'Ese hueco ya está ocupado.', ...extra } });
+
+test('FAILS: `errors.<code>` carries the message TEXT instead of the code state (#197)', () => {
+  const manifest = base({ errors: { [OWN]: 'That slot is already taken.' } });
+  const dir = mod(manifest, { en: locales([OWN]), es: locales([OWN]) });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 1, out.errors.join('\n'));
+    assert.match(out.errors[0], /appointments\.overlap/);
+    assert.match(out.errors[0], /deprecated/, 'the message must name the only field an entry may carry');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS without crashing: `errors.<code>` that is null, a number or a boolean (#197)', () => {
+  // A string value is caught twice over (its indices read as unknown fields), so only these
+  // values prove the non-object branch on its own: without it the guard THROWS instead of judging.
+  for (const value of [null, 42, true]) {
+    const manifest = base({ errors: { [OWN]: value } });
+    const dir = mod(manifest, { en: locales([OWN]), es: locales([OWN]) });
+    try {
+      const out = checkErrorsCatalog(dir, manifest);
+      assert.equal(out.errors.length, 1, `${JSON.stringify(value)}: ${out.errors.join('\n')}`);
+      assert.match(out.errors[0], /appointments\.overlap/);
+      assert.match(out.errors[0], /deprecated/, 'the message must name the only field an entry may carry');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+test('FAILS: an `errors` entry with a field the contract does not define (#197)', () => {
+  const manifest = base({ errors: { [OWN]: { text: 'That slot is already taken.' } } });
+  const dir = mod(manifest, { en: locales([OWN]), es: locales([OWN]) });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 1, out.errors.join('\n'));
+    assert.match(out.errors[0], /text/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS: `deprecated` that is not the version string the contract asks for (#197)', () => {
+  const manifest = base({ errors: { [OWN]: { deprecated: true } } });
+  const dir = mod(manifest, { en: locales([OWN]), es: locales([OWN]) });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 1, out.errors.join('\n'));
+    assert.match(out.errors[0], /deprecated/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('PASSES: `deprecated` with the version that announced the retirement (#197 does not close this)', () => {
+  const manifest = base({ errors: { [OWN]: { deprecated: '1.2.0' } } });
+  const dir = mod(manifest, { en: locales([OWN]), es: locales([OWN]) });
+  try {
+    assert.deepEqual(checkErrorsCatalog(dir, manifest), { errors: [], warnings: [] });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS: a leftover nested cube next to the flat form in a MIGRATED module (#197)', () => {
+  const manifest = base({ errors: catalog([OWN]) });
+  const dir = mod(manifest, { en: locales([OWN]), es: flat({ appointments: { overlap: 'residuo' } }) });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 1, out.errors.join('\n'));
+    assert.match(out.errors[0], /locales\/es\.json/);
+    assert.match(out.errors[0], /`errors\.appointments`/, 'the message names the key that is left over');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS: a locale text under ANOTHER module\'s namespace, or the core\'s (#196)', () => {
+  const manifest = base({ errors: catalog([OWN]) });
+  const dir = mod(manifest, {
+    en: locales([OWN]),
+    es: flat({ 'flow.grant_denied': 'No tienes permiso para ese flujo.', 'sales.till_closed': 'La caja está cerrada.' }),
+  });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 2, out.errors.join('\n'));
+    assert.match(out.errors.join('\n'), /flow\.grant_denied/);
+    assert.match(out.errors.join('\n'), /sales\.till_closed/);
+    assert.match(out.errors[0], /locales\/es\.json/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS: a locale key that is not a domain code at all (#196)', () => {
+  const manifest = base({ errors: catalog([OWN]) });
+  const dir = mod(manifest, { en: locales([OWN]), es: flat({ overlap: 'sin namespace', 'appointments.Overlap': 'mayúsculas' }) });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 2, out.errors.join('\n'));
+    assert.match(out.errors.join('\n'), /`overlap`/);
+    assert.match(out.errors.join('\n'), /appointments\.Overlap/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS: a locale text that is not a string (#196)', () => {
+  const manifest = base({ errors: catalog([OWN]) });
+  const dir = mod(manifest, { en: locales([OWN]), es: flat({ 'appointments.other': 42 }) });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 1, out.errors.join('\n'));
+    assert.match(out.errors[0], /appointments\.other/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('WARNS (never errors): the whole locale block still nested, module not migrated yet (#196)', () => {
+  const manifest = base({});
+  const dir = mod(manifest, {
+    rust: RUST,
+    en: { errors: { appointments: { cannot_cancel: 'Closed.' } } },
+    es: { errors: { appointments: { cannot_cancel: 'Cerrada.' } } },
+  });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.deepEqual(out.errors, [], 'the five modules still to migrate must not go red');
+    const nested = out.warnings.filter((w) => /nested/i.test(w));
+    assert.equal(nested.length, 2, out.warnings.join('\n'));
+    assert.match(nested.join('\n'), /locales\/en\.json/);
+    assert.match(nested.join('\n'), /locales\/es\.json/);
+    assert.match(nested[0], /flat/i, 'the warning says what the contract is, not just that something is off');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS even unmigrated: a nested cube under a FOREIGN namespace (#196)', () => {
+  const manifest = base({});
+  const dir = mod(manifest, { en: { errors: { flow: { grant_denied: 'Denied.' } } }, es: { errors: { flow: { grant_denied: 'Denegado.' } } } });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 2, out.errors.join('\n'));
+    assert.match(out.errors.join('\n'), /`errors\.flow`/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS: a locale key with the name of an inherited property is still judged (#196)', () => {
+  const manifest = base({ errors: catalog([OWN]) });
+  const dir = mod(manifest, { en: locales([OWN]), es: flat({ toString: 'no es un code', constructor: 'tampoco' }) });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 2, 'a key is skipped only when the manifest declares it AS ITS OWN');
+    assert.match(out.errors.join('\n'), /`toString`/);
+    assert.match(out.errors.join('\n'), /`constructor`/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS: a foreign key in a locale BEYOND en+es — the shape is checked wherever it is written (#196)', () => {
+  const manifest = base({ errors: catalog([OWN]) });
+  const dir = mod(manifest, { en: locales([OWN]), es: locales([OWN]) });
+  writeFileSync(join(dir, 'locales', 'fr.json'), JSON.stringify({ errors: { [OWN]: 'Ce créneau est pris.', 'flow.grant_denied': 'Refusé.' } }));
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 1, out.errors.join('\n'));
+    assert.match(out.errors[0], /locales\/fr\.json/);
+    assert.match(out.errors[0], /flow\.grant_denied/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('WIRED: `erplora validate` rejects the message text used as the state of a code (#197)', async () => {
+  const manifest = base({ errors: { [OWN]: 'That slot is already taken.' } });
+  const dir = mod(manifest, { en: locales([OWN]), es: locales([OWN]) });
+  try {
+    await assert.rejects(() => validate(dir), /appointments\.overlap/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
