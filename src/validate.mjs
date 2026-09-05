@@ -30,6 +30,8 @@ import { checkGateConstraints } from './validate-gate-constraints.mjs';
 import { checkHubScope } from './validate-hub-scope.mjs';
 import { checkEmitDedupKey } from './validate-emit-dedup-key.mjs';
 import { checkFilterOps } from './validate-filter-ops.mjs';
+import { checkDeadFilters } from './validate-dead-filters.mjs';
+import { checkBatteryMigrations } from './validate-battery-migrations.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -274,6 +276,43 @@ export async function validate(moduleDir, { pg = false } = {}) {
     throw new Error(
       'la caja de filtro no significa lo que parece (ADR-0125, module-toolkit#183):\n  - ' +
         filterOps.errors.join('\n  - '),
+    );
+  }
+
+  // module-toolkit#178: un filtro de `list.filters` sobre una columna que la PROPIA SQL clava a una
+  // constante. El runtime no mete el filtro dentro de la query, la ENVUELVE
+  // (`SELECT sub.* FROM ( … ) AS sub WHERE CAST(sub.col AS TEXT) = …`), así que las dos condiciones
+  // se suman: `col = 1 AND col = 0` → CERO FILAS siempre, sin error y sin nada en pantalla que lo
+  // explique. `checkFilterOps` no puede verlo: compara pantalla ↔ manifest, nunca la SQL.
+  //
+  // Solo se juzga el WHERE de PRIMER nivel y solo cuando no hay un OR de primer nivel — los dos
+  // controles negativos que el catálogo trae de verdad: `tables.zones.list` clava el `= 1` en el ON
+  // de un LEFT JOIN sobre OTRA tabla, y `taxes.rules.list` lo esconde tras
+  // `OR :include_archived`, que es su escotilla a propósito (ERPlora/taxes#53). Trinquete: los 9
+  // filtros muertos ya publicados avisan (`DEAD_FILTERS_GRANDFATHERED`, ERPlora/pm#251) y la lista
+  // solo encoge; uno nuevo es error.
+  const deadFilters = checkDeadFilters(dir, manifest);
+  for (const w of deadFilters.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (deadFilters.errors.length) {
+    throw new Error(
+      'un filtro de lista que la propia SQL ya clava (module-toolkit#178):\n  - ' +
+        deadFilters.errors.join('\n  - '),
+    );
+  }
+
+  // module-toolkit#180: una batería que itera `migrations.postgres` como si fueran strings. La forma
+  // objeto `{ file, kind, since }` es la ÚNICA manera de declarar un `contract` (hub#542), así que
+  // el día que el módulo declare el primero esa batería muere con `TypeError: … 'PosixPath' and
+  // 'dict'` antes de probar nada — y lo hace en el merge-ref de otra PR, sin conflicto textual
+  // (ERPlora/appointments#114 contra #115). AVISA mientras el manifest sea solo strings (57 bucles
+  // en 14 módulos el 05/09/2026: poner eso rojo pararía 14 módulos por un fallo que aún no tienen)
+  // y RECHAZA en cuanto el módulo declara una entrada objeto: ahí la batería ya está rota.
+  const batteryMigrations = checkBatteryMigrations(dir, manifest);
+  for (const w of batteryMigrations.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (batteryMigrations.errors.length) {
+    throw new Error(
+      'una batería no puede leer las migraciones de este módulo (module-toolkit#180):\n  - ' +
+        batteryMigrations.errors.join('\n  - '),
     );
   }
 

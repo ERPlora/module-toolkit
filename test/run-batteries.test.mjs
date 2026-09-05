@@ -20,6 +20,7 @@ import {
   discoverBatteries,
   looksSkipped,
   pgContainerVars,
+  migrationFilesVar,
   runBatteries,
   strayTestFiles,
 } from '../src/run-batteries.mjs';
@@ -70,6 +71,52 @@ test('discoverBatteries: un módulo sin `tests/` no cambia nada', () => {
 });
 
 // ── El contenedor: el harness lo lee de una variable POR MÓDULO ──────────────────────
+
+// ── Las migraciones YA RESUELTAS: la batería no tiene que releer el manifest ─────────
+
+test('migrationFilesVar: entrega las rutas ya resueltas, una por línea', () => {
+  assert.deepEqual(
+    migrationFilesVar({
+      migrations: {
+        postgres: [
+          'migrations/postgres/001_init.sql',
+          { file: 'migrations/postgres/008_retire.sql', kind: 'contract', since: '1.1.63' },
+        ],
+      },
+    }),
+    { ERPLORA_MIGRATION_FILES: 'migrations/postgres/001_init.sql\nmigrations/postgres/008_retire.sql' },
+  );
+});
+
+test('migrationFilesVar: un módulo sin migraciones entrega la lista VACÍA, no la variable ausente', () => {
+  // Ausente y vacía no significan lo mismo: con la variable puesta la batería sabe que `erplora
+  // test` la resolvió y que no hay ninguna; sin ella tendría que decidir si volver al manifest.
+  assert.deepEqual(migrationFilesVar({ id: 'demo' }), { ERPLORA_MIGRATION_FILES: '' });
+});
+
+test('runBatteries: cada batería recibe las migraciones resueltas en el entorno', { skip: !PYTHON }, () => {
+  const m = mod({
+    'tests/shape.contract.test.py':
+      'import os, sys\nprint(os.environ.get("ERPLORA_MIGRATION_FILES", "unset"))\nsys.exit(0)\n',
+  });
+  const manifest = {
+    ...m.manifest,
+    migrations: {
+      postgres: [
+        'migrations/postgres/001_init.sql',
+        { file: 'migrations/postgres/008_retire.sql', kind: 'contract' },
+      ],
+    },
+  };
+  const { results } = runBatteries(m.dir, manifest);
+  assert.equal(results.length, 1);
+  assert.equal(
+    results[0].output.trim(),
+    'migrations/postgres/001_init.sql\nmigrations/postgres/008_retire.sql',
+    'la forma objeto llega ya normalizada: es lo que evita el TypeError de module-toolkit#180',
+  );
+  m.clean();
+});
 
 test('pgContainerVars: deriva `<ID>_TEST_PG_CONTAINER` del id del manifest', () => {
   assert.deepEqual(pgContainerVars('cash_register', 'pg-123'), {
