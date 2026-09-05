@@ -49,7 +49,7 @@ import { declaredColumnTypes } from './validate-filter-ops.mjs';
  *
  * The fix each of these wants is the one ERPlora/taxes#53 chose: the column is not a filter, it is a
  * decision the query already took — so the filter comes OUT of `list.filters`. Their issue is
- * ERPlora/pm#251.
+ * ERPlora/pm#254.
  */
 export const DEAD_FILTERS_GRANDFATHERED = [
   ['appointments', 'appointments.schedules.list', 'is_active'],
@@ -359,7 +359,7 @@ export function deadFilterFindings(moduleId, queries, { columnTypes = null, decl
 
   for (const [key, message] of found) {
     if (excused.has(key)) {
-      warnings.push(`[dead-filters] ${message} — ABUELADO en module-toolkit#178 mientras se arregla (ERPlora/pm#251).`);
+      warnings.push(`[dead-filters] ${message} — ABUELADO en module-toolkit#178 mientras se arregla (ERPlora/pm#254).`);
     } else {
       errors.push(message);
     }

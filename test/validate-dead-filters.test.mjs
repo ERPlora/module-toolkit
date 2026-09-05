@@ -323,7 +323,7 @@ test('the grandfathered list is the measurement of 2026-09-05 and may only SHRIN
   assert.equal(
     DEAD_FILTERS_GRANDFATHERED.length,
     9,
-    'a line ADDED here excuses a dead filter forever — fix the module instead (ERPlora/pm#251)',
+    'a line ADDED here excuses a dead filter forever — fix the module instead (ERPlora/pm#254)',
   );
   const seen = new Set();
   for (const entry of DEAD_FILTERS_GRANDFATHERED) {

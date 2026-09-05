@@ -289,7 +289,7 @@ export async function validate(moduleDir, { pg = false } = {}) {
   // controles negativos que el catálogo trae de verdad: `tables.zones.list` clava el `= 1` en el ON
   // de un LEFT JOIN sobre OTRA tabla, y `taxes.rules.list` lo esconde tras
   // `OR :include_archived`, que es su escotilla a propósito (ERPlora/taxes#53). Trinquete: los 9
-  // filtros muertos ya publicados avisan (`DEAD_FILTERS_GRANDFATHERED`, ERPlora/pm#251) y la lista
+  // filtros muertos ya publicados avisan (`DEAD_FILTERS_GRANDFATHERED`, ERPlora/pm#254) y la lista
   // solo encoge; uno nuevo es error.
   const deadFilters = checkDeadFilters(dir, manifest);
   for (const w of deadFilters.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
