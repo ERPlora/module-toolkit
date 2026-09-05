@@ -325,6 +325,24 @@ test('WARNS (does not fail): the file is cleaner than its allowance, but not cle
   m.clean();
 });
 
+test('a module that ships no `ui/` at all is not red for somebody else\'s allowance', () => {
+  // The same hole `dead-filters` closed in module-toolkit#178 and `filter-ops` in #189, through
+  // this door: reusing a published id — `taxes`, `appointments`, `services`… — is enough to inherit
+  // its allowances, and a ratchet that blocks on ABSENCE puts red a manifest over components it
+  // never had, naming files it cannot delete because they are not its own. The module that HAS
+  // components is the one that can have renamed or deleted the file, and that one still FAILS
+  // (the test right above); one with no `ui/` is not the module the line talks about.
+  const [id] = FILL_GRANDFATHERED[0];
+  const owed = FILL_GRANDFATHERED.filter(([m]) => m === id).length;
+  const m = mod({ 'module.json': '{}' }, id);
+  const { errors, warnings } = checkIonicFill(m.dir, m.manifest);
+  assert.deepEqual(errors, []);
+  assert.equal(warnings.length, owed, JSON.stringify(warnings));
+  assert.match(warnings[0], /FILL_GRANDFATHERED/, 'it still says which line to delete');
+  assert.match(warnings[0], /pm#152/, 'and where the sweep is tracked');
+  m.clean();
+});
+
 test('a module with no entry at all is not asked about staleness', () => {
   const m = mod({ 'ui/components/erp-demo/erp-demo.ts': '<ion-input mode="md" fill="outline"></ion-input>' }, 'demo');
   assert.deepEqual(checkIonicFill(m.dir, m.manifest), { errors: [], warnings: [] });

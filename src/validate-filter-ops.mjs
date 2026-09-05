@@ -81,6 +81,11 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * That fixes the order of the sweep: the one-line pull request that deletes the entry goes FIRST,
  * and the module's fix merges behind it (same contract as `FILL_GRANDFATHERED`).
  *
+ * It fails the module that DECLARES the query — the only one that can have fixed it. A manifest
+ * that does not even declare it is not the one the line talks about (a fixture built on a published
+ * id, or a query retired whole): it is WARNED, never blocked for somebody else's excuse
+ * (module-toolkit#189, same split as `DEAD_FILTERS_GRANDFATHERED` in module-toolkit#178).
+ *
  * WHERE THE SWEEP IS — 40 lying boxes in 13 modules were measured; `reservations` fixed its six the
  * same day (ERPlora/reservations#46, merged 2026-09-05), so 34 in 12 modules are excused here: 26 are
  * a text box the manifest filters with the wrong operator, 7 are a text box over a column that is a
@@ -583,14 +588,27 @@ export function checkFilterOps(dir, manifest) {
     }
   }
 
+  // Every query name the manifest carries, `list.filters` or not: it is what tells a line that no
+  // longer covers anything (the module was FIXED, and the line has to go) apart from a manifest
+  // that simply is not the one the line is about. Reusing a published id — `tasks`, `invoice`,
+  // `cart_checkout`… — is enough to inherit its excuses, and a ratchet that blocks on ABSENCE puts
+  // red a module over screens and columns it does not have, with nothing it can touch to fix it
+  // (module-toolkit#189). Same split the sister rule `dead-filters` makes (module-toolkit#178).
+  const declared = new Set(queries && typeof queries === 'object' ? Object.keys(queries) : []);
+
   for (const [, query, column] of owed) {
     if (found.has(`${query}|${column}`)) continue;
-    errors.push(
+    const stale =
       `\`${query}\` → \`${column}\` ya NO incumple ADR-0125, pero sigue en la lista de abuelados de ` +
-        '`module-toolkit/src/validate-filter-ops.mjs` (`FILTER_OPS_GRANDFATHERED`): una línea que no ' +
-        'cubre nada es un permiso permanente para volver a romperlo en verde. Bórrala — esa PR de una ' +
-        'línea va DELANTE del arreglo del módulo.',
-    );
+      '`module-toolkit/src/validate-filter-ops.mjs` (`FILTER_OPS_GRANDFATHERED`): una línea que no ' +
+      'cubre nada es un permiso permanente para volver a romperlo en verde. Bórrala — esa PR de una ' +
+      'línea va DELANTE del arreglo del módulo.';
+    // The module that DECLARES the query is the one that can have fixed it: there the line really
+    // is spare and it BLOCKS, which is what fixes the order of the two pull requests. A manifest
+    // that does not even declare it (a fixture, or a query retired whole) is not the one the line
+    // talks about: it is warned, never blocked for somebody else's excuse.
+    if (declared.has(query)) errors.push(stale);
+    else warnings.push(`[filter-ops] ${stale}`);
   }
 
   return { errors, warnings };

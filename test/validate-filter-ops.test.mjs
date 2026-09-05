@@ -63,6 +63,13 @@ function mod({ filters = {}, files = {}, id = 'demo', sql = INIT } = {}) {
   return { dir, manifest };
 }
 
+/** The manifest's queries plus every grandfathered query of `owed`, declared and clean. */
+function declaring(manifest, owed) {
+  const queries = { ...manifest.queries };
+  for (const [, query] of owed) queries[query] ??= { list: { filters: {} } };
+  return queries;
+}
+
 /** A Web Component that drives `demo.items.list` and paints `columns`. */
 function screen(columns) {
   const cols = columns
@@ -490,13 +497,44 @@ test('a grandfathered filter warns instead of blocking, and names its issue', ()
 });
 
 test('a grandfathered entry that no longer applies FAILS: the list only shrinks', () => {
+  // The module that DECLARES the query is the one that can have fixed it, so it is the one the
+  // stale line blocks — that is what fixes the order of the two pull requests (module-toolkit#189).
   const id = FILTER_OPS_GRANDFATHERED[0][0];
-  const owed = FILTER_OPS_GRANDFATHERED.filter(([m]) => m === id).length;
+  const owed = FILTER_OPS_GRANDFATHERED.filter(([m]) => m === id);
   const { dir, manifest } = mod({ id, filters: { name: { op: 'like' } } });
-  const { errors } = checkFilterOps(dir, manifest);
-  assert.equal(errors.length, owed);
+  const { errors } = checkFilterOps(dir, { ...manifest, queries: declaring(manifest, owed) });
+  assert.equal(errors.length, owed.length);
   assert.match(errors[0], /module-toolkit/);
   assert.match(errors[0], new RegExp(FILTER_OPS_GRANDFATHERED[0][1].replace(/\./g, '\\.')));
+});
+
+test('a module that does not even declare the query is not red for somebody else\'s excuse', () => {
+  // Reusing a published id is enough to inherit its excuses: `tasks`, `invoice`, `cart_checkout`…
+  // A ratchet that blocks on ABSENCE puts red every fixture built on one of those ids — and every
+  // module that RETIRED the query — over a line written about another manifest, pointing at
+  // screens and columns it does not have and cannot touch (module-toolkit#189). Same split the
+  // sister rule `dead-filters` already makes (module-toolkit#178).
+  const id = FILTER_OPS_GRANDFATHERED[0][0];
+  const owed = FILTER_OPS_GRANDFATHERED.filter(([m]) => m === id);
+  const { dir } = mod({ id });
+  const { errors, warnings } = checkFilterOps(dir, { id, queries: {} });
+  assert.deepEqual(errors, []);
+  assert.equal(warnings.length, owed.length, JSON.stringify(warnings));
+  assert.match(warnings[0], /FILTER_OPS_GRANDFATHERED/, 'it still says which line to delete');
+  assert.match(warnings[0], /\[filter-ops\]/, 'and is tagged like every other check of this door');
+  assert.ok(dir);
+});
+
+test('the module that FIXED it by dropping the filter is blocked: the query is still declared', () => {
+  // The other shape of a fix — the query stays, the lying filter leaves `list.filters`. The finding
+  // disappears while the query still exists, and that is exactly when the line has to go.
+  const [id, query] = FILTER_OPS_GRANDFATHERED[0];
+  const owed = FILTER_OPS_GRANDFATHERED.filter(([m]) => m === id).length;
+  const { dir } = mod({ id });
+  const { errors } = checkFilterOps(dir, { id, queries: { [query]: { list: { filters: {} } } } });
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], new RegExp(query.replace(/\./g, '\\.')));
+  assert.ok(owed >= 1);
 });
 
 test('a module that is not in the list is judged with no exceptions', () => {
