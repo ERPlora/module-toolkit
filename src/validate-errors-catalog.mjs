@@ -33,8 +33,10 @@
 // No `errors` block at all is the shape of the modules that have not migrated yet: emitting codes
 // without a catalog is a WARNING until the 27 published modules carry the block (ADR-0398 §5). The
 // old NESTED locale shape under the module's own id is the same story and stays a WARNING with a
-// message that says what the contract is — it is where the last five live (customers,
-// online_booking, tasks, tickets, whatsapp_inbox), each with its migration issue open.
+// message that says what the contract is. The fleet's five (customers, online_booking, tasks,
+// tickets, whatsapp_inbox) migrated on 2026-09-05/06 (0 nested against the 27 `origin/main`
+// manifests when this landed), so it guards a third-party module in the old shape and goes red
+// together with the no-catalog warning (ADR-0398 §5), never on its own.
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -67,7 +69,7 @@ const ERROR_DECL_FIELDS = ['deprecated'];
 function errorDeclProblem(code, decl) {
   if (decl === null || typeof decl !== 'object' || Array.isArray(decl)) {
     return (
-      `errors: \`${code}\` carries ${typeof decl === 'string' ? 'the message text' : `a ${Array.isArray(decl) ? 'list' : typeof decl}`} ` +
+      `errors: \`${code}\` carries ${typeof decl === 'string' ? 'the message text' : decl === null ? 'null' : Array.isArray(decl) ? 'a list' : `a ${typeof decl}`} ` +
       'as its value — the value is the code\'s STATE (an object with at most `deprecated`), never its text, which lives in ' +
       '`locales/<lang>.json → errors.<code>` (ADR-0055). The hub reads the block as a map of objects and REFUSES the install (ADR-0398)'
     );
@@ -87,7 +89,7 @@ function errorDeclProblem(code, decl) {
  * module's own namespace) with a text as value, which is all the hub's SDK indexes.
  *
  * `migrated` (the manifest carries an `errors` catalog) only decides the severity of the OLD nested
- * shape under the module's own id: a warning while the last five modules migrate, an error once the
+ * shape under the module's own id: a warning for a module that has not migrated (ADR-0398 §5), an error once the
  * module has declared its catalog — there the cube is a leftover that reads like a translation and
  * changes nothing anyone sees. A nested cube under someone ELSE's namespace is an error either way.
  *

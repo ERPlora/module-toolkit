@@ -359,10 +359,11 @@ test('STILL FAILS: a literal the manifest declares nowhere is an emitted code (#
 //   * a value that is not a string at all.
 //
 // The one shape that stays a WARNING is the old nested form UNDER THE MODULE'S OWN ID with no
-// `errors` block in the manifest: that is the five modules still to migrate (customers,
-// online_booking, tasks, tickets, whatsapp_inbox — measured across the 27 published manifests, the
-// only finding in the fleet). Turning it red would put five published modules in the red for a
-// migration that already has an issue in each repo; the specific message shortens it instead.
+// `errors` block in the manifest: the shape of a module that has not migrated. The fleet's five
+// (customers, online_booking, tasks, tickets, whatsapp_inbox) did on 2026-09-05/06 — measured
+// against the 27 `origin/main` manifests the day this landed: 0 red, 0 nested — so today it guards
+// a third-party module in the old shape, and it turns red together with the no-catalog warning
+// (ADR-0398 §5), never on its own; the specific message shortens the migration instead.
 
 const OWN = 'appointments.overlap';
 const flat = (extra = {}) => ({ errors: { [OWN]: 'Ese hueco ya está ocupado.', ...extra } });
@@ -377,6 +378,23 @@ test('FAILS: `errors.<code>` carries the message TEXT instead of the code state 
     assert.match(out.errors[0], /deprecated/, 'the message must name the only field an entry may carry');
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS without crashing: `errors.<code>` that is null, a number or a boolean (#197)', () => {
+  // A string value is caught twice over (its indices read as unknown fields), so only these
+  // values prove the non-object branch on its own: without it the guard THROWS instead of judging.
+  for (const value of [null, 42, true]) {
+    const manifest = base({ errors: { [OWN]: value } });
+    const dir = mod(manifest, { en: locales([OWN]), es: locales([OWN]) });
+    try {
+      const out = checkErrorsCatalog(dir, manifest);
+      assert.equal(out.errors.length, 1, `${JSON.stringify(value)}: ${out.errors.join('\n')}`);
+      assert.match(out.errors[0], /appointments\.overlap/);
+      assert.match(out.errors[0], /deprecated/, 'the message must name the only field an entry may carry');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   }
 });
 
