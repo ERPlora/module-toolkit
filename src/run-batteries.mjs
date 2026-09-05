@@ -50,6 +50,7 @@
 // gate, because a test nobody runs is worse than no test: it buys the confidence without the check.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { migrationFiles } from './validate-migrations.mjs';
 import { basename, join } from 'node:path';
 import { hubBatteryVars } from './against-hub.mjs';
 
@@ -196,6 +197,26 @@ export function pgContainerVars(moduleId, container) {
 }
 
 /**
+ * The migrations of the module, ALREADY RESOLVED, for the battery that needs to stand a database up.
+ *
+ * A battery used to read them off the manifest by hand, and only knew the string form — so the first
+ * module to declare a `contract` (which only the object form `{ file, kind, since }` can express,
+ * hub#542) killed every battery still carrying that loop with `TypeError: unsupported operand
+ * type(s) for /: 'PosixPath' and 'dict'`, in the merge-ref of an unrelated pull request
+ * (ERPlora/appointments#114 into #115). `validate-battery-migrations.mjs` names the loops that are
+ * left; this is what they should read instead, so a battery written tomorrow never has to know the
+ * manifest has two shapes.
+ *
+ * Newline-separated because a path may hold anything but a newline, and because `splitlines()` is
+ * one call in the language every battery is written in. Set EMPTY rather than left out when the
+ * module declares none: absent and empty do not mean the same thing — with the variable present the
+ * battery knows `erplora test` resolved them and there are none, and never falls back to the manifest.
+ */
+export function migrationFilesVar(manifest) {
+  return { ERPLORA_MIGRATION_FILES: migrationFiles(manifest, 'postgres').join('\n') };
+}
+
+/**
  * Does this output say the battery skipped ITSELF instead of running?
  *
  * 🔴 Anchored at column 0, and that is the whole rule (module-toolkit#57). The batteries print two
@@ -287,6 +308,7 @@ export function runBatteries(
       }
       const env = {
         ...process.env,
+        ...migrationFilesVar(manifest),
         ...(kind === 'postgres' ? pgContainerVars(manifest.id, container) : {}),
         ...(kind === 'hub' ? hubBatteryVars(manifest.id, hub) : {}),
       };

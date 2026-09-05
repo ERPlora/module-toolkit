@@ -385,6 +385,37 @@ mergeaba en verde. `erplora test` cierra las tres familias, con la misma regla e
 | TypeScript | `ui/**/*.test.ts` — los Web Components, donde vive casi toda la lógica de pantalla | vitest + happy-dom, con la **config del toolkit** (`src/vitest.module.config.mjs`) |
 | Rust | `handler/**/*.rs` con `#[cfg(test)]` — la lógica de negocio de un módulo Tier 2 | `cargo test` sobre el crate del handler; fuera del monorepo necesita un checkout del hub en `ERPLORA_HUB_DIR` (§ *Los tests del handler*) |
 
+### Las migraciones te las da el entorno: `ERPLORA_MIGRATION_FILES`
+
+Una batería de Postgres **no tiene que releer el manifest** para saber qué migraciones aplicar.
+Junto a `ERPLORA_TEST_PG_CONTAINER`, `erplora test` publica en el entorno de **cada** batería la
+variable **`ERPLORA_MIGRATION_FILES`**: las rutas **ya resueltas**, **una por línea** y **en el
+orden del manifest**, relativas a la raíz del módulo (`MODULE_DIR`).
+
+Lo importante es que aplana **las dos formas** en las que se puede declarar una migración — la
+string suelta y la forma objeto `{ "file", "kind", "since" }`, que es la única manera de declarar un
+`contract` (hub#542). Así se lee en una batería nueva:
+
+```python
+MIGRATIONS = [p for p in os.environ["ERPLORA_MIGRATION_FILES"].splitlines() if p]
+for rel in MIGRATIONS:
+    psql([], db=DB, stdin=(MODULE_DIR / rel).read_text())
+```
+
+Y así **no**, aunque sea lo que hacen todavía la mayoría de las baterías publicadas:
+
+```python
+for rel in MANIFEST["migrations"]["postgres"]:      # ← solo entiende la forma string
+    psql([], db=DB, stdin=(MODULE_DIR / rel).read_text())
+```
+
+Ese bucle revienta con `TypeError: unsupported operand type(s) for /: 'PosixPath' and 'dict'` en
+cuanto el módulo declara su primer `contract`, y revienta **antes** de probar nada. Ya pasó en
+ERPlora/appointments#115, que tuvo que tocar 15 baterías de una vez. Por eso `erplora validate`
+avisa (`[battery-migrations]`) de cada bucle que aún itera el manifest crudo, y lo sube a **error**
+en los módulos que ya declaran alguna migración con la forma objeto: ahí la batería no está en
+riesgo de romperse, ya está rota (module-toolkit#180).
+
 Tres reglas, y las tres son el motivo de que esto sea código y no tres líneas de YAML:
 
 1. **El descubrimiento vive aquí, una sola vez.** `--list` enumera exactamente lo que se va a
