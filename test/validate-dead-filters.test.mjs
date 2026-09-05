@@ -121,6 +121,22 @@ test('a pin behind an OR is not a pin — the caller can open the door (taxes.ru
   assert.deepEqual(errors, [], 'ERPlora/taxes#53 kept this filter ON PURPOSE, with its escape hatch');
 });
 
+test('a top-level OR WITHOUT parentheses unjudges the whole clause, conjunct by conjunct', () => {
+  // `AND` binds tighter than `OR`, so this reads `(is_active = 1 AND x = 2) OR y = 3`: a row with
+  // `y = 3` comes back however `is_active` is, and the filter is NOT dead. Splitting the clause on
+  // its top-level `AND`s hands `is_active = 1` over as if it were guaranteed, so without the guard
+  // in `topLevelWhere` this is an ERROR the module cannot fix from its side — the taxes.rules.list
+  // case above does NOT cover it, because that one wraps its OR in parentheses.
+  const sql = `SELECT id, is_active FROM t WHERE is_active = 1 AND x = 2 OR y = 3`;
+  assert.deepEqual([...pinnedColumns(sql).keys()], [], 'nothing in a disjunction is guaranteed');
+
+  const { errors, warnings } = deadFilterFindings('demo', [
+    q('demo.things.list', sql, { is_active: { op: 'eq' } }),
+  ]);
+  assert.deepEqual(errors, []);
+  assert.deepEqual(warnings, []);
+});
+
 test('a column compared against a BIND is not pinned — that is the filter working', () => {
   const sql = `SELECT id, status FROM t WHERE hub_id = :hub_id AND status = :status`;
   const { errors } = deadFilterFindings('m', [q('m.list', sql, { status: { op: 'eq' } })]);

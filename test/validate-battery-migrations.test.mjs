@@ -61,6 +61,17 @@ test('the normalised loop is left alone — `isinstance` is the whole fix', () =
   assert.deepEqual(batteryMigrationLoops(NORMALISED), []);
 });
 
+test('normalising INSIDE the iterable is the fix too — the body only sees paths', () => {
+  // The comprehension is the loop's own iterable, so the body has nothing left to normalise: `rel`
+  // is already a path. Judging only the body flags a battery that is CORRECT, and the module has no
+  // way to answer the finding — the two tests above do not cover this shape, because in both of
+  // them the normalisation happens where the body can see it.
+  const src = `for rel in [e if isinstance(e, str) else e["file"] for e in MANIFEST["migrations"]["postgres"]]:
+    psql([], db=DB, stdin=(MODULE_DIR / rel).read_text())
+`;
+  assert.deepEqual(batteryMigrationLoops(src), []);
+});
+
 test('`entry["file"]` inside the body normalises just as well', () => {
   const src = `for entry in MANIFEST["migrations"]["postgres"]:
     psql([], db=DB, stdin=(MODULE_DIR / entry["file"]).read_text())
