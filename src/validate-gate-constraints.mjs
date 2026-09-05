@@ -58,7 +58,6 @@ import { splitStatements, stripComments } from './validate-migration-guard.mjs';
 export const GRANDFATHERED = [
   ['reservations', 'migrations/postgres/002_gate.sql', 'ERPlora/reservations#42'],
   ['services', 'migrations/postgres/003_package_redemption.sql', 'ERPlora/services#91'],
-  ['tables', 'migrations/postgres/002_gate.sql', 'ERPlora/tables#76'],
 ];
 
 function grandfatheredIssue(moduleId, file) {
