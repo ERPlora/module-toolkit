@@ -253,12 +253,21 @@ Qué se comprueba, sobre el estado FINAL de la cadena de migraciones:
 > manifest** y se juzga el estado final.
 >
 > **Trinquete, no golpe.** El barrido de los 27 repos (`origin/main`, 01/09/2026) encuentra el
-> patrón en 5 módulos: `verifactu` (ya arreglado) y otros cuatro. Esos cuatro ficheros están en
+> patrón en 5 módulos: `verifactu` (ya arreglado) y otros cuatro. Esos cuatro ficheros entraron en
 > `GRANDFATHERED` uno a uno **con su issue** (appointments#103, reservations#42, services#91,
 > tables#76): **avisan** en cada `erplora validate` —nunca en silencio— y no ponen en rojo un repo
 > publicado por una regla escrita hoy. La lista solo puede ENCOGER, hay un test que fija su
 > contenido exacto, y la tolerancia es por **fichero**: una tabla guardia nueva, incluso en uno de
-> esos cuatro módulos, nace en error.
+> esos módulos, nace en error.
+>
+> 🎯 **La lista está VACÍA desde el 05/09/2026 y el trinquete llegó al final: no queda deuda.**
+> `appointments` había salido antes con appointments#103; el 05/09 salieron las tres últimas:
+> `reservations` (reservations#42, migración 004), `tables` (tables#76, migración 011) y
+> `services` (services#91, migración 016). Cada `__gate` de la flota se juzga ya igual, sin excepciones. El
+> mecanismo se queda —vacío— porque es lo que hace la regla adoptable la PRÓXIMA vez: el día que
+> aparezca un repo con el defecto, se le da una entrada con su issue en vez de un repo en rojo. Su
+> comportamiento lo prueba una entrada **sintética** que inyectan los tests, así que la guarda
+> sigue ejercitándose con la lista real vacía.
 
 ## El `fill` que el hub NUNCA pinta (hub#760)
 

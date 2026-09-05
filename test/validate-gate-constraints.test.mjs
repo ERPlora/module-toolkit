@@ -42,15 +42,40 @@ test('an anonymous CHECK (ok = 1) on the gate table is refused, naming the fix',
 
 test('the real published SQL of tables/002_gate.sql is the defect', () => {
   const sql = fixture('tables_002_gate.sql');
-  // As published it is on the tolerance list, so it warns and does not block the repo (below).
-  const published = findings('tables', [{ file: 'migrations/postgres/002_gate.sql', sql }]);
-  assert.deepEqual(published.errors, []);
-  assert.equal(published.warnings.length, 1, JSON.stringify(published.warnings));
-  assert.match(published.warnings[0], /tables__gate/);
-  // The same bytes outside the list are the error: what is tolerated is the FILE, not the pattern.
-  const fresh = findings('tables', [{ file: 'migrations/postgres/012_new_gate.sql', sql }]);
-  assert.equal(fresh.errors.length, 1, JSON.stringify(fresh.errors));
-  assert.match(fresh.errors[0], /tables__gate/);
+  // `tables` LEFT the tolerance list when it landed the named constraints (tables#76, migration
+  // 011). So those bytes on their own are now the error, with no warning to soften them — which is
+  // the whole point of a ratchet: the entry goes and the file stops being special.
+  const { errors, warnings } = findings('tables', [{ file: 'migrations/postgres/002_gate.sql', sql }]);
+  assert.deepEqual(warnings, [], 'nothing tolerates this file any more');
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /tables__gate/, 'names the table');
+  assert.match(errors[0], /002_gate\.sql/, 'names the file to edit');
+});
+
+// ...and the reason the entry could go: the module's REAL chain. 002 still creates the table with
+// the anonymous check — migrations are append-only and that file is published — and 011 swaps it
+// for one named constraint per gate plus the whitelist. The verdict is on the END state, so the
+// module is green WITHOUT any tolerance. This is what makes retiring the entry a measurement and
+// not a promise: break 011 and this test goes red, exactly like the module's own battery.
+test('tables is green on its own merits: 002 + 011 leaves no anonymous CHECK', () => {
+  const chain = [
+    { file: 'migrations/postgres/002_gate.sql', sql: fixture('tables_002_gate.sql') },
+    { file: 'migrations/postgres/011_named_gate_constraints.sql', sql: fixture('tables_011_named_gate_constraints.sql') },
+  ];
+  assert.deepEqual(findings('tables', chain), { errors: [], warnings: [] });
+
+  // And it is 011 that earns it: drop its whitelist and the door says so (a gate that matches no
+  // constraint violates nothing, so an assert typo would fail OPEN).
+  const withoutWhitelist = fixture('tables_011_named_gate_constraints.sql').replace(
+    /ALTER TABLE tables__gate ADD CONSTRAINT tables__gate_is_declared[\s\S]*$/,
+    '',
+  );
+  const { warnings } = findings('tables', [
+    chain[0],
+    { file: 'migrations/postgres/011_named_gate_constraints.sql', sql: withoutWhitelist },
+  ]);
+  assert.equal(warnings.length, 1, JSON.stringify(warnings));
+  assert.match(warnings[0], /lista blanca/);
 });
 
 // The header of `appointments/003_gate.sql` says, in prose, «ok = 0 violates CHECK (ok = 1)». A
@@ -164,36 +189,70 @@ test('a module with no gate table at all says nothing', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// 6. The ratchet. Four modules publish the defect today; a hard error with no tolerance list would
-//    put four green repos in red for a rule of ours, which is how a gate gets disabled instead of
-//    obeyed. They are named ONE BY ONE with their issue, they WARN (never silent), and the list can
-//    only shrink — a new gate table is born in error.
+// 6. The ratchet, now that it has run its course. Five modules published the defect on 01/09; the
+//    last three landed their named constraints on 05/09, so the tolerance list is EMPTY and every
+//    `__gate` in the fleet is judged alike. The mechanism stays because it is what makes the rule
+//    adoptable NEXT time — a repo arriving with the defect gets one named, warning entry instead
+//    of a red build — so it is exercised here with a SYNTHETIC entry the test injects and removes.
+//    Deleting it with the last module would leave `grandfatheredIssue` as live, unproven code.
 // ---------------------------------------------------------------------------------------------
 
+/** Runs `fn` with one synthetic entry on the tolerance list, and always takes it off again. */
+const withGrandfathered = (entry, fn) => {
+  GRANDFATHERED.push(entry);
+  try {
+    return fn();
+  } finally {
+    GRANDFATHERED.splice(GRANDFATHERED.indexOf(entry), 1);
+  }
+};
+
+const ANONYMOUS = (table) => `CREATE TABLE ${table} (gate TEXT NOT NULL, ok INTEGER NOT NULL CHECK (ok = 1));`;
+
 test('a grandfathered file warns naming its issue, and does not block', () => {
-  const [moduleId, file] = GRANDFATHERED[0];
-  const { errors, warnings } = findings(moduleId, [
-    { file, sql: `CREATE TABLE ${moduleId}__gate (gate TEXT NOT NULL, ok INTEGER NOT NULL CHECK (ok = 1));` },
-  ]);
+  const entry = ['newmod', 'migrations/postgres/002_gate.sql', 'ERPlora/newmod#7'];
+  const { errors, warnings } = withGrandfathered(entry, () =>
+    findings('newmod', [{ file: entry[1], sql: ANONYMOUS('newmod__gate') }]),
+  );
   assert.deepEqual(errors, [], 'a published module does not go red for a rule we just wrote');
   assert.equal(warnings.length, 1, JSON.stringify(warnings));
   assert.match(warnings[0], /#\d+/, 'the warning carries the issue that retires it');
+  assert.match(warnings[0], /newmod__gate/);
 });
 
-test('the tolerance list is exactly the corpus measured on origin/main (01/09/2026)', () => {
-  // Pinned so growing it is a deliberate act somebody reviews, never a quiet `push`.
-  assert.deepEqual(
-    GRANDFATHERED.map(([m, f]) => `${m}:${f}`).sort(),
-    [
-      'reservations:migrations/postgres/002_gate.sql',
-      'tables:migrations/postgres/002_gate.sql',
-    ],
-    'the list only SHRINKS: an entry goes when its module lands the named constraints',
-  );
+test('the SAME file is an ERROR once its entry is gone: the tolerance is the entry, nothing else', () => {
+  // The other half of the test above, and the one that proves the injection is not decorative: the
+  // identical SQL judged with the real (empty) list is refused outright.
+  const { errors, warnings } = findings('newmod', [
+    { file: 'migrations/postgres/002_gate.sql', sql: ANONYMOUS('newmod__gate') },
+  ]);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /newmod__gate/);
+  assert.deepEqual(warnings, [], 'no entry left to soften it');
+});
+
+test('the tolerance list is EMPTY: nothing in the fleet is owed a pass any more', () => {
+  // Pinned so GROWING it is a deliberate act somebody reviews, never a quiet `push`. The corpus
+  // measured on 01/09/2026 (appointments#103, reservations#42, services#91, tables#76) is cleared.
+  assert.deepEqual(GRANDFATHERED, [], 'the list only SHRINKS: an entry goes when its module lands the named constraints');
+});
+
+test('a module that landed the named constraints is OUT of the list, and goes red if it regresses', () => {
+  // What retiring an entry BUYS: the SAME file that was tolerated yesterday is an ERROR today,
+  // which is the only way the ratchet stops a module from quietly putting the anonymous check back.
+  for (const moduleId of ['reservations', 'tables', 'services']) {
+    assert.equal(GRANDFATHERED.some(([m]) => m === moduleId), false, `${moduleId} still excused`);
+    const { errors, warnings } = findings(moduleId, [
+      { file: 'migrations/postgres/002_gate.sql', sql: ANONYMOUS(`${moduleId}__gate`) },
+    ]);
+    assert.equal(errors.length, 1, JSON.stringify(errors));
+    assert.match(errors[0], new RegExp(`${moduleId}__gate`));
+    assert.deepEqual(warnings, [], 'no tolerance left to soften it');
+  }
 });
 
 test('services is OFF the tolerance list: services#91 landed the named constraints', () => {
-  // The ratchet only turns one way. `services` is here because it did the work, so the very file
+  // The ratchet only turns one way. `services` is out because it did the work, so the very file
   // that used to be excused is now judged like anybody else's — which is what stops the list from
   // becoming a permanent exemption nobody revisits.
   const bare = fixture('services_003_package_redemption.sql');
@@ -215,13 +274,19 @@ test('services is OFF the tolerance list: services#91 landed the named constrain
   assert.deepEqual(fixed.warnings, [], JSON.stringify(fixed.warnings));
 });
 
+// Written against a synthetic entry rather than a module named here, so this test does not have to
+// be rewritten every time an entry retires — naming `tables` is what made it fail the day `tables`
+// landed its fix, and naming `GRANDFATHERED[0]` is what made it explode the day the list emptied.
 test('grandfathering is per FILE, not per module: a new gate table in an old module is an error', () => {
-  const { errors } = findings('tables', [
-    { file: 'migrations/postgres/002_gate.sql', sql: 'CREATE TABLE tables__gate (gate TEXT NOT NULL, ok INTEGER NOT NULL CHECK (ok = 1));' },
-    { file: 'migrations/postgres/011_second_gate.sql', sql: 'CREATE TABLE tables__gate_hold (gate TEXT NOT NULL, ok INTEGER NOT NULL CHECK (ok = 1));' },
-  ]);
+  const entry = ['newmod', 'migrations/postgres/002_gate.sql', 'ERPlora/newmod#7'];
+  const { errors } = withGrandfathered(entry, () =>
+    findings('newmod', [
+      { file: entry[1], sql: ANONYMOUS('newmod__gate') },
+      { file: 'migrations/postgres/099_second_gate.sql', sql: ANONYMOUS('newmod__gate_hold') },
+    ]),
+  );
   assert.equal(errors.length, 1, JSON.stringify(errors));
-  assert.match(errors[0], /tables__gate_hold/);
+  assert.match(errors[0], /newmod__gate_hold/);
 });
 
 // ---------------------------------------------------------------------------------------------

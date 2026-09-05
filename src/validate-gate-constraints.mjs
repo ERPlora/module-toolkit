@@ -46,9 +46,19 @@ import { migrationEntries } from './validate-migrations.mjs';
 import { splitStatements, stripComments } from './validate-migration-guard.mjs';
 
 /**
- * The gate tables that carry the anonymous CHECK on `origin/main` today (measured 01/09/2026 over
- * the 27 module repos: these two, plus `verifactu`, `appointments` and — since services#91 —
- * `services`, already fixed).
+ * The gate tables that still carry the anonymous CHECK on `origin/main`. Today: NONE.
+ *
+ * Measured 01/09/2026 over the 27 module repos as FIVE — `verifactu` and `appointments` had
+ * already landed the named constraints. The other three left on 05/09/2026, each with its own
+ * migration: `reservations` (`004_named_gate_constraints.sql`, ERPlora/reservations#42), `tables`
+ * (`011_named_gate_constraints.sql`, ERPlora/tables#76) and `services`
+ * (`016_named_gate_constraints.sql`, ERPlora/services#91). The corpus is CLEARED: the list carries
+ * no debt, and every `__gate` in the fleet — old or new — is now judged the same.
+ *
+ * The list stays (empty) rather than the mechanism being deleted, because it is what makes the
+ * rule adoptable next time: the day a repo we do not control lands here with the defect, it gets
+ * ONE named entry with its issue instead of a red repo. Its behaviour is proven by a SYNTHETIC
+ * entry injected in the tests, so the guard keeps being exercised with the real list empty.
  *
  * A ratchet, not a permanent exemption. A hard error with no tolerance list would put green,
  * published repos in red for a rule written here today — which is how a gate gets switched off
@@ -56,10 +66,7 @@ import { splitStatements, stripComments } from './validate-migration-guard.mjs';
  * run (never silent, unlike a plain exemption), and the list can only SHRINK: a gate table added
  * from today is born in error.
  */
-export const GRANDFATHERED = [
-  ['reservations', 'migrations/postgres/002_gate.sql', 'ERPlora/reservations#42'],
-  ['tables', 'migrations/postgres/002_gate.sql', 'ERPlora/tables#76'],
-];
+export const GRANDFATHERED = [];
 
 function grandfatheredIssue(moduleId, file) {
   const hit = GRANDFATHERED.find(([m, f]) => m === moduleId && f === file);
