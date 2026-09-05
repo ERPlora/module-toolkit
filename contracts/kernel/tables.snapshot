@@ -263,6 +263,7 @@ _print_queue.created_at text NOT NULL
 _print_queue.discard_reason text NOT NULL
 _print_queue.discarded_at text NULL
 _print_queue.discarded_by text NULL
+_print_queue.discarded_by_module text NOT NULL
 _print_queue.document text NOT NULL
 _print_queue.document_type text NOT NULL
 _print_queue.format text NOT NULL
@@ -270,6 +271,9 @@ _print_queue.hub_id text NOT NULL
 _print_queue.job_id text NOT NULL
 _print_queue.last_error text NOT NULL
 _print_queue.lease_expires_at text NOT NULL
+_print_queue.retried_at text NULL
+_print_queue.retried_by text NULL
+_print_queue.retried_by_module text NOT NULL
 _print_queue.role text NOT NULL
 _print_queue.seq bigint NOT NULL
 _print_queue.station_id text NOT NULL
