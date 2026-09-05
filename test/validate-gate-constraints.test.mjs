@@ -186,11 +186,33 @@ test('the tolerance list is exactly the corpus measured on origin/main (01/09/20
     GRANDFATHERED.map(([m, f]) => `${m}:${f}`).sort(),
     [
       'reservations:migrations/postgres/002_gate.sql',
-      'services:migrations/postgres/003_package_redemption.sql',
       'tables:migrations/postgres/002_gate.sql',
     ],
     'the list only SHRINKS: an entry goes when its module lands the named constraints',
   );
+});
+
+test('services is OFF the tolerance list: services#91 landed the named constraints', () => {
+  // The ratchet only turns one way. `services` is here because it did the work, so the very file
+  // that used to be excused is now judged like anybody else's — which is what stops the list from
+  // becoming a permanent exemption nobody revisits.
+  const bare = fixture('services_003_package_redemption.sql');
+  const { errors, warnings } = findings('services', [
+    { file: 'migrations/postgres/003_package_redemption.sql', sql: bare },
+  ]);
+  assert.deepEqual(warnings, [], 'no longer tolerated');
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /services__gate/);
+
+  // And the chain the module really publishes — the anonymous check created in 003, swapped for the
+  // named ones in 016 — is clean. Judging the END state is what keeps the module that DID the work
+  // out of the red: a per-file reader would refuse 003 for ever.
+  const fixed = findings('services', [
+    { file: 'migrations/postgres/003_package_redemption.sql', sql: bare },
+    { file: 'migrations/postgres/016_named_gate_constraints.sql', sql: fixture('services_016_named_gate_constraints.sql') },
+  ]);
+  assert.deepEqual(fixed.errors, [], JSON.stringify(fixed.errors));
+  assert.deepEqual(fixed.warnings, [], JSON.stringify(fixed.warnings));
 });
 
 test('grandfathering is per FILE, not per module: a new gate table in an old module is an error', () => {

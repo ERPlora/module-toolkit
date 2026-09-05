@@ -47,7 +47,8 @@ import { splitStatements, stripComments } from './validate-migration-guard.mjs';
 
 /**
  * The gate tables that carry the anonymous CHECK on `origin/main` today (measured 01/09/2026 over
- * the 27 module repos: these three, plus `verifactu` and `appointments`, already fixed).
+ * the 27 module repos: these two, plus `verifactu`, `appointments` and — since services#91 —
+ * `services`, already fixed).
  *
  * A ratchet, not a permanent exemption. A hard error with no tolerance list would put green,
  * published repos in red for a rule written here today — which is how a gate gets switched off
@@ -57,7 +58,6 @@ import { splitStatements, stripComments } from './validate-migration-guard.mjs';
  */
 export const GRANDFATHERED = [
   ['reservations', 'migrations/postgres/002_gate.sql', 'ERPlora/reservations#42'],
-  ['services', 'migrations/postgres/003_package_redemption.sql', 'ERPlora/services#91'],
   ['tables', 'migrations/postgres/002_gate.sql', 'ERPlora/tables#76'],
 ];
 
