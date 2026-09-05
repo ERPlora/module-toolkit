@@ -18,7 +18,7 @@
 //     `reference`, `key`, `region_code`, `display_description`, `order_number`…). Five are not even
 //     in the widened whitelist the issue proposed. A published module cannot be blocked for doing
 //     the right thing, so that direction does NOT come across.
-//   · «the painted `filterType` disagrees with the manifest `op`» → 41 findings in 15 modules, and
+//   · «the painted `filterType` disagrees with the manifest `op`» → 41 findings in 12 modules, and
 //     they are the real ADR-0125 bug: a text box wired to `eq`.
 //
 // So the evidence the gate trusts is what the MODULE ITSELF declares — the `filterType` its
@@ -362,6 +362,34 @@ test('the grandfathered list carries no duplicate line', () => {
     const key = `${id}|${query}|${column}`;
     assert.equal(seen.has(key), false, `duplicada: ${key}`);
     seen.add(key);
+  }
+});
+
+test('the grandfathered list may only SHRINK', () => {
+  // The ceiling is the ratchet itself, and it comes DOWN with every filter the sweep fixes — never
+  // up. Lowering it is the last step of a sweep PR, right after deleting the entries; a PR that
+  // adds a line has to raise it, which is what makes the addition visible in review. Without this
+  // line a new lying filter could be excused by appending one entry and every test stayed green
+  // (same contract as `FILL_GRANDFATHERED` and the migration guard's `GRANDFATHERED`).
+  assert.ok(
+    FILTER_OPS_GRANDFATHERED.length <= 34,
+    `the list GREW (${FILTER_OPS_GRANDFATHERED.length}). Nothing gets added: a filter that needs a ` +
+      'line here is a filter that lies, and it gets fixed, not excused (ERPlora/pm#244).',
+  );
+  for (const entry of FILTER_OPS_GRANDFATHERED) {
+    assert.equal(entry.length, 3, `bad entry: ${JSON.stringify(entry)} — [moduleId, query, column]`);
+    for (const part of entry) assert.equal(typeof part, 'string', `bad entry: ${JSON.stringify(entry)}`);
+  }
+});
+
+test('a module the sweep already FIXED is out of the list, and stays out', () => {
+  // `reservations` fixed its six in ERPlora/reservations#46 (merged 2026-09-05). While its lines
+  // stayed, its gate on `origin/main` was RED with six «ya NO incumple» errors — the ratchet doing
+  // its job. Naming it here turns «we fixed it» into something that fails if the lines come back.
+  const swept = ['reservations'];
+  const listed = new Set(FILTER_OPS_GRANDFATHERED.map(([id]) => id));
+  for (const id of swept) {
+    assert.equal(listed.has(id), false, `${id} was swept and must not return to the list`);
   }
 });
 

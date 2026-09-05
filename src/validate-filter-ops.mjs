@@ -22,7 +22,7 @@
 //     Five of them are not even in the widened whitelist that was proposed. Blocking those means
 //     blocking a published module for doing exactly what ADR-0125 asks, so that direction does NOT
 //     come across. A name is not evidence.
-//   · «the painted `filterType` disagrees with the manifest `op`» → 41 findings across 15 modules,
+//   · «the painted `filterType` disagrees with the manifest `op`» → 41 findings across 12 modules,
 //     and they ARE the ADR-0125 bug.
 //
 // So this gate trusts what the module DECLARES about itself, in this order:
@@ -81,13 +81,17 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * That fixes the order of the sweep: the one-line pull request that deletes the entry goes FIRST,
  * and the module's fix merges behind it (same contract as `FILL_GRANDFATHERED`).
  *
- * WHERE THE SWEEP IS — 40 lying boxes in 13 modules: 30 are a text box the manifest filters with
- * the wrong operator, 9 are a text box over a column that is a NUMBER (`party_size`, `difference`,
- * `duration_minutes`, `fiscal_year`, `current_sequence`, `sequence_number`, `priority`, `attempts`)
- * — which no operator can answer well, so those want `filterType: 'range'` — and 1 is a free-text
- * column no screen paints (`inventory.products.low_stock → sku`). With them excused the whole
- * published catalogue is GREEN: 27 modules, 0 errors, 40 warnings. Their fixes are ERPlora/pm#244;
- * the `reservations` six are already in flight in ERPlora/reservations#46.
+ * WHERE THE SWEEP IS — 40 lying boxes in 13 modules were measured; `reservations` fixed its six the
+ * same day (ERPlora/reservations#46, merged 2026-09-05), so 34 in 12 modules are excused here: 26 are
+ * a text box the manifest filters with the wrong operator, 7 are a text box over a column that is a
+ * NUMBER (`difference`, `duration_minutes`, `fiscal_year`, `current_sequence`, `sequence_number`,
+ * `priority`, `attempts`) — which no operator can answer well, so those want `filterType: 'range'` —
+ * and 1 is a free-text column no screen paints (`inventory.products.low_stock → sku`). With them
+ * excused the whole published catalogue is GREEN: 27 modules, 0 errors, 34 warnings. Their fixes
+ * are ERPlora/pm#244.
+ *
+ * The ceiling that keeps this list from GROWING is `test/validate-filter-ops.test.mjs` («may only
+ * SHRINK»): a line added here has to raise that number, which is what makes the addition visible.
  */
 export const FILTER_OPS_GRANDFATHERED = [
   // cart_checkout — 3
@@ -111,13 +115,6 @@ export const FILTER_OPS_GRANDFATHERED = [
   // payment_gateways — 2
   ['payment_gateways', 'payment_gateways.gateways.list', 'code'],
   ['payment_gateways', 'payment_gateways.transactions.list', 'reference'],
-  // reservations — 6
-  ['reservations', 'reservations.reservations.list', 'guest_phone'],
-  ['reservations', 'reservations.reservations.list', 'time'],
-  ['reservations', 'reservations.reservations.list', 'party_size'],
-  ['reservations', 'reservations.waitlist.list', 'guest_phone'],
-  ['reservations', 'reservations.waitlist.list', 'preferred_time'],
-  ['reservations', 'reservations.waitlist.list', 'party_size'],
   // services — 1
   ['services', 'services.services.list', 'duration_minutes'],
   // tasks — 3

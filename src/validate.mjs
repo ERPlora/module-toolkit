@@ -265,8 +265,9 @@ export async function validate(moduleDir, { pg = false } = {}) {
   // Juzga lo que el módulo DECLARA de sí mismo —el `filterType` que pinta su componente y el tipo
   // que escribe su migración—, no el nombre de la columna: barrido sobre `origin/main` de los 27
   // repos (05/09/2026), la regla vieja «`like` fuera de la lista blanca» daba 18 hallazgos y 18
-  // FALSOS POSITIVOS. Trinquete: los 40 filtros ya publicados avisan (`FILTER_OPS_GRANDFATHERED`,
-  // ERPlora/pm#244) y la lista solo encoge; uno nuevo es error.
+  // FALSOS POSITIVOS. Trinquete: los 40 filtros ya publicados que incumplían avisan
+  // (`FILTER_OPS_GRANDFATHERED`, ERPlora/pm#244; `reservations` arregló sus 6 en reservations#46,
+  // quedan 34) y la lista solo encoge — un test le fija el techo; uno nuevo es error.
   const filterOps = checkFilterOps(dir, manifest);
   for (const w of filterOps.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (filterOps.errors.length) {
