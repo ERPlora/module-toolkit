@@ -78,6 +78,29 @@ const ctl = createListController(erplora(), 'demo.items.list', { columns });
 `;
 }
 
+/**
+ * A component whose column chooses its box AT RUNTIME — the shape `sales` had: a dropdown while the
+ * catalogue of payment methods is loaded, a plain text box when it is not (module-toolkit#187).
+ */
+function branchingScreen(key, [whenLoaded, whenEmpty], rest = []) {
+  const others = rest
+    .map(([k, t]) => `  { key: '${k}', filterType: '${t}' },`)
+    .join('\n');
+  return `import { erplora } from '@erplora/module-sdk';
+const columns = [
+${others}
+  {
+    key: '${key}',
+    label: 'Pago',
+    ...(this.payMethods.length
+      ? { filterType: '${whenLoaded}', options: this.payMethods }
+      : { filterType: '${whenEmpty}' }),
+  },
+];
+const ctl = createListController(erplora(), 'demo.items.list', { columns });
+`;
+}
+
 const UI = 'ui/components/erp-demo-items/erp-demo-items.ts';
 const run = (opts) => {
   const { dir, manifest } = mod(opts);
@@ -92,12 +115,54 @@ test('listScreens: pairs the query a component drives with the columns it paints
     {
       query: 'demo.items.list',
       columns: [
-        { key: 'name', filterType: 'text' },
-        { key: 'status', filterType: 'select' },
-        { key: 'other', filterType: null },
+        { key: 'name', filterTypes: ['text'] },
+        { key: 'status', filterTypes: ['select'] },
+        { key: 'other', filterTypes: [] },
       ],
     },
   ]);
+});
+
+test('listScreens: a column that can paint TWO boxes reports BOTH, not the first', () => {
+  // module-toolkit#187. `exec` returns the FIRST match, so a column written as
+  // `...(x ? { filterType: 'select' } : { filterType: 'text' })` used to read as a dropdown and the
+  // text branch — the one the user actually gets when the catalogue did not load — was invisible.
+  const [{ columns }] = listScreens(branchingScreen('payment_method_name', ['select', 'text']));
+  assert.deepEqual(columns, [{ key: 'payment_method_name', filterTypes: ['select', 'text'] }]);
+});
+
+test('listScreens: the same box painted twice is reported once', () => {
+  const [{ columns }] = listScreens(branchingScreen('status', ['select', 'select']));
+  assert.deepEqual(columns, [{ key: 'status', filterTypes: ['select'] }]);
+});
+
+test('listScreens: a column ends with ITS object, not at the next `key:`', () => {
+  // taxes#54: cutting the source on the next `key: '` hands the LAST column of the array everything
+  // written below it, so an unrelated `filterType` further down was credited to a column that
+  // paints no box at all.
+  const [{ columns }] = listScreens(`import { erplora } from '@erplora/module-sdk';
+const columns = [
+  { key: 'name', filterType: 'text' },
+  { key: 'status' },
+];
+const ctl = createListController(erplora(), 'demo.items.list', { columns });
+const toolbar = { filterType: 'select' };
+`);
+  assert.deepEqual(columns, [
+    { key: 'name', filterTypes: ['text'] },
+    { key: 'status', filterTypes: [] },
+  ]);
+});
+
+test('listScreens: a `filterType` inside a comment paints nothing', () => {
+  const [{ columns }] = listScreens(`import { erplora } from '@erplora/module-sdk';
+const columns = [
+  // was { key: 'name', filterType: 'select' } until we fixed it
+  { key: 'name', filterType: 'text' /* not filterType: 'select' any more */ },
+];
+const ctl = createListController(erplora(), 'demo.items.list', { columns });
+`);
+  assert.deepEqual(columns, [{ key: 'name', filterTypes: ['text'] }]);
 });
 
 test('listScreens: a source that drives no list says nothing', () => {
@@ -184,6 +249,77 @@ test('a daterange box needs the operator that takes two bounds', () => {
   assert.deepEqual(good.errors, []);
 });
 
+// ── rule 1b · a column that can paint two boxes has to be honest as BOTH (module-toolkit#187) ─
+
+test('a column that falls back to a text box is judged on the FALLBACK too', () => {
+  // The shape `sales` had: a dropdown of payment methods, a plain text box when the catalogue did
+  // not load. With `op: 'eq'` the dropdown is right and the text box can never match, so the box the
+  // user is left with on the bad day is exactly the ADR-0125 bug — and the gate said nothing.
+  const { errors } = run({
+    filters: { payment_method_name: { op: 'eq' } },
+    files: { [UI]: branchingScreen('payment_method_name', ['select', 'text']) },
+    sql: 'CREATE TABLE demo_items (id TEXT PRIMARY KEY, payment_method_name TEXT);',
+  });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /`payment_method_name`/);
+  assert.match(errors[0], /filterType: 'text'/);
+  assert.match(errors[0], /op: 'like'/);
+});
+
+test('the verdict does not depend on WHICH BRANCH IS WRITTEN FIRST', () => {
+  // This is the regression that closes module-toolkit#187: before it, swapping the two arms of the
+  // ternary — the same screen, the same manifest, the same user — moved the module from 0 errors to
+  // 1. A gate whose answer depends on the order of the source is not a gate.
+  const of = (order) =>
+    run({
+      filters: { payment_method_name: { op: 'eq' } },
+      files: { [UI]: branchingScreen('payment_method_name', order) },
+      sql: 'CREATE TABLE demo_items (id TEXT PRIMARY KEY, payment_method_name TEXT);',
+    }).errors;
+
+  const selectFirst = of(['select', 'text']);
+  const textFirst = of(['text', 'select']);
+  assert.equal(selectFirst.length, 1);
+  assert.deepEqual(selectFirst, textFirst);
+});
+
+test('a column honest in BOTH branches passes', () => {
+  // Two boxes are not a defect by themselves. `select` and `select` both mean «choose one», and
+  // `op: 'eq'` serves both, so there is nothing to report — the gate must not tax a fallback.
+  const { errors, warnings } = run({
+    filters: { status: { op: 'eq' } },
+    files: { [UI]: branchingScreen('status', ['select', 'select']) },
+  });
+  assert.deepEqual([...errors, ...warnings], []);
+});
+
+test('a column that can be text OR a dropdown is reported ONCE, naming both boxes', () => {
+  // `text` wants `like` and `select` wants `eq`: no single `op` can serve both, so whichever the
+  // manifest picks, one branch lies. The way out is to stop offering the filter on the branch that
+  // cannot answer — and the message has to say so, or the author fixes half of it.
+  const { errors } = run({
+    filters: { payment_method_name: { op: 'like' } },
+    files: { [UI]: branchingScreen('payment_method_name', ['select', 'text']) },
+    sql: 'CREATE TABLE demo_items (id TEXT PRIMARY KEY, payment_method_name TEXT);',
+  });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /filterType: 'select'/);
+});
+
+test('two SCREENS that paint one column differently are judged, not excused', () => {
+  // The same hole through the other door: a column two components paint as two boxes used to be
+  // DROPPED, so splitting the ternary into two screens would have bought silence back.
+  const { errors } = run({
+    filters: { name: { op: 'eq' } },
+    files: {
+      'ui/components/a/a.ts': screen([['name', 'select']]),
+      'ui/components/b/b.ts': screen([['name', 'text']]),
+    },
+  });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /filterType: 'text'/);
+});
+
 test('a text box over a NUMBER is not told to use `like`: it is the BOX that is wrong', () => {
   // The runtime composes `CAST(col AS TEXT) LIKE '%…%'`, so `like` over an INTEGER does not throw —
   // it quietly matches 12, 20 and 22 when the user types «2». The fix is the control, not the op.
@@ -225,17 +361,29 @@ const other = createListController(erplora(), 'demo.other.list', { columns });`;
   assert.deepEqual(errors, []);
 });
 
-test('a column two screens paint DIFFERENTLY is dropped, not judged twice', () => {
-  const { errors } = run({
+test('a column two screens paint DIFFERENTLY is judged, and judged the same way every run', () => {
+  // This test used to assert the OPPOSITE — that the column was DROPPED — on the grounds that
+  // judging it might reject one of two correct screens. Measured while closing module-toolkit#187,
+  // that reasoning does not hold: the manifest declares ONE `op`, so two boxes that need different
+  // operators cannot both be served, and dropping the column excused BOTH of them. Here `select`
+  // and `daterange` are each wrong for `op: 'like'`; before, that was zero errors.
+  const files = {
+    [UI]: screen([['name', 'select']]),
+    'ui/components/erp-demo-other/erp-demo-other.ts': screen([['name', 'daterange']]),
+  };
+  const { errors } = run({ filters: { name: { op: 'like' } }, files });
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /`name`/);
+
+  // …and the message does not depend on which file `readdir` happened to hand over first.
+  const flipped = run({
     filters: { name: { op: 'like' } },
     files: {
-      // Both paints disagree with `like`, so the column would be reported whichever file won the
-      // race — the only way the list stays empty is if the ambiguity really drops the column.
-      [UI]: screen([['name', 'select']]),
-      'ui/components/erp-demo-other/erp-demo-other.ts': screen([['name', 'daterange']]),
+      [UI]: screen([['name', 'daterange']]),
+      'ui/components/erp-demo-other/erp-demo-other.ts': screen([['name', 'select']]),
     },
-  });
-  assert.deepEqual(errors, []);
+  }).errors;
+  assert.equal(flipped.length, 1);
 });
 
 // ── rule 2 · `like` over a column that is not text ──────────────────────────────────────────

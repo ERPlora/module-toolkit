@@ -143,29 +143,145 @@ export const FILTER_OPS_GRANDFATHERED = [
 ];
 
 /**
- * Every list screen a component source declares, as `{ query, columns }`.
+ * Every list screen a component source declares, as `{ query, columns }`, where each column is
+ * `{ key, filterTypes }` — EVERY box that column can paint, in source order, without repeats.
  *
  * `createListController(erplora(), '<query>', …)` is the one way a screen binds itself to a
  * paginated list, so a table written tomorrow cannot be born outside this gate without anybody
  * remembering to register it.
+ *
+ * 🔴 `filterTypes` is a LIST, and that is the whole of module-toolkit#187. It used to be one value,
+ * read with `exec`, which returns the FIRST match — so a column written as
+ *
+ *     { key: 'payment_method_name', …,
+ *       ...(this.payMethods.length ? { filterType: 'select', … } : { filterType: 'text' }) }
+ *
+ * read as a dropdown, the dropdown agreed with the manifest, and the gate approved the screen
+ * without ever seeing the text box — which is the branch the user gets on the day the catalogue
+ * fails to load, and the one that can never match. Worse than the miss: passing meant the filter
+ * did not enter `FILTER_OPS_GRANDFATHERED` either, so nobody looked at it again.
+ *
+ * The two readings the source needs, and why neither is optional:
+ *
+ *   · a column's chunk ends with ITS object (`enclosingObject`), not at the next `key: '`. Cutting
+ *     on the next key hands the LAST column of the array everything written below it (taxes#54).
+ *   · comments and string bodies are not code (`blankNonCode`), so a `filterType` left in a comment
+ *     paints nothing.
  *
  * A file that drives MORE THAN ONE list is returned with its columns attached to each — the caller
  * drops those, because the column list of such a file cannot be attributed to one query without
  * guessing, and a guess here rejects correct code.
  */
 export function listScreens(source) {
-  const queries = [...source.matchAll(/createListController[^(]*\(\s*erplora\(\)\s*,\s*'([^']+)'/g)].map(
-    (m) => m[1],
-  );
+  const code = blankNonCode(source);
+  const queries = [...code.matchAll(/createListController[^(]*\(\s*erplora\(\)\s*,\s*'/g)]
+    .map((m) => readString(source, m.index + m[0].length - 1))
+    .filter((q) => q != null);
   if (queries.length === 0) return [];
 
   const columns = [];
-  for (const chunk of source.split("key: '").slice(1)) {
-    const key = chunk.split("'")[0];
-    const kind = /filterType: '(\w+)'/.exec(chunk);
-    columns.push({ key, filterType: kind ? kind[1] : null });
+  for (const m of code.matchAll(/\bkey\s*:\s*'/g)) {
+    const quote = m.index + m[0].length - 1;
+    const key = readString(source, quote);
+    if (key == null) continue;
+    const body = enclosingObject(code, m.index);
+    if (body == null) continue; // a `key:` outside any object literal declares no column
+    const filterTypes = [];
+    for (const f of code.slice(body.from, body.to).matchAll(/\bfilterType\s*:\s*'/g)) {
+      const value = readString(source, body.from + f.index + f[0].length - 1);
+      if (value != null && !filterTypes.includes(value)) filterTypes.push(value);
+    }
+    columns.push({ key, filterTypes });
   }
   return queries.map((query) => ({ query, columns }));
+}
+
+/**
+ * The same source with every comment and every string BODY blanked to spaces, offsets untouched.
+ *
+ * Structure — braces, `key:`, the quotes themselves — survives, so the blanked copy can be scanned
+ * and every offset still points at the real character in `source`. What stops being code is prose:
+ * a `filterType: 'select'` left behind in a comment used to paint a box (taxes#54).
+ *
+ * A template literal is blanked whole, `${…}` included. A column declared inside an interpolation
+ * would be missed, which no component does — and missing it is the safe direction anyway: this gate
+ * only ever ACCUSES a column it can see painted.
+ */
+function blankNonCode(source) {
+  const out = source.split('');
+  const blank = (i) => {
+    if (out[i] !== '\n') out[i] = ' ';
+  };
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (ch === '/' && source[i + 1] === '/') {
+      while (i < source.length && source[i] !== '\n') blank(i++);
+      continue;
+    }
+    if (ch === '/' && source[i + 1] === '*') {
+      const end = source.indexOf('*/', i + 2);
+      const stop = end < 0 ? source.length : end + 2;
+      while (i < stop) blank(i++);
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      i += 1; // the opening quote stays, so `key: '` is still findable
+      while (i < source.length) {
+        if (source[i] === '\\') {
+          blank(i++);
+          if (i < source.length) blank(i++);
+          continue;
+        }
+        if (source[i] === ch) {
+          i += 1; // and so does the closing one
+          break;
+        }
+        blank(i++);
+      }
+      continue;
+    }
+    i += 1;
+  }
+  return out.join('');
+}
+
+/** The contents of the string literal whose opening quote is at `quote`, or null if unterminated. */
+function readString(source, quote) {
+  const end = source.indexOf(source[quote], quote + 1);
+  return end < 0 ? null : source.slice(quote + 1, end);
+}
+
+/**
+ * `{ from, to }` of the object literal that encloses `at`, over ALREADY BLANKED code.
+ *
+ * Cutting a column's chunk at the next `key: '` — what this gate did until module-toolkit#187 —
+ * hands the LAST column of the array everything written below it, so an unrelated `filterType`
+ * further down the file is read as a box that column paints (taxes#54).
+ */
+function enclosingObject(code, at) {
+  let depth = 0;
+  let from = -1;
+  for (let i = at; i >= 0; i -= 1) {
+    if (code[i] === '}') depth += 1;
+    else if (code[i] === '{') {
+      if (depth === 0) {
+        from = i;
+        break;
+      }
+      depth -= 1;
+    }
+  }
+  if (from < 0) return null;
+  depth = 0;
+  for (let i = from; i < code.length; i += 1) {
+    if (code[i] === '{') depth += 1;
+    else if (code[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return { from, to: i + 1 };
+    }
+  }
+  return null;
 }
 
 /** The body between the outermost parentheses starting at `from`, or null when unbalanced. */
@@ -272,14 +388,17 @@ function sourceFiles(dir) {
 }
 
 /**
- * `query -> column -> { filterType, screen }` for every box the module's own screens paint.
+ * `query -> column -> [{ filterType, screen }]` — EVERY box the module's own screens paint for the
+ * column, in the order they are written, one entry per distinct box.
  *
- * A column two screens paint DIFFERENTLY is dropped: without a way to tell which one the user is
- * looking at, judging it would reject one of two correct screens.
+ * 🔴 All of them, not the first (module-toolkit#187). A column picks its control at runtime often
+ * enough to matter — a dropdown while its catalogue is loaded, a text box when it is not — and a
+ * gate that reads only the first arm blesses the other one unseen. It is the same for a column two
+ * SCREENS paint differently: the manifest has ONE `op`, so if the two boxes disagree about what
+ * they need, one of them is lying to the user whichever screen he is on.
  */
 function paintedBoxes(dir) {
   const painted = new Map();
-  const ambiguous = new Set();
 
   for (const abs of sourceFiles(join(dir, 'ui'))) {
     let screens;
@@ -293,20 +412,14 @@ function paintedBoxes(dir) {
     const file = relative(dir, abs).split(sep).join('/');
     if (!painted.has(query)) painted.set(query, new Map());
     const forQuery = painted.get(query);
-    for (const { key, filterType } of columns) {
-      if (filterType == null) continue;
-      const seen = forQuery.get(key);
-      if (seen && seen.filterType !== filterType) {
-        ambiguous.add(`${query}|${key}`);
-        continue;
+    for (const { key, filterTypes } of columns) {
+      if (!forQuery.has(key)) forQuery.set(key, []);
+      const boxes = forQuery.get(key);
+      for (const filterType of filterTypes) {
+        if (boxes.some((b) => b.filterType === filterType)) continue;
+        boxes.push({ filterType, screen: file });
       }
-      forQuery.set(key, { filterType, screen: file });
     }
-  }
-
-  for (const id of ambiguous) {
-    const [query, key] = id.split('|');
-    painted.get(query)?.delete(key);
   }
   return painted;
 }
@@ -370,11 +483,24 @@ export function checkFilterOps(dir, manifest) {
 
       for (const [column, def] of Object.entries(filters)) {
         const op = (def ?? {}).op ?? null;
-        const box = boxes.get(column);
+        const drawn = boxes.get(column) ?? [];
         const textual = isText(column);
 
-        // ── 1 · the box has to mean what it looks like ──────────────────────────────────────
-        if (box) {
+        // ── 1 · EVERY box the column can paint has to mean what it looks like ───────────────
+        // Not just the first (module-toolkit#187). A column that chooses its control at runtime —
+        // a dropdown while its catalogue is loaded, a text box when it is not — has to be honest as
+        // both, because the manifest has ONE `op` and the user gets whichever branch his day gave
+        // him. Same for a column two SCREENS paint differently.
+        const alsoPaints =
+          drawn.length > 1
+            ? ` Ojo: \`${column}\` puede pintarse de ${drawn.length} formas (` +
+              `${[...drawn.map((b) => b.filterType)].sort().map((t) => `\`${t}\``).join(', ')}) y el ` +
+              'manifest solo declara UN ' +
+              '`op`. Si no hay ninguno que sirva a todas, la rama que no puede responder tiene que ' +
+              'dejar de ofrecer filtro, no ofrecerlo en falso.'
+            : '';
+        let judged = false;
+        for (const box of drawn) {
           const expected = EXPECTED_OP[box.filterType];
           if (expected === undefined) {
             report(
@@ -383,7 +509,8 @@ export function checkFilterOps(dir, manifest) {
               `${box.screen} pinta \`${column}\` como \`filterType: '${box.filterType}'\`, que esta ` +
                 'puerta no conoce: enséñasela (o usa `text`/`select`/`range`/`daterange`).',
             );
-            continue;
+            judged = true;
+            break;
           }
           if (expected === 'like' && textual === false) {
             report(
@@ -393,9 +520,10 @@ export function checkFilterOps(dir, manifest) {
                 `\`${[...typesOf(column)].join('` / `')}\` — no es texto. El runtime compara ` +
                 '`CAST(col AS TEXT) LIKE \'%…%\'`, así que con `like` teclear «2» devolvería también ' +
                 '12, 20 y 22, y con `eq` hay que teclear el número entero. Píntala ' +
-                "`filterType: 'range'` y declara `op: 'range'` (ADR-0125).",
+                "`filterType: 'range'` y declara `op: 'range'` (ADR-0125)." + alsoPaints,
             );
-            continue;
+            judged = true;
+            break;
           }
           if (op !== expected) {
             report(
@@ -404,11 +532,14 @@ export function checkFilterOps(dir, manifest) {
               `${box.screen} pinta \`${column}\` como \`filterType: '${box.filterType}'\` pero ` +
                 `\`${query}\` lo filtra con \`op: ${JSON.stringify(op)}\` — ${WHY[box.filterType]}. ` +
                 `Que coincidan: o \`op: '${expected}'\` en el manifest, o la caja que corresponda al ` +
-                'dato (un dominio cerrado se pinta `select` y se queda en `op: \'eq\'`) (ADR-0125).',
+                'dato (un dominio cerrado se pinta `select` y se queda en `op: \'eq\'`) (ADR-0125).' +
+                alsoPaints,
             );
-            continue;
+            judged = true;
+            break;
           }
         }
+        if (judged) continue;
 
         // ── 2 · `like` over a column that is not text ───────────────────────────────────────
         if (op === 'like' && textual === false) {
@@ -425,7 +556,7 @@ export function checkFilterOps(dir, manifest) {
         }
 
         // ── 3 · the ADR-0125 whitelist, `eq` direction only, where no screen paints the box ──
-        if (!box && op === 'eq' && FREE_TEXT.has(String(column).toLowerCase())) {
+        if (drawn.length === 0 && op === 'eq' && FREE_TEXT.has(String(column).toLowerCase())) {
           report(
             query,
             column,
