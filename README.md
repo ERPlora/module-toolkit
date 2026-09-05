@@ -253,12 +253,14 @@ Qué se comprueba, sobre el estado FINAL de la cadena de migraciones:
 > manifest** y se juzga el estado final.
 >
 > **Trinquete, no golpe.** El barrido de los 27 repos (`origin/main`, 01/09/2026) encuentra el
-> patrón en 5 módulos: `verifactu` (ya arreglado) y otros cuatro. Esos cuatro ficheros están en
+> patrón en 5 módulos: `verifactu` (ya arreglado) y otros cuatro. Esos cuatro ficheros entraron en
 > `GRANDFATHERED` uno a uno **con su issue** (appointments#103, reservations#42, services#91,
 > tables#76): **avisan** en cada `erplora validate` —nunca en silencio— y no ponen en rojo un repo
 > publicado por una regla escrita hoy. La lista solo puede ENCOGER, hay un test que fija su
 > contenido exacto, y la tolerancia es por **fichero**: una tabla guardia nueva, incluso en uno de
-> esos cuatro módulos, nace en error.
+> esos módulos, nace en error. `appointments`, `reservations` (reservations#42) y `tables`
+> (tables#76) ya salieron al mergear sus constraints nombradas —las dos últimas el 05/09/2026—;
+> queda `services`.
 
 ## El `fill` que el hub NUNCA pinta (hub#760)
 

@@ -46,8 +46,14 @@ import { migrationEntries } from './validate-migrations.mjs';
 import { splitStatements, stripComments } from './validate-migration-guard.mjs';
 
 /**
- * The gate tables that carry the anonymous CHECK on `origin/main` today (measured 01/09/2026 over
- * the 27 module repos: these three, plus `verifactu` and `appointments`, already fixed).
+ * The gate tables that still carry the anonymous CHECK on `origin/main`.
+ *
+ * Measured 01/09/2026 over the 27 module repos as FIVE — `verifactu` and `appointments` had already
+ * landed the named constraints. `reservations` left on 05/09/2026 with its own
+ * `004_named_gate_constraints.sql` (ERPlora/reservations#42), and `tables` the same day with
+ * `011_named_gate_constraints.sql` (ERPlora/tables#76), so their `002_gate.sql` is an ERROR from
+ * here on: that is what retiring an entry BUYS, and why the list may only shrink. `services` is
+ * the last one owed (ERPlora/services#91).
  *
  * A ratchet, not a permanent exemption. A hard error with no tolerance list would put green,
  * published repos in red for a rule written here today — which is how a gate gets switched off
@@ -56,7 +62,6 @@ import { splitStatements, stripComments } from './validate-migration-guard.mjs';
  * from today is born in error.
  */
 export const GRANDFATHERED = [
-  ['reservations', 'migrations/postgres/002_gate.sql', 'ERPlora/reservations#42'],
   ['services', 'migrations/postgres/003_package_redemption.sql', 'ERPlora/services#91'],
 ];
 
