@@ -105,6 +105,9 @@ export const HUB_OUTFITKIT = [
   { hub: '1.1.11', built_at: '2026-08-29T02:21:32Z', outfitkit: '0.1.56' },
   { hub: '1.1.12', built_at: '2026-09-02T07:00:29Z', outfitkit: '0.1.58' },
   { hub: '1.1.13', built_at: '2026-09-02T18:09:28Z', outfitkit: '0.1.58' },
+  // v1.1.14 («Develop → main — lote v1.1.14», 2026-09-06): el último @erplora/outfitkit publicado en
+  // npm antes de crearse el tag es 0.1.65 (2026-09-05T07:55Z); 0.1.66 no existía aún.
+  { hub: '1.1.14', built_at: '2026-09-06T13:50:24Z', outfitkit: '0.1.65' },
 ];
 
 /**

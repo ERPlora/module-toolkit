@@ -381,10 +381,12 @@ test('the real reading REPLACES the derived row for the same tag: a fact beats a
 });
 
 test('a hub NEWER than the table lands at the end, so it becomes the newest known', () => {
-  const table = hubOutfitkitTable(realHub('1.1.14', '0.1.65'));
+  // A tag the table has never heard of: one past its last row, whatever that row is today.
+  const unknown = nextHubAfter(HUB_OUTFITKIT.at(-1).hub);
+  const table = hubOutfitkitTable(realHub(unknown, '0.1.66'));
   assert.equal(table.length, HUB_OUTFITKIT.length + 1);
-  assert.equal(newestKnownHub(table).hub, '1.1.14');
-  assert.equal(newestKnownHub(table).outfitkit, '0.1.65');
+  assert.equal(newestKnownHub(table).hub, unknown);
+  assert.equal(newestKnownHub(table).outfitkit, '0.1.66');
   // The order the helpers rely on: `outfitkitForFloor` returns the FIRST satisfying row and
   // `oldestHubShipping` the FIRST good enough. Both answer «oldest» only while the table is sorted.
   for (let i = 1; i < table.length; i += 1) {
@@ -402,7 +404,7 @@ test('a hub OLDER than the newest tag is corrected IN PLACE, not appended', () =
   const table = hubOutfitkitTable(realHub('1.1.5', '0.1.42'));
   assert.equal(table.length, HUB_OUTFITKIT.length, 'a known tag is corrected, not added');
   assert.equal(table.find((r) => r.hub === '1.1.5').outfitkit, '0.1.42');
-  assert.equal(newestKnownHub(table).hub, '1.1.13', 'the ceiling is still the newest TAG');
+  assert.equal(newestKnownHub(table).hub, HUB_OUTFITKIT.at(-1).hub, 'the ceiling is still the newest TAG');
   for (let i = 1; i < table.length; i += 1) {
     assert.ok(compareOutfitkitVersions(table[i].hub, table[i - 1].hub) > 0, `out of order at ${i}`);
   }
@@ -418,13 +420,15 @@ test('no source, or a half-answer, leaves the derived table exactly as it was', 
 });
 
 test('🔴 a floor the table could not check is CHECKED against the real hub — and rejected', () => {
-  // THE POINT OF #203. The module claims it runs from core 1.1.14 and baked against 0.1.66. The
-  // derived table has never heard of 1.1.14, so today it warns «add the tag when it ships» and lets
-  // the publish through — the customer gets the screen their hub cannot paint. Ask the hub instead:
-  // 1.1.14 carries 0.1.65, the claim is false, and it is refused.
+  // THE POINT OF #203. The module claims it runs from a core the derived table has never heard of
+  // (one past its last row — 1.1.14 was that tag until it shipped on 2026-09-06 and got its row) and
+  // baked against 0.1.66. The table warns «add the tag when it ships» and lets the publish through —
+  // the customer gets the screen their hub cannot paint. Ask the hub instead: that core carries
+  // 0.1.65, the claim is false, and it is refused.
+  const unknown = nextHubAfter(HUB_OUTFITKIT.at(-1).hub);
   const { dir, manifest } = moduleDir({
     stamp: '0.1.66',
-    compatibility: { min_erplora_version: '1.1.14' },
+    compatibility: { min_erplora_version: unknown },
   });
 
   const guessed = checkOutfitkitFloor(dir, manifest, { publishing: true });
@@ -433,26 +437,27 @@ test('🔴 a floor the table could not check is CHECKED against the real hub —
 
   const measured = checkOutfitkitFloor(dir, manifest, {
     publishing: true,
-    source: realHub('1.1.14', '0.1.65'),
+    source: realHub(unknown, '0.1.65'),
   });
   assert.equal(measured.errors.length, 1, JSON.stringify(measured));
   assert.match(measured.errors[0], /0\.1\.66/, 'it has to name what was baked');
   assert.match(measured.errors[0], /0\.1\.65/, 'and what the hub it claims actually carries');
-  assert.match(measured.errors[0], /1\.1\.14/);
+  assert.match(measured.errors[0], new RegExp(unknown.replace(/\./g, '\\.')));
 });
 
 test('the real reading also CLEARS the false alarm the derived table was raising', () => {
   // The other direction, and it is why this cannot be a one-way ratchet: the derivation lags
-  // reality, so it calls a perfectly paintable bake «newer than every hub». A module baked at
-  // 0.1.60 with no declared floor is a block at `pack` against the table (newest 0.1.58) and green
-  // against a hub that answers 0.1.65. Blocking a publish that is fine is the same defect as
-  // waving one through: both come from answering with a guess.
-  const { dir, manifest } = moduleDir({ stamp: '0.1.60' });
+  // reality, so it calls a perfectly paintable bake «newer than every hub». A module baked one
+  // OutfitKit past the table's newest row with no declared floor is a block at `pack` against the
+  // table and green against a hub that answers that very version. Blocking a publish that is fine
+  // is the same defect as waving one through: both come from answering with a guess.
+  const aheadOfTheTable = '0.1.66';
+  const { dir, manifest } = moduleDir({ stamp: aheadOfTheTable });
   assert.equal(checkOutfitkitFloor(dir, manifest, { publishing: true }).errors.length, 1);
 
   const measured = checkOutfitkitFloor(dir, manifest, {
     publishing: true,
-    source: realHub('1.1.14', '0.1.65'),
+    source: realHub(nextHubAfter(HUB_OUTFITKIT.at(-1).hub), aheadOfTheTable),
   });
   assert.deepEqual(measured.errors, [], JSON.stringify(measured));
   assert.deepEqual(measured.warnings, [], JSON.stringify(measured));
@@ -550,10 +555,13 @@ test('`erplora validate` ASKS the hub, and fails on a floor only the hub could d
   // The defect this repository keeps finding in its own gates (#50, #55, #61, #74): a check that is
   // correct and unreachable. The unit tests above prove the comparison; this proves the CLI does
   // the HTTP read and hands the answer over. Without it, #203 would be a function nobody calls.
-  const hub = await hubServing(JSON.stringify({ outfitkit: '0.1.65', hub: '1.1.14' }));
+  // A core the derived table has never heard of: one past its last row (1.1.14 was that tag until
+  // it shipped on 2026-09-06 and got its row).
+  const unknown = nextHubAfter(HUB_OUTFITKIT.at(-1).hub);
+  const hub = await hubServing(JSON.stringify({ outfitkit: '0.1.65', hub: unknown }));
   try {
-    const dir = validatableModule({ stamp: '0.1.66', compatibility: { min_erplora_version: '1.1.14' } });
-    // The derived table cannot see this: 1.1.14 is not in it, so plain validate lets it through.
+    const dir = validatableModule({ stamp: '0.1.66', compatibility: { min_erplora_version: unknown } });
+    // The derived table cannot see this: that tag is not in it, so plain validate lets it through.
     assert.equal((await erploraAgainst('validate', dir, {})).status, 0, 'the guess has to wave this through');
 
     const res = await erploraAgainst('validate', dir, { [HUB_URL_ENV]: hub.url });
@@ -570,7 +578,8 @@ test('`erplora validate` against a hub OLDER than #1588 degrades out loud, and n
   // must look exactly like «no source»: the derived table keeps the job, and the author is told.
   const hub = await hubServing('<!DOCTYPE html><html lang="en">…', 'text/html');
   try {
-    const dir = validatableModule({ stamp: '0.1.66', compatibility: { min_erplora_version: '1.1.14' } });
+    const unknown = nextHubAfter(HUB_OUTFITKIT.at(-1).hub);
+    const dir = validatableModule({ stamp: '0.1.66', compatibility: { min_erplora_version: unknown } });
     const res = await erploraAgainst('validate', dir, { [HUB_URL_ENV]: hub.url });
     assert.equal(res.status, 0, `an old hub must not block anybody:\n${res.out}`);
     assert.match(res.out, /hub#1588/, `the degradation was silent:\n${res.out}`);
@@ -582,12 +591,13 @@ test('`erplora validate` against a hub OLDER than #1588 degrades out loud, and n
 test('la procedencia es la de la fila que se CITA, no la de que exista una lectura real', () => {
   // 🔴 `ERPLORA_HUB_URL` puede apuntar perfectamente a un cliente en un core viejo — es el mismo
   // caso que obligó a ordenar la tabla. Ahí la fila medida es 1.1.5, pero el número que el mensaje
-  // enseña es el del TECHO (1.1.13 → 0.1.58), que sigue siendo DEDUCIDO por fecha. Decir «medido en
+  // enseña es el del TECHO (la última fila de la tabla), que sigue siendo DEDUCIDO por fecha. Decir «medido en
   // el hub 1.1.5» de un número que 1.1.5 no lleva convierte el sello del que va toda la issue en
   // una etiqueta decorativa: el autor cree que discute con un hecho y discute con la conjetura.
   const { dir, manifest } = moduleDir({ stamp: '0.1.70' });
   const [warning] = checkOutfitkitFloor(dir, manifest, { source: realHub('1.1.5', '0.1.40') }).warnings;
-  assert.match(warning, /0\.1\.58/, 'el número citado es el del techo derivado');
+  const ceiling = HUB_OUTFITKIT.at(-1).outfitkit;
+  assert.match(warning, new RegExp(ceiling.replace(/\./g, '\\.')), 'el número citado es el del techo derivado');
   assert.match(warning, /deducido por la fecha del tag/, 'y ese número NO se midió en ningún sitio');
   assert.doesNotMatch(warning, /medido en el hub 1\.1\.5/);
 });
