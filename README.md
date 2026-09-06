@@ -364,15 +364,64 @@ si `build` se cae, se le pregunta al validador por qué, para que un manifest ro
 Y siempre hay salida de una línea, **con su precio dicho**: declarar `min_erplora_version` con el hub
 que sí lo lleva —o, si no lo lleva ninguno, con el **siguiente** tag—, sabiendo que hub#521 hará que
 el módulo deje de instalarse en los hubs por debajo hasta que actualicen; o reconstruir más abajo,
-sabiendo que eso obliga a mover `../outfitkit`, que es compartido. El día que exista la fuente real
-(hub#1588), el (2) puede volver a ser rojo sin castigar a nadie.
+sabiendo que eso obliga a mover `../outfitkit`, que es compartido.
 
-### La tabla `HUB_OUTFITKIT`, y por qué es un apaño honesto
+### La fuente real: se le pregunta al hub (module-toolkit#203)
 
-`HUB_OUTFITKIT` (en ese mismo fichero) dice qué OutfitKit lleva cada tag del hub. **Hoy no existe en
-ningún otro sitio**: como el Dockerfile pide `@latest` con cachebust, la versión de una imagen solo se
+Todo lo de arriba compara contra un número **deducido** (la tabla `HUB_OUTFITKIT` de la sección
+siguiente). Desde **ERPlora/hub#1588** no hace falta deducir: el build del shell emite
+`dist/outfitkit-version.json`, el `docker/Dockerfile` lo copia a `/app/web/outfitkit-version.json`
+—y **para el build** si falta o no cuadra (`OUTFITKIT_STAMP_MISSING` / `OUTFITKIT_STAMP_MISMATCH`)—
+y la capa estática del runtime lo sirve. O sea que cualquier hub vivo contesta:
+
+```console
+$ curl https://<slug>.erplora.com/outfitkit-version.json
+{ "outfitkit": "0.1.65", "hub": "1.1.14" }
+```
+
+`src/hub-outfitkit-source.mjs` lee ese dato y `hubOutfitkitTable()` lo mete en la tabla: la fila
+real **sustituye** a la derivada de ese mismo tag. Con eso la comparación deja de ser una conjetura,
+y eso cambia el resultado **en las dos direcciones**:
+
+- **Cierra el agujero.** Un suelo declarado sobre un tag que la tabla no conocía se dejaba pasar con
+  un aviso («añade el tag a `HUB_OUTFITKIT` cuando se publique») y el módulo se **publicaba**
+  prometiendo un hub en el que no cabe. Si ese tag es el que contestó, ahora se comprueba de verdad
+  y se **rechaza** (caso 1 del trinquete: afirmación del autor demostrablemente falsa).
+- **Quita la falsa alarma.** La derivación va por detrás de la realidad —la imagen instala
+  `@latest` en cada build y la tabla anota lo último publicado **antes** del tag—, así que llamaba
+  «más nuevo que todo hub» a horneados perfectamente pintables, y eso bloqueaba `pack` sin motivo.
+
+| Variable | Qué hace |
+|---|---|
+| `ERPLORA_HUB_URL` | Base del hub al que preguntar (`https://acme.erplora.com`). **Opt-in**: sin ella no se toca la red. |
+| `ERPLORA_HUB_OUTFITKIT_CACHE` | Dónde se recuerda la última lectura real. Por defecto `~/.erplora/hub-outfitkit.json`; existe para que los tests y CI no escriban en el `~` de nadie. |
+
+🔴 **Degradar siempre se puede; bloquear por una degradación, nunca.** Sin `ERPLORA_HUB_URL`, sin
+red, o contra un hub anterior a #1588, `readHubOutfitkit()` devuelve `row: null` y **todo se comporta
+exactamente como antes**, con la tabla derivada. Lo que sí hace siempre es **decirlo** por `⚠`: un
+control que se ablanda en silencio deja de controlar sin que nadie se entere. Dos detalles que
+costaron su test:
+
+- La capa estática del hub tiene **fallback SPA** (`with_static_frontend`), así que un hub anterior
+  a #1588 contesta esta ruta con su `index.html` y un **200 OK**, no un 404. Por eso se parsea el
+  cuerpo y no se cree el código de estado.
+- La última lectura real se **cachea**, y la cache pasa por el mismo parser que el cable: un número
+  donde iba una versión (`{"outfitkit": 165}`) compararía como `[165]`, es decir más nuevo que todo
+  lo publicado nunca, y un error ajeno se convertiría en un bloqueo nuestro.
+
+Y el trinquete de #201 sigue en pie: con número real, `validate` sigue **avisando** y quien bloquea
+sigue siendo `pack`, porque el sello lo pone `../outfitkit` y no el autor.
+
+### La tabla `HUB_OUTFITKIT`, el camino degradado
+
+`HUB_OUTFITKIT` (en ese mismo fichero) dice qué OutfitKit lleva cada tag del hub, **deducido por
+fecha**: como el Dockerfile pide `@latest` con cachebust, la versión de una imagen sin sello solo se
 deduce de **cuándo** se construyó. Cada fila es «el último `@erplora/outfitkit` publicado en npm antes
 de crearse el tag»; `built_at` es la fecha de creación del tag en `ERPlora/hub`.
+
+Desde module-toolkit#203 **ya no es la respuesta por defecto**: es lo que queda cuando no hay hub al
+que preguntar. Y sigue haciendo falta mientras haya hubs vivos sin el sello — hoy **todos**, porque
+hub#1588 está en `develop` del hub y aún no ha salido en un tag.
 
 - **Se comprueba contra un positivo conocido:** la fila de `1.1.13` → `0.1.58` es la que sales#265
   midió a mano por otro camino, y `test/validate-outfitkit-floor.test.mjs` la clava para que deje de
@@ -386,8 +435,8 @@ de crearse el tag»; `built_at` es la fecha de creación del tag en `ERPlora/hub
   (si no, el día que salga `v1.2.0` la alarma seguiría verde apuntando a `v1.1.13`). Así, «mantenerla es parte
   de publicar el hub» deja de ser memoria y pasa a ser mecanismo: sin la fila, el control mediría los
   módulos contra una flota que ya no existe. Skip honesto si no hay hub al lado, como los otros seis.
-- **No es la fuente de verdad.** Quien SABE la versión es el build del hub, que hoy no la publica en
-  ningún artefacto. Que la emita él y esto la lea es la otra mitad, y vive en hub#1588.
+- **No es la fuente de verdad.** Quien SABE la versión es el hub, y desde hub#1588 la publica: ver
+  la sección anterior. Cuando el hub contesta, su fila gana.
 
 ## Los espejos canónicos: contra QUÉ se comparan (module-toolkit#61 y #90)
 

@@ -33,6 +33,7 @@ import { checkFilterOps } from './validate-filter-ops.mjs';
 import { checkDeadFilters } from './validate-dead-filters.mjs';
 import { checkBatteryMigrations } from './validate-battery-migrations.mjs';
 import { checkOutfitkitFloor } from './validate-outfitkit-floor.mjs';
+import { readHubOutfitkit } from './hub-outfitkit-source.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -391,7 +392,16 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
   // pone el checkout compartido `../outfitkit` y no el autor: bloquear en `validate` pondría rojos
   // los 27 módulos en su siguiente PR de UI, por la cadencia de release del hub. El detalle, con
   // sus medidas, en la cabecera de `validate-outfitkit-floor.mjs`.
-  const outfitkitFloor = checkOutfitkitFloor(dir, manifest, { publishing });
+  //
+  // module-toolkit#203: la mitad de la comparación que ANTES se deducía por fecha se le pregunta al
+  // hub, que desde ERPlora/hub#1588 publica su propio sello en `/outfitkit-version.json`. Es opt-in
+  // (`ERPLORA_HUB_URL`) y NUNCA falla hacia rojo: sin hub, sin red o contra un hub anterior a #1588
+  // devuelve `row: null` y el control vuelve a la tabla derivada, igual que antes. Lo que sí hace
+  // siempre es DECIR que se ha degradado — un control que se ablanda en silencio deja de controlar
+  // sin que nadie se entere.
+  const hubSource = await readHubOutfitkit();
+  for (const w of hubSource.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  const outfitkitFloor = checkOutfitkitFloor(dir, manifest, { publishing, source: hubSource.row });
   for (const w of outfitkitFloor.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (outfitkitFloor.errors.length) {
     throw new Error(

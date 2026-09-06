@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -29,7 +29,10 @@ import {
   oldestHubShipping,
   nextHubAfter,
   outfitkitForFloor,
+  hubOutfitkitTable,
 } from '../src/validate-outfitkit-floor.mjs';
+import { CACHE_ENV, HUB_STAMP_PATH, HUB_URL_ENV } from '../src/hub-outfitkit-source.mjs';
+import { createServer } from 'node:http';
 
 let fixtures = 0;
 
@@ -347,4 +350,203 @@ test('`erplora validate` WARNS instead of blocking a bake ahead of the fleet', (
 test('`erplora validate` stays GREEN on what the fleet can paint', () => {
   const res = runValidate(validatableModule({ stamp: newestKnownHub().outfitkit }));
   assert.equal(res.status, 0, `a module the fleet CAN paint must not be blocked:\n${res.out}`);
+});
+
+// ── The REAL source replaces the guess — ERPlora/module-toolkit#203 ────────────────────────────
+//
+// Everything above answers «which OutfitKit does hub X carry?» from `HUB_OUTFITKIT`, a table
+// DERIVED BY DATE and extended by hand on every hub release. Since ERPlora/hub#1588 the hub says it
+// itself (`GET /outfitkit-version.json` → `{ outfitkit, hub }`), so the answer can be a FACT. Which
+// is what makes the difference that matters here: a floor the table did not know was waved through
+// with a warning — «add the tag to HUB_OUTFITKIT when it ships» — and a module claiming a hub it
+// cannot run on got published. With a real reading that same case is checked, and rejected.
+//
+// The reading is optional by construction. No hub configured, no network, a hub older than #1588:
+// `source` is null and every case above answers exactly as it did before.
+
+/** The row `readHubOutfitkit` hands over: a real hub that answered. */
+const realHub = (hub, outfitkit) => ({ hub, outfitkit, origin: 'live', url: 'https://acme.erplora.com' });
+
+test('the real reading REPLACES the derived row for the same tag: a fact beats a guess', () => {
+  // The derivation understates by construction — the image runs `pnpm add @erplora/outfitkit@latest`
+  // at build time, while the table records what npm had published BEFORE the tag was cut. The table
+  // says v1.1.13 carries 0.1.58; if the hub itself says 0.1.65, 0.1.65 is what it paints with.
+  const table = hubOutfitkitTable(realHub('1.1.13', '0.1.65'));
+  const row = table.find((r) => r.hub === '1.1.13');
+  assert.equal(row.outfitkit, '0.1.65');
+  assert.equal(table.filter((r) => r.hub === '1.1.13').length, 1, 'the guess must not survive next to the fact');
+  assert.equal(table.length, HUB_OUTFITKIT.length, 'replacing a row does not add one');
+  // And the derived table is left alone: it is a module-level constant shared by every call.
+  assert.equal(HUB_OUTFITKIT.find((r) => r.hub === '1.1.13').outfitkit, '0.1.58');
+});
+
+test('a hub NEWER than the table lands at the end, so it becomes the newest known', () => {
+  const table = hubOutfitkitTable(realHub('1.1.14', '0.1.65'));
+  assert.equal(table.length, HUB_OUTFITKIT.length + 1);
+  assert.equal(newestKnownHub(table).hub, '1.1.14');
+  assert.equal(newestKnownHub(table).outfitkit, '0.1.65');
+  // The order the helpers rely on: `outfitkitForFloor` returns the FIRST satisfying row and
+  // `oldestHubShipping` the FIRST good enough. Both answer «oldest» only while the table is sorted.
+  for (let i = 1; i < table.length; i += 1) {
+    assert.ok(compareOutfitkitVersions(table[i].hub, table[i - 1].hub) > 0, `out of order at ${i}`);
+  }
+});
+
+test('a hub OLDER than the newest tag is corrected IN PLACE, not appended', () => {
+  // 🔴 The case the sort exists for, and the one that is easy to miss because the happy path hides
+  // it: `ERPLORA_HUB_URL` can perfectly well point at a customer still on an old core. Replacing
+  // the row and pushing it would leave 1.1.5 sitting at the END of the table — and `newestKnownHub`
+  // answers with the last element, so the whole fleet ceiling would collapse to 1.1.5 and every
+  // module baked above 0.1.42 would be blocked at `pack` for no reason. (Mutant M10, 2026-09-06:
+  // deleting the sort survived the first version of this suite.)
+  const table = hubOutfitkitTable(realHub('1.1.5', '0.1.42'));
+  assert.equal(table.length, HUB_OUTFITKIT.length, 'a known tag is corrected, not added');
+  assert.equal(table.find((r) => r.hub === '1.1.5').outfitkit, '0.1.42');
+  assert.equal(newestKnownHub(table).hub, '1.1.13', 'the ceiling is still the newest TAG');
+  for (let i = 1; i < table.length; i += 1) {
+    assert.ok(compareOutfitkitVersions(table[i].hub, table[i - 1].hub) > 0, `out of order at ${i}`);
+  }
+  // And the helpers keep answering «the oldest that qualifies», which only holds while it is sorted.
+  assert.equal(oldestHubShipping('0.1.42', table).hub, '1.1.5');
+  assert.equal(outfitkitForFloor('1.1.5', table).outfitkit, '0.1.42');
+});
+
+test('no source, or a half-answer, leaves the derived table exactly as it was', () => {
+  for (const source of [null, undefined, {}, { hub: '1.1.14' }, { outfitkit: '0.1.65' }]) {
+    assert.deepEqual(hubOutfitkitTable(source), HUB_OUTFITKIT, JSON.stringify(source));
+  }
+});
+
+test('🔴 a floor the table could not check is CHECKED against the real hub — and rejected', () => {
+  // THE POINT OF #203. The module claims it runs from core 1.1.14 and baked against 0.1.66. The
+  // derived table has never heard of 1.1.14, so today it warns «add the tag when it ships» and lets
+  // the publish through — the customer gets the screen their hub cannot paint. Ask the hub instead:
+  // 1.1.14 carries 0.1.65, the claim is false, and it is refused.
+  const { dir, manifest } = moduleDir({
+    stamp: '0.1.66',
+    compatibility: { min_erplora_version: '1.1.14' },
+  });
+
+  const guessed = checkOutfitkitFloor(dir, manifest, { publishing: true });
+  assert.deepEqual(guessed.errors, [], 'without a real source this is still only a warning');
+  assert.equal(guessed.warnings.length, 1, JSON.stringify(guessed.warnings));
+
+  const measured = checkOutfitkitFloor(dir, manifest, {
+    publishing: true,
+    source: realHub('1.1.14', '0.1.65'),
+  });
+  assert.equal(measured.errors.length, 1, JSON.stringify(measured));
+  assert.match(measured.errors[0], /0\.1\.66/, 'it has to name what was baked');
+  assert.match(measured.errors[0], /0\.1\.65/, 'and what the hub it claims actually carries');
+  assert.match(measured.errors[0], /1\.1\.14/);
+});
+
+test('the real reading also CLEARS the false alarm the derived table was raising', () => {
+  // The other direction, and it is why this cannot be a one-way ratchet: the derivation lags
+  // reality, so it calls a perfectly paintable bake «newer than every hub». A module baked at
+  // 0.1.60 with no declared floor is a block at `pack` against the table (newest 0.1.58) and green
+  // against a hub that answers 0.1.65. Blocking a publish that is fine is the same defect as
+  // waving one through: both come from answering with a guess.
+  const { dir, manifest } = moduleDir({ stamp: '0.1.60' });
+  assert.equal(checkOutfitkitFloor(dir, manifest, { publishing: true }).errors.length, 1);
+
+  const measured = checkOutfitkitFloor(dir, manifest, {
+    publishing: true,
+    source: realHub('1.1.14', '0.1.65'),
+  });
+  assert.deepEqual(measured.errors, [], JSON.stringify(measured));
+  assert.deepEqual(measured.warnings, [], JSON.stringify(measured));
+});
+
+test('a bake ahead of the REAL hub still warns on validate and blocks on publish', () => {
+  // The ratchet of #201 survives #203: a real number makes the comparison true, it does not make
+  // `validate` start blocking. The stamp comes from the shared `../outfitkit` checkout, not from
+  // the author, and reddening every UI pull request for the hub release cadence is how a gate dies.
+  const { dir, manifest } = moduleDir({ stamp: '0.1.70' });
+  const source = realHub('1.1.14', '0.1.65');
+  const onValidate = checkOutfitkitFloor(dir, manifest, { source });
+  assert.deepEqual(onValidate.errors, []);
+  assert.equal(onValidate.warnings.length, 1, JSON.stringify(onValidate.warnings));
+  assert.match(onValidate.warnings[0], /0\.1\.65/, 'the warning names the number that was measured');
+  assert.equal(checkOutfitkitFloor(dir, manifest, { source, publishing: true }).errors.length, 1);
+});
+
+test('with a real source the message stops telling the author to edit HUB_OUTFITKIT by hand', () => {
+  // The advice has to match the world the author is in. With a hub answering for itself, «add the
+  // row to the table» is busywork on a table that no longer decides anything.
+  const { dir, manifest } = moduleDir({
+    stamp: '0.1.70',
+    compatibility: { min_erplora_version: '9.9.9' },
+  });
+  const [guessed] = checkOutfitkitFloor(dir, manifest).warnings;
+  assert.match(guessed, /HUB_OUTFITKIT/, 'with no real source the table IS the thing to extend');
+  const [measured] = checkOutfitkitFloor(dir, manifest, { source: realHub('1.1.14', '0.1.65') }).warnings;
+  assert.doesNotMatch(measured, /HUB_OUTFITKIT/);
+  assert.match(measured, /1\.1\.14/, 'it names the hub that DID answer, so the author can act');
+});
+
+// ── And `erplora validate` actually reads it ───────────────────────────────────────────────────
+
+/** A hub as it answers since hub#1588. Real HTTP, because the CLI is what has to reach it. */
+async function hubServing(body, type = 'application/json') {
+  const server = createServer((req, res) => {
+    res.writeHead(req.url === HUB_STAMP_PATH ? 200 : 404, { 'content-type': type });
+    res.end(req.url === HUB_STAMP_PATH ? body : 'no');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return {
+    url: `http://127.0.0.1:${server.address().port}`,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
+}
+
+/**
+ * `erplora <command> <dir>` with a hub configured — and a cache that is never the developer's.
+ *
+ * 🔴 ASYNC on purpose, and it is not a style choice: the hub above is an HTTP server living in THIS
+ * process, and `spawnSync` blocks this process's event loop until the child exits. The child would
+ * connect, nobody would ever accept, and the run would «prove» the check by timing out — a green
+ * that means the opposite of what it claims.
+ */
+function erploraAgainst(command, dir, env) {
+  const child = spawn(process.execPath, [CLI, command, dir], {
+    env: { ...process.env, [CACHE_ENV]: join(mkdtempSync(join(tmpdir(), 'erplora-ok-cli-')), 'c.json'), ...env },
+  });
+  let out = '';
+  child.stdout.on('data', (c) => { out += c; });
+  child.stderr.on('data', (c) => { out += c; });
+  return new Promise((resolve) => child.on('close', (status) => resolve({ status, out })));
+}
+
+test('`erplora validate` ASKS the hub, and fails on a floor only the hub could disprove', async () => {
+  // The defect this repository keeps finding in its own gates (#50, #55, #61, #74): a check that is
+  // correct and unreachable. The unit tests above prove the comparison; this proves the CLI does
+  // the HTTP read and hands the answer over. Without it, #203 would be a function nobody calls.
+  const hub = await hubServing(JSON.stringify({ outfitkit: '0.1.65', hub: '1.1.14' }));
+  try {
+    const dir = validatableModule({ stamp: '0.1.66', compatibility: { min_erplora_version: '1.1.14' } });
+    // The derived table cannot see this: 1.1.14 is not in it, so plain validate lets it through.
+    assert.equal((await erploraAgainst('validate', dir, {})).status, 0, 'the guess has to wave this through');
+
+    const res = await erploraAgainst('validate', dir, { [HUB_URL_ENV]: hub.url });
+    assert.equal(res.status, 1, `the real reading has to redden it:\n${res.out}`);
+    assert.match(res.out, /0\.1\.65/, `the hub's own number never reached the message:\n${res.out}`);
+  } finally {
+    await hub.close();
+  }
+});
+
+test('`erplora validate` against a hub OLDER than #1588 degrades out loud, and never blocks', async () => {
+  // The hub's static layer answers an unknown path with `index.html` and a 200 (`with_static_frontend`).
+  // That is what every hub deployed today does, because hub#1588 has not shipped in a tag yet. It
+  // must look exactly like «no source»: the derived table keeps the job, and the author is told.
+  const hub = await hubServing('<!DOCTYPE html><html lang="en">…', 'text/html');
+  try {
+    const dir = validatableModule({ stamp: '0.1.66', compatibility: { min_erplora_version: '1.1.14' } });
+    const res = await erploraAgainst('validate', dir, { [HUB_URL_ENV]: hub.url });
+    assert.equal(res.status, 0, `an old hub must not block anybody:\n${res.out}`);
+    assert.match(res.out, /hub#1588/, `the degradation was silent:\n${res.out}`);
+  } finally {
+    await hub.close();
+  }
 });
