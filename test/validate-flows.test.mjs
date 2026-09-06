@@ -23,6 +23,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkFlows } from '../src/validate-flows.mjs';
+import { validate } from '../src/validate.mjs';
 
 /** A module directory whose `flows/` carries exactly `files` (objects are written as JSON). */
 function moduleWithFlows(files) {
@@ -269,4 +270,23 @@ test('a family that asks for nothing is refused: it could not do anything either
   const files = wellFormed();
   files['appointment-from-whatsapp.grants.json'] = { grants: [] };
   assertNames(check(files).errors, 'grants');
+});
+
+// The door is worth nothing unless `erplora validate` runs it — and `pack` (and therefore
+// `publish`) calls `validate` first, which is what turns this file into a PUBLISH gate instead of a
+// linter nobody invokes. Without this test, deleting the call in `validate.mjs` leaves every case
+// above green while the whole guard goes dead: measured, it was the one mutation that survived.
+test('WIRED: `erplora validate` rejects the module, so pack/publish cannot ship it', async () => {
+  const files = wellFormed();
+  delete files['appointment-from-whatsapp.es.flow.json'];
+  const dir = moduleWithFlows(files);
+  writeFileSync(
+    join(dir, 'module.json'),
+    JSON.stringify({ id: 'whatsapp_inbox', name: 'WhatsApp Inbox', version: '1.0.0' }),
+  );
+  try {
+    await assert.rejects(() => validate(dir), /appointment-from-whatsapp\.es\.flow\.json/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
