@@ -383,9 +383,14 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
   // `@erplora/outfitkit@latest` en cada build: el checkout del autor va casi siempre por delante de
   // la flota. Pasó dos veces en cuatro días (hub#1547 y sales#259) y en las dos lo descubrió el
   // cliente. La mitad que DECIDE ya existía —`compatibility.min_erplora_version`, que el hub aplica
-  // desde hub#521—; esta es la que la RECLAMA. Solo bloquea lo demostrablemente falso: un suelo
-  // declarado que no llega al sello, o ningún suelo (= «cualquier hub») cuando ni el hub más nuevo
-  // llega. Los 25 módulos que hoy hornean por debajo de la flota no se enteran.
+  // desde hub#521—; esta es la que la RECLAMA.
+  //
+  // TRINQUETE, y el reparto importa: un suelo DECLARADO que no llega al sello es una afirmación
+  // demostrablemente falsa del autor → error siempre. SIN suelo y horneado por delante de todo hub
+  // conocido → aviso aquí, error con `publishing` (o sea en `erplora pack`), porque el sello lo
+  // pone el checkout compartido `../outfitkit` y no el autor: bloquear en `validate` pondría rojos
+  // los 27 módulos en su siguiente PR de UI, por la cadencia de release del hub. El detalle, con
+  // sus medidas, en la cabecera de `validate-outfitkit-floor.mjs`.
   const outfitkitFloor = checkOutfitkitFloor(dir, manifest, { publishing });
   for (const w of outfitkitFloor.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (outfitkitFloor.errors.length) {

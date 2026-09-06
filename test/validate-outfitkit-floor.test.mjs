@@ -291,18 +291,28 @@ test('`validate({ publishing })` BLOCKS what plain validate only warns about', a
   await validate(dir);
 });
 
-test('`erplora pack` is what turns the warning into a block: it hands over the flag', () => {
-  // Mutant-proofing the seam. Dropping `{ publishing: true }` in `pack.mjs` would leave every unit
-  // test green while the marketplace door stayed open — the same «correct and unreachable» shape
-  // this file already guards against with its CLI tests.
+test('`erplora pack` blocks AFTER building, never before: the order is the guard', () => {
+  // 🔴 THE LESSON, and it cost a review round. The first version of this test asserted only that
+  // `pack.mjs` passes `{ publishing: true }`. It passed all along — the flag WAS passed. What was
+  // wrong was WHEN: `pack` validated first and built second, and `build` rewrites
+  // `dist/outfitkit.json`, so the publishing door inspected a stamp it then replaced and 25 of the
+  // 27 modules sailed through with a zip nobody had looked at. An assertion about the presence of
+  // a call cannot see the order of two.
+  //
+  // So this is a TRIPWIRE, not the guard: it runs in CI, where packing cannot. The real proof
+  // drives the CLI and opens the zip, in `test/pack-outfitkit-floor.test.mjs`.
   const pack = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'pack.mjs'),
     'utf8',
   );
-  assert.match(
-    pack,
-    /await validate\(dir, \{[^}]*publishing: true/,
-    '`pack` must call `validate` with `publishing: true`, or nothing ever blocks a publication',
+  const publishing = pack.search(/await validate\(dir, \{[^}]*publishing: true/);
+  const building = pack.search(/await build\(dir\)/);
+  assert.notEqual(publishing, -1, '`pack` must call `validate` with `publishing: true`');
+  assert.notEqual(building, -1, '`pack` must build');
+  assert.ok(
+    building < publishing,
+    '`pack` builds AFTER it validates for publishing, so the gate judges a `dist/` that `build` is ' +
+      'about to overwrite (module-toolkit#201, N-0). Build first, then validate what ships',
   );
 });
 

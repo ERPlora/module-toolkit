@@ -31,6 +31,7 @@ const CANNOT_RUN_IN_CI = {
   'icons.test.mjs': 'needs @iconify-json/ion',
   'outfitkit-stamp.test.mjs': 'needs the @erplora/outfitkit checkout',
   'pack-include.test.mjs': 'packs a built module: needs esbuild',
+  'pack-outfitkit-floor.test.mjs': 'drives `erplora pack` end to end: needs esbuild + lit',
   'scaffold.test.mjs': 'scaffolds and builds: needs esbuild + lit',
   'signing.test.mjs': 'signs a packed module: needs esbuild',
   'wasm.test.mjs': 'compiles a handler: needs the Rust toolchain',

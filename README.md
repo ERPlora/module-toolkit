@@ -347,9 +347,19 @@ PR de UI, por la cadencia de release del hub y no por nada que hicieran sus auto
 a todo el mundo se apaga, no se obedece — es el MISMO reparto que hace `bundle-freshness.mjs` al lado
 (con sello → error; sin sello → aviso).
 
-Donde sí bloquea es en `erplora pack`, la puerta del marketplace (`pack.mjs` llama a
-`validate(dir, { publishing: true })`): construye y prueba contra lo que quieras, pero no **publicas**
-una pantalla que ningún hub sabe pintar. Es el modelo de cualquier tienda de aplicaciones.
+Donde sí bloquea es en `erplora pack`, la puerta del marketplace: construye y prueba contra lo que
+quieras, pero no **publicas** una pantalla que ningún hub sabe pintar. Es el modelo de cualquier
+tienda de aplicaciones.
+
+🔴 **Y `pack` construye ANTES de validar, no al revés.** No es un detalle de estilo: `build`
+reescribe `dist/` —el bundle y `dist/outfitkit.json`—, así que validar primero es juzgar un
+artefacto que la propia orden está a punto de sustituir. Con el orden viejo, `customers` (sello
+commiteado 0.1.52) salía con `EXIT=0`, sin un aviso, y el zip viajaba con 0.1.59: le pasaba a **25
+de los 27** módulos. Y no era solo el sello — `validate` comprueba también que el bundle sea
+CSP-safe, y comprobaba el viejo mientras empaquetaba el nuevo. La regla, en una frase: **se valida
+lo que se publica, no lo que había en el árbol.** El precio del orden nuevo se paga en `pack.mjs`:
+si `build` se cae, se le pregunta al validador por qué, para que un manifest roto siga fallando con
+«id inválido» y no con «no encuentro entry de WC».
 
 Y siempre hay salida de una línea, **con su precio dicho**: declarar `min_erplora_version` con el hub
 que sí lo lleva —o, si no lo lleva ninguno, con el **siguiente** tag—, sabiendo que hub#521 hará que
@@ -368,8 +378,12 @@ de crearse el tag»; `built_at` es la fecha de creación del tag en `ERPlora/hub
   midió a mano por otro camino, y `test/validate-outfitkit-floor.test.mjs` la clava para que deje de
   cuadrar en voz alta el día que la derivación se tuerza.
 - **Es el séptimo espejo del hub, con su alarma.** `canonical-mirrors.test.mjs` lee los TAGS del hub
-  vecino (refs, nunca el working tree) y exige dos cosas: que cada fila nombre un tag que existe de
-  verdad con su fecha de creación, y que el tag más nuevo esté en la tabla. Así, «mantenerla es parte
+  vecino (refs, nunca el working tree) y exige tres cosas: que cada fila nombre un tag que existe de
+  verdad con su fecha de creación; que la **columna de OutfitKit** vuelva a salir de su propia regla
+  de derivación, re-consultada contra npm (skip honesto sin red) — sin eso, falsear una fila
+  intermedia pasaba en verde, y esa columna es justo lo que el control responde; y que el tag más
+  nuevo esté en la tabla, preguntando por **todos** los tags de release y no solo por la línea `1.1`
+  (si no, el día que salga `v1.2.0` la alarma seguiría verde apuntando a `v1.1.13`). Así, «mantenerla es parte
   de publicar el hub» deja de ser memoria y pasa a ser mecanismo: sin la fila, el control mediría los
   módulos contra una flota que ya no existe. Skip honesto si no hay hub al lado, como los otros seis.
 - **No es la fuente de verdad.** Quien SABE la versión es el build del hub, que hoy no la publica en

@@ -45,12 +45,34 @@ export async function pack(moduleDir) {
   const id = manifest.id;
   const version = manifest.version;
 
-  // `publishing: true` es lo que sube de aviso a bloqueo el caso «horneado por delante de todo
-  // hub conocido» (module-toolkit#201). En `validate` a secas es aviso a propósito —el sello lo
-  // pone el checkout compartido `../outfitkit`, no el autor—; aquí no, porque este zip va a un
-  // cliente. Es el modelo de cualquier tienda: compilas con lo que quieras, la tienda comprueba.
+  // 🔴 SE CONSTRUYE PRIMERO Y SE VALIDA DESPUÉS, y el orden es el arreglo (module-toolkit#201, N-0
+  // de la revisión de #202). `build` reescribe `dist/` —el bundle, el sello de frescura y
+  // `dist/outfitkit.json` (`build.mjs`)—, así que validar antes es juzgar un artefacto que esta
+  // misma función está a punto de sustituir. Medido sobre `customers`: sello commiteado 0.1.52,
+  // `pack` EXIT=0 sin un solo aviso, y el zip salía con 0.1.59 — la versión que ningún hub sabe
+  // pintar, o sea justo lo que este control existe para parar. Le pasaba a 25 de los 27 módulos.
+  //
+  // Y no era solo el sello de OutfitKit: `validate` comprueba también que el bundle sea CSP-safe,
+  // y con el orden viejo comprobaba el bundle VIEJO y empaquetaba el nuevo. Validar lo que se
+  // publica —y no lo que había en el árbol— cierra la familia entera de una vez.
+  //
+  // `publishing: true` es lo que sube de aviso a bloqueo el caso «horneado por delante de todo hub
+  // conocido». En `validate` a secas es aviso a propósito —el sello lo pone el checkout compartido
+  // `../outfitkit`, no el autor—; aquí no, porque este zip va a un cliente. Es el modelo de
+  // cualquier tienda: compilas con lo que quieras, la tienda comprueba al enviar.
+  //
+  // ⚠️ El precio del orden nuevo, pagado aquí y no dejado caer: con un manifest roto, quien fallaba
+  // antes era `validate` («id inválido», «version SemVer inválida») y ahora falla `build` primero,
+  // con un «no encuentro entry de WC» que no dice la verdad del problema. Así que si `build` se
+  // cae, se le pregunta al validador POR QUÉ: si el módulo ya era inválido, manda su mensaje; si
+  // no, el fallo es de construcción de verdad y se propaga tal cual.
+  try {
+    await build(dir); // deja dist/ (bundle + sellos) tal y como va a viajar en el zip
+  } catch (buildError) {
+    await validate(dir); // lanza el error BUENO si el módulo era inválido de partida
+    throw buildError; // el módulo es válido: el fallo es del build y se cuenta como tal
+  }
   await validate(dir, { publishing: true });
-  await build(dir); // asegura dist/<id>.esm.js fresco
 
   const present = packedPaths(dir);
   const outDir = join(dir, 'build');

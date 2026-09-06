@@ -39,6 +39,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { BRIDGE_FUNCTIONS } from '../src/validate-sql.mjs';
 import { VENDORED_MANIFEST_SCHEMA_PATH } from '../src/manifest-schema.mjs';
@@ -398,9 +399,42 @@ test('the kernel prose the hub keeps is NOT vendored here (#121)', () => {
 // mechanism. This is the mechanism. It reads the neighbouring hub's TAGS — refs, so no working
 // tree is involved — and skips honestly when there is no hub, exactly like the other six.
 
+/**
+ * Release tags only. 🔴 The pattern is `v[0-9]*`, NOT `v1.1.*`, and that is N-2 of the review of
+ * #202: asking for the `1.1` line makes «the newest tag is in the table» stay GREEN pointing at
+ * `v1.1.13` the day the hub ships `v1.2.0`, while the table goes a whole minor out of date. The
+ * documented exclusion of this table runs BACKWARDS (`1.0.x` and older are pre-fleet, and `1.0.2`
+ * was tagged 11 s after `0.1.36` shipped, a margin that supports no claim) — never forwards.
+ */
+const RELEASE_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
+
+/** The oldest hub the table speaks for. Anything below is deliberately outside it. */
+const TABLE_STARTS_AT = [1, 1, 0];
+
+/** `v1.1.13` → `[1, 1, 13]`, for ordering that does not read `1.1.9` as newer than `1.1.13`. */
+function tagParts(tag) {
+  const m = RELEASE_TAG.exec(tag);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+function atLeast(a, b) {
+  for (let i = 0; i < 3; i += 1) if (a[i] !== b[i]) return a[i] > b[i];
+  return true;
+}
+
+/** Every release tag of the hub, newest LAST. Skips honestly when there is no hub with tags. */
+function releaseTags(t) {
+  const tags = hubTags(t, 'v[0-9]*');
+  if (!tags) return null;
+  return [...tags.entries()]
+    .filter(([tag]) => RELEASE_TAG.test(tag))
+    .sort((a, b) => Date.parse(a[1]) - Date.parse(b[1]));
+}
+
 test('every row of HUB_OUTFITKIT names a REAL hub tag, dated as the tag is (#201)', (t) => {
-  const tags = hubTags(t, 'v1.1.*');
-  if (!tags) return;
+  const listed = releaseTags(t);
+  if (!listed) return;
+  const tags = new Map(listed);
   const wrong = [];
   for (const row of HUB_OUTFITKIT) {
     const built = tags.get(`v${row.hub}`);
@@ -421,10 +455,28 @@ test('every row of HUB_OUTFITKIT names a REAL hub tag, dated as the tag is (#201
   );
 });
 
+test('the tag query reaches OUTSIDE the 1.1 line, or the staleness alarm is blind (#201, N-2)', (t) => {
+  // N-2 of the review of #202: asking for `refs/tags/v1.1.*` keeps «the newest tag is in the table»
+  // green pointing at `v1.1.13` the day the hub ships `v1.2.0` — silent obsolescence by a whole
+  // minor, which is the exact failure mode this PR exists to close. Today there is no `1.2.x` to
+  // catch it, so what is pinned is the REACH of the query: it has to see release tags that the
+  // table deliberately leaves out (`v1.0.x`). Narrow the pattern back and this goes red.
+  const listed = releaseTags(t);
+  if (!listed) return;
+  const outside = listed.filter(([tag]) => !atLeast(tagParts(tag), TABLE_STARTS_AT));
+  assert.ok(
+    outside.length > 0,
+    'the tag query does not see a single release tag below the table floor, so it is scoped to the ' +
+      'line the table already covers and could never notice a new one',
+  );
+});
+
 test('the NEWEST hub tag is in HUB_OUTFITKIT: publishing the hub adds its row (#201)', (t) => {
-  const tags = hubTags(t, 'v1.1.*');
-  if (!tags) return;
-  const newestTag = [...tags.keys()].sort((a, b) => Date.parse(tags.get(a)) - Date.parse(tags.get(b))).at(-1);
+  const listed = releaseTags(t);
+  if (!listed) return;
+  const newestTag = listed.at(-1)[0];
+  // A tag older than the table's own floor is outside it on purpose, not a gap.
+  if (!atLeast(tagParts(newestTag), TABLE_STARTS_AT)) return;
   assert.ok(
     HUB_OUTFITKIT.some((row) => `v${row.hub}` === newestTag),
     `ERPlora/hub published ${newestTag} and HUB_OUTFITKIT does not know it. Until the row is ` +
@@ -432,5 +484,62 @@ test('the NEWEST hub tag is in HUB_OUTFITKIT: publishing the hub adds its row (#
       'warn that «no hub ships OutfitKit X» about screens the fleet paints perfectly. Add the row ' +
       "(the last `@erplora/outfitkit` published before that tag's creation date), or close " +
       'hub#1588 so the build publishes the version and the table stops being derived',
+  );
+});
+
+test('the OutfitKit column is DERIVED, and the derivation is re-run against npm (#201, N-1)', async (t) => {
+  // 🔴 N-1 of the review of #202. The mirror above proves every row names a real tag with its real
+  // date — and that is only half. The column the check actually CONSUMES is `outfitkit`, and
+  // falsifying it in a middle row (`1.1.10: 0.1.56 → 0.1.40`) left 53/53 green: exactly one row had
+  // an independent source (`1.1.13`, from sales#265) and thirteen only said the tag existed.
+  //
+  // The derivation is public and re-runnable: «the last `@erplora/outfitkit` published on npm
+  // before this tag was created». So it is re-run here, row by row, against the registry.
+  //
+  // Skips honestly when npm cannot be reached — a laptop on a train is not a divergence. It says so
+  // out loud rather than passing, which is the rule the six mirrors already live by.
+  const listed = releaseTags(t);
+  if (!listed) return;
+
+  const npm = spawnSync('npm', ['view', '@erplora/outfitkit', 'time', '--json'], {
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  if (npm.status !== 0 || !npm.stdout) {
+    return t.skip(
+      'npm cannot be reached, so the derivation of HUB_OUTFITKIT cannot be re-run ' +
+        `(${(npm.stderr || '').trim().split('\n')[0] || 'no output'}). The rows are still pinned to ` +
+        'real tags by the mirrors above; what is NOT checked in this run is the OutfitKit column',
+    );
+  }
+  const published = Object.entries(JSON.parse(npm.stdout))
+    .filter(([v]) => v !== 'created' && v !== 'modified')
+    .map(([version, when]) => [version, Date.parse(when)])
+    .sort((a, b) => a[1] - b[1]);
+
+  const tagDate = new Map(listed);
+  const wrong = [];
+  for (const row of HUB_OUTFITKIT) {
+    const built = Date.parse(tagDate.get(`v${row.hub}`));
+    if (Number.isNaN(built)) continue; // the mirror above is the one that reports a missing tag
+    const latestBefore = published.filter(([, when]) => when <= built).at(-1);
+    if (!latestBefore) {
+      wrong.push(`${row.hub}: no @erplora/outfitkit had been published when the tag was created`);
+      continue;
+    }
+    if (latestBefore[0] !== row.outfitkit) {
+      wrong.push(
+        `${row.hub}: the table says ${row.outfitkit}, but the last OutfitKit published before ` +
+          `${row.built_at} was ${latestBefore[0]}`,
+      );
+    }
+  }
+  assert.deepEqual(
+    wrong,
+    [],
+    'the OutfitKit column of HUB_OUTFITKIT does not match its own derivation rule. That column is ' +
+      'what `checkOutfitkitFloor` answers with, so a wrong row blocks (or waves through) the wrong ' +
+      'module. Re-derive it, or close hub#1588 so the hub build publishes the version and the table ' +
+      'stops being derived at all',
   );
 });
