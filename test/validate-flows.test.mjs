@@ -25,6 +25,13 @@ import { join } from 'node:path';
 import { checkFlows } from '../src/validate-flows.mjs';
 import { validate } from '../src/validate.mjs';
 
+/** The `paths:` filter of the release workflow, as the stub of the README writes it. */
+function releaseWorkflow(paths) {
+  return `name: Release\non:\n  push:\n    branches: [main]\n    paths:\n${paths
+    .map((p) => `      - '${p}'\n`)
+    .join('')}`;
+}
+
 /** A module directory whose `flows/` carries exactly `files` (objects are written as JSON). */
 function moduleWithFlows(files) {
   const dir = mkdtempSync(join(tmpdir(), 'erplora-flows-'));
@@ -289,4 +296,49 @@ test('WIRED: `erplora validate` rejects the module, so pack/publish cannot ship 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The other half of the SAME symptom the issue is about (module-toolkit#209). Carrying `flows/` in
+// the zip is worth nothing if publishing never happens: `release.yml` only bumps and republishes on
+// the `paths:` it lists, so a merge that touches ONLY a template leaves the published version where
+// it was and the template reaches no hub — exactly the failure already documented for `locales/**`.
+// It is a WARNING and not an error on purpose: turning it red would fail every open PR of the one
+// module that ships templates today, which is how a guard gets switched off instead of obeyed.
+test('WARNS when the module ships templates and its release does not publish them', () => {
+  const dir = moduleWithFlows(wellFormed());
+  mkdirSync(join(dir, '.github', 'workflows'), { recursive: true });
+  writeFileSync(
+    join(dir, '.github', 'workflows', 'release.yml'),
+    releaseWorkflow(['module.json', 'ui/**', 'locales/**', 'dist/**']),
+  );
+  try {
+    const { errors, warnings } = checkFlows(dir);
+    assert.deepEqual(errors, [], 'it is a warning, never a red gate');
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /flows\/\*\*/);
+    assert.match(warnings[0], /release\.yml/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('stays quiet when release.yml already publishes on flows/**', () => {
+  const dir = moduleWithFlows(wellFormed());
+  mkdirSync(join(dir, '.github', 'workflows'), { recursive: true });
+  writeFileSync(
+    join(dir, '.github', 'workflows', 'release.yml'),
+    releaseWorkflow(['module.json', 'ui/**', 'locales/**', 'flows/**', 'dist/**']),
+  );
+  try {
+    assert.deepEqual(checkFlows(dir), { errors: [], warnings: [] });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A module built outside a repo of its own — the scaffold, a temporary directory, the module the
+// gate unpacks — has no workflow to read. Warning there would be noise about something the author
+// cannot act on, and noise is what teaches people to ignore the warning that does matter.
+test('says nothing about a release workflow that is not there', () => {
+  assert.deepEqual(check(wellFormed()), { errors: [], warnings: [] });
 });

@@ -306,6 +306,40 @@ function checkRequires(name, sidecar, errors) {
   }
 }
 
+/** Where the release workflow of a module repo lives, and the path filter that must list `flows`. */
+const RELEASE_WORKFLOW = ['.github', 'workflows', 'release.yml'];
+const PUBLISHES_FLOWS = /['"]?flows\/\*\*['"]?/;
+
+/**
+ * Warns when the module ships templates and its own release would never publish them.
+ *
+ * `release.yml` bumps the version and republishes only on the `paths:` it lists, so a merge that
+ * touches ONLY a template leaves the published version where it was and the template reaches no
+ * hub — the same failure this whole door exists to close, and the one already documented for
+ * `locales/**`. It is a WARNING and not an error deliberately: an error would fail every open PR
+ * of a module that ships templates today, and a guard that blocks work gets switched off.
+ *
+ * A module with no workflow at all — the scaffold, a temporary directory, what the gate unpacks —
+ * says nothing: warning about something the author cannot act on is the noise that teaches people
+ * to ignore the warning that matters.
+ */
+function checkReleasePublishesFlows(dir, warnings) {
+  const workflow = join(dir, ...RELEASE_WORKFLOW);
+  if (!existsSync(workflow)) return;
+  let content;
+  try {
+    content = readFileSync(workflow, 'utf8');
+  } catch {
+    return;
+  }
+  if (PUBLISHES_FLOWS.test(content)) return;
+  warnings.push(
+    `${RELEASE_WORKFLOW.join('/')} does not list \`flows/**\` in its \`paths:\`, so a merge that ` +
+      'touches only a template does not publish a version and the template reaches no hub — the ' +
+      'same silence as an edit to `locales/**` before it was listed. Add it beside `locales/**`.',
+  );
+}
+
 /**
  * Judges the `flows/` folder of a module. Returns `{ errors, warnings }` (arrays of strings); never
  * throws — the severity is `validate`'s call, as with every other check.
@@ -397,6 +431,8 @@ export function checkFlows(dir, schema = loadFlowSchema()) {
       if (sidecar !== undefined) checkRequires(family.requires, sidecar, errors);
     }
   }
+
+  if (families.size) checkReleasePublishesFlows(dir, warnings);
 
   return { errors, warnings };
 }

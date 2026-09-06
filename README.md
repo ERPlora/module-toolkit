@@ -556,6 +556,10 @@ vecinos y vive en la batería del propio módulo (`tests/flow_templates.test.py`
 ⚠️ **Y `flows/**` tiene que estar en las `paths:` del `release.yml` del repo del módulo** (el stub
 de abajo ya lo lleva). Sin ella, un merge que solo toca una plantilla no sube versión y la plantilla
 no llega a ningún hub — el mismo modo de fallo que ya documentan las líneas de `locales/**`.
+`erplora validate` lo **avisa** (no lo pone en rojo: un error ahí tumbaría todas las PRs abiertas
+del único módulo que hoy trae plantillas, y una guarda que bloquea es una guarda que se apaga).
+Sin `release.yml` a la vista —el scaffold, un directorio temporal— se calla: avisar de algo sobre lo
+que el autor no puede actuar es el ruido que enseña a ignorar el aviso que sí importa.
 
 ## El gate de CI de los repos de módulo (ERPlora/pm#107)
 
