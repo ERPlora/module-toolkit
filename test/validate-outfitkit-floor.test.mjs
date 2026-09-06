@@ -485,6 +485,34 @@ test('with a real source the message stops telling the author to edit HUB_OUTFIT
   assert.match(measured, /1\.1\.14/, 'it names the hub that DID answer, so the author can act');
 });
 
+test('every message says whether the number was MEASURED or guessed — both ways out', () => {
+  // The whole point of #203 is that the author knows which conversation they are in: arguing with a
+  // fact the hub stated, or with a number worked out from tag timestamps. `provenance` is the only
+  // place that says which, and it is pasted into BOTH ways out of this check — the warning when no
+  // floor is declared and the error when one is. A mutant that pins it to the guessed wording left
+  // the whole suite green (2026-09-06), so both consumers are pinned here.
+  const source = realHub('1.1.14', '0.1.65');
+
+  // (1) No declared floor, bake above the newest hub → warning.
+  const bare = moduleDir({ stamp: '0.1.70' });
+  const [guessedWarning] = checkOutfitkitFloor(bare.dir, bare.manifest).warnings;
+  assert.match(guessedWarning, /deducido por la fecha del tag/);
+  const [measuredWarning] = checkOutfitkitFloor(bare.dir, bare.manifest, { source }).warnings;
+  assert.match(measuredWarning, /medido en el hub 1\.1\.14/);
+  assert.doesNotMatch(measuredWarning, /deducido por la fecha del tag/);
+
+  // (2) A floor IS declared and the bake is above it → error. Same duty: a message that blocks has
+  // to say where its number came from, because that decides whether the author fixes the bake or
+  // the table.
+  const floored = moduleDir({ stamp: '0.1.70', compatibility: { min_erplora_version: '1.1.14' } });
+  const [measuredError] = checkOutfitkitFloor(floored.dir, floored.manifest, {
+    source,
+    publishing: true,
+  }).errors;
+  assert.match(measuredError, /medido en el hub 1\.1\.14/);
+  assert.doesNotMatch(measuredError, /deducido por la fecha del tag/);
+});
+
 // ── And `erplora validate` actually reads it ───────────────────────────────────────────────────
 
 /** A hub as it answers since hub#1588. Real HTTP, because the CLI is what has to reach it. */
