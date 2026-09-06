@@ -33,6 +33,7 @@ import { checkFilterOps } from './validate-filter-ops.mjs';
 import { checkDeadFilters } from './validate-dead-filters.mjs';
 import { checkBatteryMigrations } from './validate-battery-migrations.mjs';
 import { checkOutfitkitFloor } from './validate-outfitkit-floor.mjs';
+import { checkFlows } from './validate-flows.mjs';
 import { readHubOutfitkit } from './hub-outfitkit-source.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
@@ -199,6 +200,20 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
   for (const w of parity.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (parity.errors.length) {
     throw new Error('migraciones inconsistentes:\n  - ' + parity.errors.join('\n  - '));
+  }
+
+  // module-toolkit#209: las automatizaciones que el módulo trae de fábrica (`flows/`). Hasta ahora
+  // no las miraba NADIE aquí: la única puerta era la batería del propio módulo, que carga el schema
+  // de un checkout VECINO del hub y se salta sola cuando no lo hay — o sea, nunca en CI (medido en
+  // whatsapp_inbox#75). Un documento con un paso que el hub no sabe ejecutar, o una traducción que
+  // se quedó atrás, se publicaba en verde y moría en el hub de un cliente.
+  const flows = checkFlows(dir);
+  for (const w of flows.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (flows.errors.length) {
+    throw new Error(
+      'automatizaciones de fábrica que ningún hub podría ejecutar (module-toolkit#209):\n  - ' +
+        flows.errors.join('\n  - '),
+    );
   }
 
   // module-toolkit#51: las DOS reglas que el runtime le exige a una migración en el momento de

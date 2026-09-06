@@ -48,6 +48,11 @@ test('the five kernel contract snapshots are part of what gets synced (#115, #12
     VENDORED_FROM_THE_HUB.includes('schemas/module.schema.json'),
     'the manifest schema is what this script used to be — it cannot stop being synced',
   );
+  assert.ok(
+    VENDORED_FROM_THE_HUB.includes('schemas/flow.schema.json'),
+    'the flow document schema (module-toolkit#209) is vendored too: left out of the sync, the ' +
+      'only thing that would ever notice it drifted is the mirror that fails the build',
+  );
 });
 
 test('every declared file is copied byte for byte from the declared hub (#115)', () => {

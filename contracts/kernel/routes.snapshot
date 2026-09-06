@@ -82,6 +82,10 @@ GET     /api/hub/users                                 auth:session
 POST    /api/hub/users                                 auth:admin
 DELETE  /api/hub/users/:id                             auth:admin
 PUT     /api/hub/users/:id                             auth:admin
+GET     /api/hub/whatsapp/config                       auth:admin
+POST    /api/hub/whatsapp/connect                      auth:admin
+POST    /api/hub/whatsapp/disconnect/:phone_number_id  auth:admin
+GET     /api/hub/whatsapp/numbers                      auth:admin
 GET     /api/keys                                      auth:admin
 POST    /api/keys                                      auth:admin
 DELETE  /api/keys/:id                                  auth:admin
