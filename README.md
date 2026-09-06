@@ -408,6 +408,12 @@ costaron su test:
 - La última lectura real se **cachea**, y la cache pasa por el mismo parser que el cable: un número
   donde iba una versión (`{"outfitkit": 165}`) compararía como `[165]`, es decir más nuevo que todo
   lo publicado nunca, y un error ajeno se convertiría en un bloqueo nuestro.
+- Esa cache se usa **sin `ERPLORA_HUB_URL` y sin avisar** —es lo correcto: no haber configurado un
+  hub no es un fallo—, pero puede subir un aviso a **error** en `pack`. Por eso el mensaje dice de
+  dónde sale **cada número que cita**, fila a fila: *medido* en el hub que contestó, *recordado en
+  cache* (y puede haberse quedado atrás), o *deducido por la fecha del tag*. Firmar como medido un
+  número que no lo es —el techo derivado cuando el hub que contestó era uno **viejo**— deja al autor
+  discutiendo con una conjetura creyendo que discute con un hecho.
 
 Y el trinquete de #201 sigue en pie: con número real, `validate` sigue **avisando** y quien bloquea
 sigue siendo `pack`, porque el sello lo pone `../outfitkit` y no el autor.

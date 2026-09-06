@@ -238,11 +238,22 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false, source 
   const declared = manifest?.compatibility?.min_erplora_version;
   const needed = oldestHubShipping(stamp, table);
   const newestHub = newestKnownHub(table);
-  // De dónde sale el número con el que se compara. Un mensaje que no lo dice deja al autor sin
-  // saber si discute con un hecho o con una deducción — y son dos conversaciones distintas.
-  const provenance = measured
-    ? `medido en el hub ${source.hub}, que publica su propio sello (ERPlora/hub#1588)`
-    : 'deducido por la fecha del tag (`HUB_OUTFITKIT`), no medido';
+  // De dónde sale CADA número que se cita. Un mensaje que no lo dice deja al autor sin saber si
+  // discute con un hecho o con una deducción — y son dos conversaciones distintas.
+  //
+  // 🔴 Se pregunta por FILA, no por «hay lectura real en la tabla»: `ERPLORA_HUB_URL` puede apuntar
+  // a un cliente en un core viejo, y entonces el techo de la flota que enseñan estos mensajes sigue
+  // siendo el derivado por fecha. Firmarlo como medido en un hub que no lleva ese número convierte
+  // el sello de hub#1588 en una etiqueta decorativa. Y una lectura de CACHE se presenta como lo que
+  // es —un recuerdo—, porque sin `ERPLORA_HUB_URL` se usa sin avisar y puede subir a ERROR en
+  // `pack`: bloquear en silencio con un dato viejo es la otra mitad de ablandarse en silencio.
+  const provenanceOf = (row) =>
+    row?.measured
+      ? source.origin === 'cache'
+        ? `leído del hub ${source.hub} en una consulta ANTERIOR y recordado en cache, así que ` +
+          'puede haberse quedado atrás'
+        : `medido en el hub ${source.hub}, que publica su propio sello (ERPlora/hub#1588)`
+      : 'deducido por la fecha del tag (`HUB_OUTFITKIT`), no medido';
   // 🔴 Las dos salidas se dan CON SU PRECIO. Una salida cuyo coste se calla no es una elección, es
   // una trampa: declarar el tag siguiente deja el módulo sin instalarse en NINGÚN hub vivo hasta
   // que ese tag salga (hub#521 lo aplica), y reconstruir más abajo obliga a mover `../outfitkit`,
@@ -254,7 +265,7 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false, source 
       `COSTE: en los hubs anteriores a ${needed.hub} el módulo dejará de instalarse hasta que ` +
       'actualicen.'
     : `NINGÚN hub publicado lleva OutfitKit ${stamp} todavía (el más nuevo, ${newestHub.hub}, ` +
-      `lleva ${newestHub.outfitkit} — ${provenance}). Dos salidas, con su precio: (a) declarar ` +
+      `lleva ${newestHub.outfitkit} — ${provenanceOf(newestHub)}). Dos salidas, con su precio: (a) declarar ` +
       `\`"compatibility": { "min_erplora_version": "${nextHubAfter(newestHub.hub)}" }\`, que es la ` +
       'afirmación CIERTA («necesita un hub más nuevo que ninguno publicado») y hace que el hub ' +
       'rechace la instalación con un mensaje accionable (hub#521) en vez de pintar la pantalla mal ' +
@@ -290,7 +301,7 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false, source 
       errors.push(
         `el módulo se horneó contra OutfitKit ${stamp}, pero dice correr desde el core ` +
           `${declared}${older}: el hub ${floor.hub} lleva OutfitKit ${floor.outfitkit} ` +
-          `(${floor.measured ? provenance : 'deducido por la fecha del tag (`HUB_OUTFITKIT`)'}), y los ` +
+          `(${provenanceOf(floor)}), y los ` +
           '`ok-*` que pintan son los del SHELL, no los del bundle (ADR-0133). Ahí la pantalla sale ' +
           `distinta de como la probaste, sin que nada falle. ${howToDeclare}`,
       );
@@ -302,7 +313,8 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false, source 
     const said =
       `el módulo se horneó contra OutfitKit ${stamp} y no declara ` +
       '`compatibility.min_erplora_version`, o sea que dice correr en CUALQUIER hub — pero el más ' +
-      `nuevo que existe (${newestHub.hub}) lleva OutfitKit ${newestHub.outfitkit} (${provenance}), ` +
+      `nuevo que existe (${newestHub.hub}) lleva OutfitKit ${newestHub.outfitkit} ` +
+      `(${provenanceOf(newestHub)}), ` +
       'así que no hay ' +
       'uno solo que pueda pintarlo. Los `ok-*` que pintan son los del SHELL, no los del bundle ' +
       '(ADR-0133): la pantalla sale rota en casa del cliente y él no puede arreglarlo. ';

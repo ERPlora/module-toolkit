@@ -578,3 +578,28 @@ test('`erplora validate` against a hub OLDER than #1588 degrades out loud, and n
     await hub.close();
   }
 });
+
+test('la procedencia es la de la fila que se CITA, no la de que exista una lectura real', () => {
+  // 🔴 `ERPLORA_HUB_URL` puede apuntar perfectamente a un cliente en un core viejo — es el mismo
+  // caso que obligó a ordenar la tabla. Ahí la fila medida es 1.1.5, pero el número que el mensaje
+  // enseña es el del TECHO (1.1.13 → 0.1.58), que sigue siendo DEDUCIDO por fecha. Decir «medido en
+  // el hub 1.1.5» de un número que 1.1.5 no lleva convierte el sello del que va toda la issue en
+  // una etiqueta decorativa: el autor cree que discute con un hecho y discute con la conjetura.
+  const { dir, manifest } = moduleDir({ stamp: '0.1.70' });
+  const [warning] = checkOutfitkitFloor(dir, manifest, { source: realHub('1.1.5', '0.1.40') }).warnings;
+  assert.match(warning, /0\.1\.58/, 'el número citado es el del techo derivado');
+  assert.match(warning, /deducido por la fecha del tag/, 'y ese número NO se midió en ningún sitio');
+  assert.doesNotMatch(warning, /medido en el hub 1\.1\.5/);
+});
+
+test('una lectura CACHEADA se presenta como recordada, no como medida ahora', () => {
+  // Sin `ERPLORA_HUB_URL` pero con cache, `readHubOutfitkit` devuelve la última lectura real y NO
+  // avisa de nada — y esa fila puede subir un aviso a ERROR en `pack`. Un número que puede bloquear
+  // una publicación tiene que decir que es un recuerdo, y de cuándo: bloquear en silencio con un
+  // dato viejo es la otra mitad del mismo defecto que ablandarse en silencio.
+  const { dir, manifest } = moduleDir({ stamp: '0.1.70' });
+  const cached = { ...realHub('1.1.14', '0.1.65'), origin: 'cache' };
+  const [warning] = checkOutfitkitFloor(dir, manifest, { source: cached }).warnings;
+  assert.match(warning, /recordad[oa] en cache/, JSON.stringify(warning));
+  assert.match(warning, /1\.1\.14/);
+});
