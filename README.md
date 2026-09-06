@@ -446,7 +446,8 @@ hub#1588 está en `develop` del hub y aún no ha salido en un tag.
 
 ## Los espejos canónicos: contra QUÉ se comparan (module-toolkit#61 y #90)
 
-El toolkit copia a mano siete cosas cuya autoridad vive en `ERPlora/hub` (el esquema del manifest,
+El toolkit copia a mano ocho cosas cuya autoridad vive en `ERPlora/hub` (el esquema del manifest,
+el **esquema del documento de flujo** (`schemas/flow.schema.json`, module-toolkit#209),
 `BRIDGE_FUNCTIONS`, la política de claves desconocidas, `CORE_QUERIES`, las migraciones abueladas,
 el pin `mode: 'ios'` del shell y la **superficie congelada del kernel**).
 `test/canonical-mirrors.test.mjs` las compara byte a byte, y `test/hub-mirror.mjs` es la puerta que
@@ -501,12 +502,60 @@ pase inadvertida por no estar en la lista.
 **Refrescarlas es un solo comando**, nunca un `cp` a mano:
 
 ```sh
-npm run sync-mirrors     # las 6 copias, desde la MISMA fuente que usan los espejos
+npm run sync-mirrors     # las 7 copias, desde la MISMA fuente que usan los espejos
 npm run sync-schema      # alias histórico del anterior
 ```
 
 Sin hub que copiar —o con un hub que no trae un fichero— el script **falla nombrándolo**: copiar
 cero ficheros y salir en verde dejaría las copias tan viejas como estaban.
+
+## Las automatizaciones de fábrica del módulo (`flows/`) — module-toolkit#209
+
+Un módulo puede traer sus propias automatizaciones: el flujo ya montado que el dueño solo tiene que
+encender. Viven en `flows/`, **viajan en el ZIP** (`INCLUDE`) y `erplora validate` las juzga.
+
+**Por qué hizo falta.** Antes ni viajaban ni las miraba nadie: `pack` dejaba la carpeta fuera, así
+que la única puerta al hub era una **copia a mano** de la plantilla en la galería del módulo `flows`
+(`ui/lib/templates.ts`). Una copia de un documento que nada valida se queda atrás: el 06/09 se
+quedó atrás **tres veces en un solo día**, y una sola resincronización costó 23,2 M de tokens.
+
+**El contrato es una CONVENCIÓN DE CARPETA, no una clave del manifest** — igual que `locales/`. Es
+deliberado: la raíz del manifest es un contrato **CERRADO** (`additionalProperties: false`,
+ADR-0286), así que una clave `flows` nueva le pondría a cada módulo que la declarase un **suelo de
+versión de hub** y haría **avisar a toda la flota anterior**. Por carpeta, un módulo publica hoy sus
+plantillas —sin suelo y sin un solo aviso— y el día que aterrice [ERPlora/hub#1611] aparecen solas,
+sin republicar nada.
+
+```
+flows/
+  <family>.en.flow.json        documento del flujo, idioma FUENTE            OBLIGATORIO
+  <family>.es.flow.json        su traducción (ADR-0055/0199)                 OBLIGATORIO
+  <family>.<lang>.flow.json    más idiomas                                   opcional
+  <family>.grants.json         { "grants": [ { kind, value }, … ], "_…": }   OBLIGATORIO
+  <family>.requires.json       { "modules": { "<id>": "<SemVer>" }, "_…": }  opcional
+  *.md                         documentación de la carpeta                   opcional
+```
+
+- `<family>`: `^[a-z][a-z0-9-]*$`. `<lang>`: `^[a-z]{2}$`. La carpeta es **plana**: ni subcarpetas
+  ni ficheros sueltos — lo que nadie va a abrir no viaja.
+- El documento cumple `schemas/flow.schema.json` (raíz **cerrada**, `schema_version: 1`, `steps` no
+  vacío, cada paso con `id` único y un `kind` del vocabulario **congelado**). Nada de eso se teclea
+  en el validador: se **lee** del esquema vendorizado, que el espejo canónico ata al del hub.
+- **Todos los idiomas de una familia declaran los mismos pasos, en el mismo orden, y el MISMO
+  trigger entero** —hasta el `filter` y el `input`—: un trigger no lleva prosa, así que no hay nada
+  ahí que una traducción pueda cambiar legítimamente. Si el `filter` deriva, el hub en español
+  contesta a mensajes que el inglés ignora y **nada lo dice**.
+- El **suelo de versión** de `requires.json` es **por plantilla**, y a propósito NO es el
+  `depends_on` del módulo: `whatsapp_inbox` fija `appointments >= 1.1.69` para su plantilla y su
+  `depends_on` es solo `["customers"]` — la plantilla es opcional, el módulo funciona sin ella.
+
+**Lo que esta puerta NO juzga**: la semántica de la automatización (si los `grants` cubren lo que
+los pasos usan, si el prompt ordena una herramienta que el módulo tenga). Eso necesita los módulos
+vecinos y vive en la batería del propio módulo (`tests/flow_templates.test.py`).
+
+⚠️ **Y `flows/**` tiene que estar en las `paths:` del `release.yml` del repo del módulo** (el stub
+de abajo ya lo lleva). Sin ella, un merge que solo toca una plantilla no sube versión y la plantilla
+no llega a ningún hub — el mismo modo de fallo que ya documentan las líneas de `locales/**`.
 
 ## El gate de CI de los repos de módulo (ERPlora/pm#107)
 
@@ -773,7 +822,7 @@ name: Release
 on:
   push:
     branches: [main]
-    paths: [module.json, 'ui/**', 'queries/**', 'commands/**', 'migrations/**', 'handler/**', 'schemas/**', 'locales/**', 'dist/**']
+    paths: [module.json, 'ui/**', 'queries/**', 'commands/**', 'migrations/**', 'handler/**', 'schemas/**', 'locales/**', 'flows/**', 'dist/**']
   workflow_dispatch:
 
 permissions:

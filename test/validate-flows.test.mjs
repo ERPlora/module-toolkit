@@ -213,6 +213,36 @@ test('the languages of a family must be triggered by the same thing', () => {
   assertNames(check(files).errors, 'hub.whatsapp.other');
 });
 
+// A trigger carries NO prose: `kind`, `event`, `filter`, `input`, `cron`, `at` are all machinery
+// (`flow.schema.json` `$defs/trigger`). So there is nothing in it a translation may legitimately
+// change — and a `filter` that drifts is worse than a different event, because both halves still
+// LOOK like the same automation: the Spanish hub simply answers messages the English one ignores.
+test('the languages of a family must be filtered the same way', () => {
+  const files = wellFormed();
+  const triggers = [
+    { kind: 'event', event: 'hub.whatsapp.message_received', filter: { 'event.text': { neq: '' } } },
+  ];
+  files['appointment-from-whatsapp.en.flow.json'] = doc({ triggers });
+  files['appointment-from-whatsapp.es.flow.json'] = doc({
+    name: 'Cita desde WhatsApp',
+    triggers: [{ kind: 'event', event: 'hub.whatsapp.message_received' }],
+  });
+  assertNames(check(files).errors, 'filter');
+});
+
+test('the languages of a family must map the event into the run the same way', () => {
+  const files = wellFormed();
+  const triggers = (input) => [{ kind: 'event', event: 'hub.whatsapp.message_received', input }];
+  files['appointment-from-whatsapp.en.flow.json'] = doc({
+    triggers: triggers({ from: 'event.from', text: 'event.text' }),
+  });
+  files['appointment-from-whatsapp.es.flow.json'] = doc({
+    name: 'Cita desde WhatsApp',
+    triggers: triggers({ from: 'event.from' }),
+  });
+  assertNames(check(files).errors, 'input');
+});
+
 test('a version floor that is not a version is refused', () => {
   const files = wellFormed();
   files['appointment-from-whatsapp.requires.json'] = { modules: { appointments: 'latest' } };

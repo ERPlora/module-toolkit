@@ -21,9 +21,9 @@
 //     vocabulary. Nothing closed is typed here: it is all READ from the vendored schema
 //     (`src/flow-schema.mjs`), which `test/canonical-mirrors.test.mjs` pins to the hub's;
 //   · the TRANSLATION: the languages of one family must declare the SAME steps in the SAME order
-//     and be triggered by the same thing. A translation is prose — other words, same automation.
-//     When the halves drift, a Spanish hub runs something different from an English one and nothing
-//     says so.
+//     and carry the SAME triggers — whole, down to the `filter` and the `input`, because a trigger
+//     carries no prose. A translation is words, never automation. When the halves drift, a Spanish
+//     hub runs something different from an English one and nothing says so.
 //
 // WHAT IT DOES NOT. Whether the grants cover what the steps actually use, and whether the prompt
 // orders a tool the module really has, is the SEMANTICS of the automation: that lives in the
@@ -139,11 +139,45 @@ function stepIds(document) {
   );
 }
 
-/** What fires the flow, as comparable text: `kind` and, for an event, its name. */
-function triggerSignature(document) {
+/** What fires the flow, as readable text: `kind` and, for an event, its name. */
+function triggerSummary(document) {
   return (Array.isArray(document?.triggers) ? document.triggers : [])
     .map((trigger) => (trigger?.event ? `${trigger.kind}:${trigger.event}` : String(trigger?.kind)))
     .join(', ');
+}
+
+/** JSON with the keys of every object sorted, so two equal triggers compare equal as text. */
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  const keys = Object.keys(value).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonical(value[k])}`).join(',')}}`;
+}
+
+/**
+ * The keys where two trigger lists differ, named and sorted. A trigger carries
+ * NO prose — `kind`, `event`, `filter`, `input`, `cron`, `at` are all machinery (`$defs/trigger`) —
+ * so there is nothing in it a translation may legitimately change, and naming the key is what turns
+ * «they differ» into something the author can act on.
+ */
+function triggerDrift(here, there) {
+  const list = (document) => (Array.isArray(document?.triggers) ? document.triggers : []);
+  const mine = list(here);
+  const theirs = list(there);
+  if (mine.length !== theirs.length) return ['triggers'];
+  const drifted = new Set();
+  for (let i = 0; i < mine.length; i += 1) {
+    const a = mine[i] ?? {};
+    const b = theirs[i] ?? {};
+    if (a === null || typeof a !== 'object' || b === null || typeof b !== 'object') {
+      if (canonical(a) !== canonical(b)) drifted.add('triggers');
+      continue;
+    }
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      if (canonical(a[key]) !== canonical(b[key])) drifted.add(key);
+    }
+  }
+  return [...drifted].sort();
 }
 
 /** The document itself, against the FROZEN root and step vocabulary of `flow.schema.json`. */
@@ -336,11 +370,19 @@ export function checkFlows(dir, schema = loadFlowSchema()) {
               `\`${there.join(' → ')}\`. A translation changes the words, never the automation.`,
           );
         }
-        if (triggerSignature(document) !== triggerSignature(source)) {
+        const drift = triggerDrift(document, source);
+        if (drift.length) {
+          const summary =
+            triggerSummary(document) === triggerSummary(source)
+              ? `both are fired by \`${triggerSummary(source)}\`, but they differ in ` +
+                `\`${drift.join('`, `')}\``
+              : `fired by \`${triggerSummary(document)}\` while ` +
+                `\`${name}.${SOURCE_LANGUAGE}.flow.json\` is fired by ` +
+                `\`${triggerSummary(source)}\``;
           errors.push(
-            `flows/${family.documents.get(lang)}: fired by \`${triggerSignature(document)}\` while ` +
-              `\`${name}.${SOURCE_LANGUAGE}.flow.json\` is fired by ` +
-              `\`${triggerSignature(source)}\` — the same template cannot start on two things.`,
+            `flows/${family.documents.get(lang)}: ${summary} — a trigger carries no prose, so the ` +
+              `translation must be fired by exactly the same thing. Otherwise a Spanish hub answers ` +
+              `messages the English one ignores and nothing says so.`,
           );
         }
       }

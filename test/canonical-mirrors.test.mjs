@@ -17,7 +17,11 @@
 //      is deliberately left out (module-toolkit#121),
 //   6. the PREMISE of the `fill`/`mode="md"` guard — that the shell pins Ionic to `ios`
 //      (`apps/web/src/main.ts`, ADR-0143). This one is the opposite of the others: it does not
-//      guard a divergence, it guards the guard's own reason to exist.
+//      guard a divergence, it guards the guard's own reason to exist,
+//   7. the FLOW DOCUMENT schema (`schemas/flow.schema.json`, module-toolkit#209), also vendored
+//      byte for byte, so `erplora validate` can judge the automations a module ships in `flows/`
+//      on a runner with no hub — until then the only thing judging one was the module's own
+//      battery, which skips itself when there is no hub alongside, i.e. always in CI.
 //
 // None of them was out of sync the day this was written, and that is exactly when the alarm goes
 // on: whoever adds the twelfth bridge function in Rust has no way of learning there is a second
