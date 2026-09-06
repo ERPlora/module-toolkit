@@ -224,17 +224,18 @@ function emitName(entry) {
 }
 
 /**
- * Lo que un manifest OFRECE al resto del workspace. Es la proyección que va al universo, y la
- * misma que siembra `checkContracts` con el manifest propio: si las dos se calcularan por separado
- * podrían discrepar, y entonces validarse solo y validarse acompañado dirían cosas distintas.
+ * What a manifest OFFERS to the rest of the workspace. This is the projection that goes into the
+ * universe, and the same one `checkContracts` seeds with the module's own manifest: computed
+ * separately the two could drift, and then validating alone and validating with neighbours would
+ * say different things.
  */
 function ownSurface(m) {
-  // Un módulo declara lo que emite por DOS vías, y las dos cuentan (module-toolkit#35):
-  // `commands[].emit` es lo que emite el dispatcher declarativo, y `events.emits` es el
-  // catálogo COMPLETO — el que además incluye lo que devuelven los handlers WASM, que no sale
-  // de ningún command. Mirando solo la primera, el validador aplazaba como «nadie lo declara»
-  // los 32 eventos que tras hub#709 viven solo en la segunda (`sale.completed`, `order.fired`,
-  // los 9 de `kitchen`): justo los del centro del hub.
+  // A module declares what it emits through TWO channels, and both count (module-toolkit#35):
+  // `commands[].emit` is what the declarative dispatcher emits, and `events.emits` is the FULL
+  // catalogue — the one that also carries what WASM handlers return, which comes from no command.
+  // Looking only at the former, the validator deferred as «nobody declares it» the 32 events that
+  // after hub#709 live only in the latter (`sale.completed`, `order.fired`, the 9 of `kitchen`):
+  // precisely the ones at the centre of the hub.
   const emits = new Set(Array.isArray(m.events?.emits) ? m.events.emits : []);
   for (const cmd of Object.values(m.commands ?? {})) for (const e of cmd.emit ?? []) emits.add(emitName(e));
   return {
@@ -245,41 +246,42 @@ function ownSurface(m) {
 }
 
 /**
- * ¿Es `dir` un WORKTREE de git y no un checkout de verdad? Un worktree lleva `.git` como FICHERO
- * (un puntero `gitdir:`); un clon normal lo lleva como DIRECTORIO. Es el mismo discriminador con
- * el que el CLAUDE.md de la raíz cuenta los módulos de verdad dentro de `modules-workspace`.
+ * Is `dir` a git WORKTREE rather than a real checkout? A worktree carries `.git` as a FILE (a
+ * `gitdir:` pointer); a regular clone carries it as a DIRECTORY. It is the same discriminator the
+ * root CLAUDE.md uses to count the real modules inside `modules-workspace`.
  */
 function isGitWorktree(dir) {
   try {
     return statSync(join(dir, '.git')).isFile();
   } catch {
-    return false; // sin `.git` (una copia suelta, un `git archive`) no es un worktree
+    return false; // no `.git` at all (a loose copy, a `git archive`) is not a worktree
   }
 }
 
 /**
- * De todos los directorios que declaran el MISMO id, ¿cuál es el módulo de verdad? Menor gana:
- *   0. el directorio se llama como el id — el checkout canónico es siempre `modules/<id>/`;
- *   1. no es un worktree — un worktree es la rama en vuelo de UN worker, no la referencia;
- *   2. …y a igualdad, orden alfabético: cualquier criterio vale mientras sea DETERMINISTA.
- * Lo que había antes era «gana el último que devuelva `readdirSync`», que no es un criterio.
+ * Of all the directories declaring the SAME id, which one is the real module? Lowest wins:
+ *   0. the directory is named after the id — the canonical checkout is always `modules/<id>/`;
+ *   1. it is not a worktree — a worktree is ONE worker's in-flight branch, not the reference;
+ *   2. …and on a tie, alphabetical order: any criterion is fine as long as it is DETERMINISTIC.
+ * What we had before was «the last entry `readdirSync` returns wins», which is not a criterion.
  */
 function neighbourRank(dirName, dir, id) {
   return [dirName === id ? 0 : 1, isGitWorktree(dir) ? 1 : 0, dirName];
 }
 
 /**
- * El universo del workspace: qué ofrece cada módulo (leído de sus module.json vecinos).
- * En el marketplace/install-plan el MISMO validador recibe otro universo — cambia el conjunto,
- * no el motor.
+ * The workspace universe: what every module offers (read from the neighbouring module.json files).
+ * In the marketplace/install-plan the SAME validator receives another universe — the set changes,
+ * not the engine.
  *
- * Devuelve además `shadowed`: los directorios con un id DUPLICADO que se han descartado. La flota
- * crea worktrees dentro de `modules-workspace/modules/` (`appointments-wt-89`, `verifactu-wt-1559`),
- * así que dos carpetas con el mismo id es el estado NORMAL del árbol, no un caso raro — y hasta
- * module-toolkit#176/#199 la última que salía de `readdirSync` sustituía en silencio al módulo real,
- * en las dos direcciones: rojo falso (el vecino bueno «no tiene» la query) y verde falso (el
- * hermano declara el nombre que uno acaba de escribir mal). Elegir sin decirlo repetiría la mitad
- * cara del bug: quien mire el árbol tiene que poder ver contra qué se le validó.
+ * Also returns `shadowed`: the directories with a DUPLICATE id that were discarded. The fleet
+ * creates worktrees inside `modules-workspace/modules/` (`appointments-wt-89`, `verifactu-wt-1559`),
+ * so two directories with the same id is the tree's NORMAL state, not an edge case — and until
+ * module-toolkit#176/#199 the last one out of `readdirSync` silently replaced the real module, in
+ * both directions: a false red (the sound neighbour «lacks» the query) and a false green (the
+ * sibling declares the name you just misspelt). Choosing without saying so would repeat the
+ * expensive half of the bug: whoever looks at the tree must be able to see what they were
+ * validated against.
  */
 export function loadUniverseFull(modulesDir) {
   const universe = new Map();
@@ -313,7 +315,7 @@ export function loadUniverseFull(modulesDir) {
   return { universe, shadowed };
 }
 
-/** Versión simple: solo el universo (la mayoría de llamadores no necesita los id duplicados). */
+/** Simple form: just the universe (most callers do not need the duplicate ids). */
 export function loadUniverse(modulesDir) {
   return loadUniverseFull(modulesDir).universe;
 }
@@ -461,10 +463,10 @@ export function crossValidateFull(manifest, contracts, universe) {
           );
           continue;
         }
-        // El dueño no está en el universo. Decir «la query no existe» señala al módulo equivocado
-        // y se lee EXACTAMENTE igual que un typo, así que no distingue un módulo roto de un módulo
-        // que se valida solo (module-toolkit#199). El fallo real es que nadie declaró la
-        // dependencia — el mismo que `checkOperation` ya nombra bien para queries y commands.
+        // The owner is not in the universe. Saying «the query does not exist» points at the wrong
+        // module and reads EXACTLY like a typo, so it cannot tell a broken module from a module
+        // validated alone (module-toolkit#199). The real fault is that nobody declared the
+        // dependency — the same one `checkOperation` already names properly for queries and commands.
         if (owner !== me && !deps.has(owner)) {
           errors.push(`reads de \`${cmdName}\`: \`${name}\` llama a \`${owner}\`, que no está en depends_on de \`${me}\``);
           continue;
@@ -539,24 +541,24 @@ export function checkContracts(dir, manifest) {
 
   const { universe, shadowed } = loadUniverseFull(join(dir, '..'));
 
-  // El módulo que se está validando es el ÚNICO cuyo manifest se conoce con certeza — lo acabamos
-  // de leer de `dir`—, y era justo el que se ignoraba: `loadUniverse` lo redescubría por el árbol y
-  // cualquier carpeta hermana con el mismo `id` (un worktree de la flota) lo sustituía
-  // (module-toolkit#176). Sembrarlo aquí lo cierra sin depender de qué haya alrededor, y no tapa
-  // nada: la semilla es el manifest de verdad, así que un typo contra uno mismo sigue en rojo.
+  // The module under validation is the ONLY one whose manifest is known for certain — we just read
+  // it from `dir` — and it was precisely the one being ignored: `loadUniverse` rediscovered it from
+  // the tree, and any sibling directory with the same `id` (a fleet worktree) replaced it
+  // (module-toolkit#176). Seeding it here closes that regardless of what sits around, and hides
+  // nothing: the seed is the real manifest, so a typo against yourself stays red.
   universe.set(manifest.id, ownSurface(manifest));
 
   const contracts = buildContracts(dir, manifest);
   const { errors: crossErrors, deferred } = crossValidateFull(manifest, contracts, universe);
   errors.push(...crossErrors);
 
-  // Un id duplicado se resuelve arriba de forma determinista, pero callarlo deja al siguiente
-  // preguntándose contra qué se le validó — que es la mitad cara de module-toolkit#199.
+  // A duplicate id is resolved deterministically above, but keeping quiet about it leaves the next
+  // person wondering what they were validated against — the expensive half of module-toolkit#199.
   //
-  // Solo se avisa de los ids que ESTA validación ha usado: el propio y los que se consumen. Un
-  // workspace con 27 módulos y los worktrees de la flota tiene duplicados a puñados que no pintan
-  // nada aquí, y un aviso que lista cientos de carpetas ajenas no se lee — tapa justo el que sí
-  // importaba. Por lo mismo se listan tres carpetas y se cuenta el resto.
+  // Only the ids THIS validation used are reported: the module's own and the ones it consumes. A
+  // workspace with 27 modules plus the fleet's worktrees has duplicates by the handful that play no
+  // part here, and a notice listing hundreds of unrelated directories goes unread — it buries the
+  // one that mattered. For the same reason three directories are listed and the rest is counted.
   const relevant = new Set([manifest.id, ...dependencyIds(manifest.depends_on)]);
   for (const kind of ['queries', 'optional_queries', 'commands', 'optional_commands']) {
     for (const name of contracts.consumes[kind] ?? []) relevant.add(name.split('.')[0]);
@@ -565,9 +567,10 @@ export function checkContracts(dir, manifest) {
   for (const { id, chosen, ignored } of shadowed) {
     if (!relevant.has(id)) continue;
     const total = ignored.length + 1;
-    // Para el id PROPIO manda la semilla de arriba, no el ranking: el manifest que cuenta es el del
-    // directorio que se está validando. Decir aquí que se cruzó contra el canónico describiría lo
-    // contrario de lo que ha pasado, que es justo el diagnóstico falso que estas dos issues matan.
+    // For the module's OWN id the seed above rules, not the ranking: the manifest that counts is the
+    // one in the directory under validation. Saying here that it was cross-checked against the
+    // canonical checkout would describe the opposite of what happened — precisely the false
+    // diagnosis these two issues kill.
     const isOwn = id === manifest.id;
     const used = isOwn ? own : chosen;
     const dropped = isOwn ? [chosen, ...ignored].filter((n) => n !== own) : ignored;
