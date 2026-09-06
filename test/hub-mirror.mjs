@@ -125,17 +125,26 @@ export function hubTags(t, pattern, given = {}) {
     );
     return null;
   }
+  // 🔴 Un hub DECLARADO puede no ser un repositorio, y eso NO es el caso de #61. Medido en la CI de
+  // este repo: el paso de espejos declara `ERPLORA_HUB_DIR=…/_actions/ERPlora/hub/develop`, y GitHub
+  // resuelve una action DESCARGANDO un tarball — hay ficheros, no hay `.git`. Para `hubPath` esa
+  // copia es una fuente perfectamente válida; para los TAGS no puede serlo, porque los tags son refs
+  // y un tarball no tiene ninguna. «Un hub declarado que no se puede leer es un error» sigue en pie
+  // para los ficheros; aquí no es que el hub esté mal, es que a ESTA pregunta esa copia no contesta.
+  // Ponerlo en rojo enseñaría a la CI a ignorar el espejo, que es lo que #61 vino a arreglar.
   const listed = spawnSync(
     'git',
     ['-C', source.dir, 'for-each-ref', '--format=%(refname:short)\t%(creatordate:iso-strict)', `refs/tags/${pattern}`],
     { encoding: 'utf8' },
   );
   if (listed.status !== 0) {
-    throw new Error(
-      `\`${source.dir}\` was offered as ERPlora/hub and git cannot list its tags ` +
-        `(${(listed.stderr || '').trim() || 'no stderr'}). A declared hub that cannot be read is an ` +
-        'error, never a skip (module-toolkit#61)',
+    t.skip(
+      `\`${source.dir}\` no es un repositorio git (${(listed.stderr || '').trim() || 'sin stderr'}), ` +
+        'así que no puede decir qué tags tiene el hub — un tarball de action tiene los ficheros y ' +
+        'ninguna ref. Este espejo corre donde el hub es un clon de verdad, que es la máquina que lo ' +
+        'etiqueta y la que tiene que añadir la fila (module-toolkit#201)',
     );
+    return null;
   }
   const tags = new Map(
     listed.stdout
