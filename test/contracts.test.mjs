@@ -713,3 +713,273 @@ test('every core query on the list really passes the gate as a consumption (pm#2
     assert.deepEqual(deferred, [], `\`${query}\` must not be deferred: the core is always there`);
   }
 });
+
+// ═══ DUPLICATE module ids in one workspace (module-toolkit#176 + #199) ═══════════════════════
+//
+// The fleet creates worktrees INSIDE `modules-workspace/modules/` (`appointments-wt-89`,
+// `verifactu-wt-1559`…), so two directories declaring the same `id` is the tree's NORMAL state,
+// not an edge case. `loadUniverse` keyed by id and let the LAST `readdirSync` entry win, so a
+// module was silently replaced by someone else's in-flight branch — on both sides:
+//   · the module UNDER validation (#176) → its own commands became «typo against yourself»;
+//   · a NEIGHBOUR (#199) → a sound cross-module contract became «no existe en el manifest de X».
+//
+// #199 blamed the ABSENCE of neighbours (validating an isolated copy). That half does NOT
+// reproduce and is not what these tests fix: a module alone with its dependency declared defers
+// and stays green (verified on `verifactu@origin/main`, and asserted below so it stays that way).
+// What it actually saw is the neighbour shadowing above — the same root cause as #176.
+//
+// The two faces are asserted together on purpose: silencing the false red without keeping the
+// real one is how a validator turns decorative (`verify-your-check-detects-the-positive`).
+
+function moduleDir(ws, dirName, manifest, { worktree = false, code } = {}) {
+  const dir = join(ws, dirName);
+  mkdirSync(join(dir, 'ui', 'components'), { recursive: true });
+  writeFileSync(join(dir, 'module.json'), JSON.stringify(manifest));
+  // A git WORKTREE carries `.git` as a FILE (a `gitdir:` pointer); a real checkout as a directory.
+  if (worktree) writeFileSync(join(dir, '.git'), 'gitdir: /elsewhere/.git/worktrees/x\n');
+  if (code) writeFileSync(join(dir, 'ui', 'components', 'x.ts'), code);
+  return dir;
+}
+
+const alphaManifest = (queries = ['alpha.items.list']) => ({
+  id: 'alpha',
+  name: 'Alpha',
+  version: '1.0.0',
+  queries: Object.fromEntries(queries.map((q) => [q, { sql: 'q.sql' }])),
+  commands: {},
+});
+
+const betaManifest = (over = {}) => ({
+  id: 'beta',
+  name: 'Beta',
+  version: '1.0.0',
+  depends_on: ['alpha'],
+  queries: {},
+  commands: { 'beta.things.create': { sql: ['c.sql'] } },
+  ...over,
+});
+
+/** `checkContracts` on a module dir, with its contracts.json freshly written (staleness aside). */
+function checkedContracts(dir) {
+  const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
+  writeContractsFile(dir, manifest);
+  return checkContracts(dir, manifest);
+}
+
+const newWorkspace = () => mkdtempSync(join(tmpdir(), 'erplora-dup-ids-'));
+
+// ── The false reds that must go ──────────────────────────────────────────────────────────────
+
+test('a sibling worktree with the same id does not shadow the module OWN manifest (#176)', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(ws, 'beta', betaManifest(), {
+    code: `await erplora().command('beta.things.create', p);`,
+  });
+  // Same id, another branch, without the command — today it won `readdirSync` and erased the real one.
+  moduleDir(ws, 'beta-wt-1', betaManifest({ commands: {} }), { worktree: true });
+
+  assert.deepEqual(checkedContracts(beta).errors, []);
+});
+
+test('a sibling worktree of a NEIGHBOUR does not shadow it: the sound contract stays green (#199)', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(ws, 'beta', betaManifest(), {
+    code: `await erplora().query('alpha.items.list');`,
+  });
+  moduleDir(ws, 'alpha', alphaManifest());
+  moduleDir(ws, 'alpha-wt-9', alphaManifest([]), { worktree: true }); // stale branch, no queries
+
+  assert.deepEqual(checkedContracts(beta).errors, []);
+});
+
+test('with no directory named after the id, the real checkout beats the worktree (`.git` is a FILE)', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(ws, 'beta', betaManifest(), {
+    code: `await erplora().query('alpha.items.list');`,
+  });
+  // Neither is named `alpha` — the shape of the #176 report (`appointments-rv-114` + `-wt-110`).
+  // The real one is deliberately named so it sorts AFTER the worktree: if the tie-break were the
+  // only thing standing, this test would pass without the `.git` discriminator ever running.
+  moduleDir(ws, 'alpha-zz-review', alphaManifest());
+  moduleDir(ws, 'alpha-wt-110', alphaManifest([]), { worktree: true });
+
+  assert.deepEqual(checkedContracts(beta).errors, []);
+});
+
+test('the directory named after the id wins over a plain copy that sorts earlier', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(ws, 'beta', betaManifest(), {
+    code: `await erplora().query('alpha.items.list');`,
+  });
+  moduleDir(ws, 'alpha', alphaManifest());
+  // A `cp -R`/`git archive` copy carries no `.git` at all, so it is not a worktree either: only
+  // the canonical name tells them apart, and it sorts first without it.
+  moduleDir(ws, 'aaa-alpha-copy', alphaManifest([]));
+
+  assert.deepEqual(checkedContracts(beta).errors, []);
+});
+
+test('a shadowed duplicate id is REPORTED, never silently dropped (#199: «lo que no vale es callarse»)', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(ws, 'beta', betaManifest(), {
+    code: `await erplora().query('alpha.items.list');`,
+  });
+  moduleDir(ws, 'alpha', alphaManifest());
+  moduleDir(ws, 'alpha-wt-9', alphaManifest([]), { worktree: true });
+
+  const notice = checkedContracts(beta).deferred.find((d) => d.includes('alpha-wt-9'));
+  assert.ok(notice, `the ignored duplicate must be named in deferred: ${JSON.stringify(checkedContracts(beta).deferred)}`);
+  assert.match(notice, /alpha/);
+});
+
+// ── The reds that MUST survive (the check still catches the positive) ────────────────────────
+
+test('POSITIVE: with the real neighbour present, an invented name of its stays RED', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(ws, 'beta', betaManifest(), {
+    code: `await erplora().query('alpha.items.inventada');`,
+  });
+  moduleDir(ws, 'alpha', alphaManifest());
+  moduleDir(ws, 'alpha-wt-9', alphaManifest([]), { worktree: true });
+
+  const { errors } = checkedContracts(beta);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /alpha\.items\.inventada.*alpha/);
+});
+
+test('POSITIVE: seeding the OWN manifest does not hide a typo against yourself', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(ws, 'beta', betaManifest(), {
+    code: `await erplora().command('beta.things.inventada', p);`,
+  });
+  moduleDir(ws, 'beta-wt-1', betaManifest({ commands: { 'beta.things.inventada': { sql: ['c.sql'] } } }), {
+    worktree: true, // the sibling DOES declare it — the own manifest must still win, and stay red
+  });
+
+  const { errors } = checkedContracts(beta);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /beta\.things\.inventada.*propio manifest/);
+});
+
+test('POSITIVE: a real neighbour that simply lacks the query (no worktree at all) stays RED', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(ws, 'beta', betaManifest(), {
+    code: `await erplora().query('alpha.items.list');`,
+  });
+  moduleDir(ws, 'alpha', alphaManifest([])); // the real one, renamed the query away
+
+  const { errors } = checkedContracts(beta);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /alpha\.items\.list.*manifest de `alpha`/);
+});
+
+// ── A module ALONE: the half of #199 that already worked, pinned so it keeps working ─────────
+
+test('a module alone with its dependency DECLARED defers, it does not error (#199 as reported)', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(ws, 'beta', betaManifest(), {
+    code: `await erplora().query('alpha.items.list');`,
+  });
+
+  const { errors, deferred } = checkedContracts(beta);
+  assert.deepEqual(errors, []);
+  assert.ok(deferred.some((d) => d.includes('alpha')), JSON.stringify(deferred));
+});
+
+test('a `reads` whose owner is absent AND undeclared names the missing depends_on, not a phantom typo', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(
+    ws,
+    'beta',
+    betaManifest({ depends_on: [], commands: { 'beta.things.create': { sql: ['c.sql'], reads: ['alpha.items.list'] } } }),
+  );
+
+  const { errors } = checkedContracts(beta);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  // The fault is the undeclared dependency; claiming the query does not exist points at the
+  // wrong module and reads identically to a typo — the confusion #199 is about.
+  assert.match(errors[0], /depends_on/);
+});
+
+test('POSITIVE: a `reads` typo with the owner PRESENT still says the query does not exist', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(
+    ws,
+    'beta',
+    betaManifest({ commands: { 'beta.things.create': { sql: ['c.sql'], reads: ['alpha.items.inventada'] } } }),
+  );
+  moduleDir(ws, 'alpha', alphaManifest());
+
+  const { errors } = checkedContracts(beta);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /alpha\.items\.inventada.*no existe/);
+});
+
+test('the duplicate-id notice only names ids THIS validation used, and caps the list', () => {
+  const ws = newWorkspace();
+  const beta = moduleDir(ws, 'beta', betaManifest(), {
+    code: `await erplora().query('alpha.items.list');`,
+  });
+  moduleDir(ws, 'alpha', alphaManifest());
+  for (const n of [1, 2, 3, 4, 5]) moduleDir(ws, `alpha-wt-${n}`, alphaManifest([]), { worktree: true });
+  // A module nobody here consumes: a real workspace has these by the handful (the fleet's
+  // worktrees), and listing them buries the one that mattered — the bug `npm test` caught.
+  moduleDir(ws, 'gamma', { id: 'gamma', name: 'G', version: '1.0.0', queries: {}, commands: {} });
+  moduleDir(ws, 'gamma-wt-1', { id: 'gamma', name: 'G', version: '1.0.0', queries: {}, commands: {} }, { worktree: true });
+
+  const { errors, deferred } = checkedContracts(beta);
+  assert.deepEqual(errors, []);
+  assert.equal(deferred.filter((d) => d.includes('gamma')).length, 0, 'an unused id is not reported');
+
+  const notice = deferred.find((d) => d.includes('`alpha`'));
+  assert.ok(notice, JSON.stringify(deferred));
+  assert.match(notice, /6 directorios/);
+  assert.match(notice, /y 2 más/, 'the list is capped at three names plus the count');
+});
+
+// The case the fleet actually hits, and the one the ranking alone gets WRONG: the module under
+// validation is NOT the canonical directory. A worker runs `erplora validate .` from their own
+// worktree while `modules/<id>/` sits right next to it. Picking the canonical checkout is the
+// right call for a NEIGHBOUR and the wrong one for YOURSELF — the manifest that counts is the one
+// in the directory being validated. Hence the seeding, which no ordering rule can replace.
+test('validating FROM a worktree: the own manifest wins over the canonical checkout next door', () => {
+  const ws = newWorkspace();
+  const canonical = betaManifest({ commands: {} }); // trunk: the command does not exist yet
+  moduleDir(ws, 'beta', canonical);
+  const wt = moduleDir(ws, 'beta-wt-1', betaManifest(), {
+    worktree: true,
+    code: `await erplora().command('beta.things.create', p);`, // the branch's new command
+  });
+
+  assert.deepEqual(checkedContracts(wt).errors, []);
+});
+
+test('POSITIVE: validating FROM a worktree, a typo against yourself is still RED', () => {
+  const ws = newWorkspace();
+  moduleDir(ws, 'beta', betaManifest({ commands: { 'beta.things.inventada': { sql: ['c.sql'] } } }));
+  const wt = moduleDir(ws, 'beta-wt-1', betaManifest(), {
+    worktree: true,
+    code: `await erplora().command('beta.things.inventada', p);`, // only the NEIGHBOUR declares it
+  });
+
+  const { errors } = checkedContracts(wt);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /beta\.things\.inventada.*propio manifest/);
+});
+
+test('the notice about your OWN id says the validated directory is the one used, not a sibling', () => {
+  const ws = newWorkspace();
+  moduleDir(ws, 'beta', betaManifest({ commands: {} }));
+  const wt = moduleDir(ws, 'beta-wt-1', betaManifest(), {
+    worktree: true,
+    code: `await erplora().command('beta.things.create', p);`,
+  });
+
+  const notice = checkedContracts(wt).deferred.find((d) => d.includes('`beta`'));
+  assert.ok(notice, JSON.stringify(checkedContracts(wt).deferred));
+  // Saying it cross-checked against `beta` would be a lie: the own manifest is seeded from the
+  // directory under validation, which is the whole point of the #176 fix. A notice that describes
+  // the opposite of what happened is worse than no notice.
+  assert.match(notice, /beta-wt-1/);
+  assert.doesNotMatch(notice, /se cruzan contra `beta`/);
+});
