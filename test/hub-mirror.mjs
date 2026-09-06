@@ -103,6 +103,68 @@ export function hubPath(t, ...segments) {
 }
 
 /**
+ * The hub's tags matching `pattern`, as `Map<tag, creation date ISO>`, or `null` after skipping.
+ *
+ * Tags are REFS, so unlike `hubPath` there is no working tree to be fooled by and no ref to export:
+ * whichever branch the neighbouring checkout happens to sit on cannot change the answer.
+ *
+ * ⚠️ A checkout with no tags is an honest SKIP, not a failure, and the reason matters:
+ * `actions/checkout` does not fetch tags by default, so the hub's own CI can hand over a real
+ * checkout that legitimately has none. Failing there would teach everyone to ignore this mirror.
+ * What is NOT tolerated is the same thing `hubPath` refuses — a DECLARED hub that is not a
+ * repository at all.
+ *
+ * @param {{skip: (reason: string) => void}} t the test context
+ */
+export function hubTags(t, pattern, given = {}) {
+  const source = asSource(given);
+  if (source.kind === 'absent') {
+    t.skip(
+      `ERPlora/hub is not in this checkout (looked in \`${source.dir}\`) — this mirror is gated ` +
+        'from the hub side instead; clone the hub alongside, or set ERPLORA_HUB_DIR, to run it here',
+    );
+    return null;
+  }
+  // 🔴 Un hub DECLARADO puede no ser un repositorio, y eso NO es el caso de #61. Medido en la CI de
+  // este repo: el paso de espejos declara `ERPLORA_HUB_DIR=…/_actions/ERPlora/hub/develop`, y GitHub
+  // resuelve una action DESCARGANDO un tarball — hay ficheros, no hay `.git`. Para `hubPath` esa
+  // copia es una fuente perfectamente válida; para los TAGS no puede serlo, porque los tags son refs
+  // y un tarball no tiene ninguna. «Un hub declarado que no se puede leer es un error» sigue en pie
+  // para los ficheros; aquí no es que el hub esté mal, es que a ESTA pregunta esa copia no contesta.
+  // Ponerlo en rojo enseñaría a la CI a ignorar el espejo, que es lo que #61 vino a arreglar.
+  const listed = spawnSync(
+    'git',
+    ['-C', source.dir, 'for-each-ref', '--format=%(refname:short)\t%(creatordate:iso-strict)', `refs/tags/${pattern}`],
+    { encoding: 'utf8' },
+  );
+  if (listed.status !== 0) {
+    t.skip(
+      `\`${source.dir}\` no es un repositorio git (${(listed.stderr || '').trim() || 'sin stderr'}), ` +
+        'así que no puede decir qué tags tiene el hub — un tarball de action tiene los ficheros y ' +
+        'ninguna ref. Este espejo corre donde el hub es un clon de verdad, que es la máquina que lo ' +
+        'etiqueta y la que tiene que añadir la fila (module-toolkit#201)',
+    );
+    return null;
+  }
+  const tags = new Map(
+    listed.stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.split('\t'))
+      .filter(([, date]) => date),
+  );
+  if (!tags.size) {
+    t.skip(
+      `\`${source.dir}\` carries no \`${pattern}\` tag. \`actions/checkout\` does not fetch tags ` +
+        'by default, so this is a checkout with nothing to compare against, not a divergence — ' +
+        'fetch the tags (`git fetch --tags`) to run it',
+    );
+    return null;
+  }
+  return tags;
+}
+
+/**
  * The source a caller passed explicitly. `{ hubDir, declared }` is the older spelling and still
  * means "this directory, read from disk".
  */

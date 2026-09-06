@@ -23,11 +23,11 @@
 // instead — see `.github/actions/check-canonical-mirrors`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { hubPath, hubDir, hubSource } from './hub-mirror.mjs';
+import { hubTags, hubPath, hubDir, hubSource } from './hub-mirror.mjs';
 
 /** A stand-in for node's `t`, recording whether `skip` was called and with what reason. */
 function fakeT() {
@@ -190,4 +190,54 @@ test('CI hands the mirrors the hub the module-sdk action already left on disk (#
     'ci.yml no longer declares ERPLORA_HUB_DIR: the six canonical mirrors go back to skipping in ' +
       "this repository's own CI, and `skipped 7` reads exactly like a pass (#90)",
   );
+});
+
+// ── `hubTags`: qué puede y qué no puede responder cada fuente (module-toolkit#201) ─────────────
+
+test('a DECLARED hub that is not a git repository is a SKIP, not an error (#201)', () => {
+  // 🔴 Medido en la CI de este repo, no imaginado: el paso de espejos declara
+  // `ERPLORA_HUB_DIR=…/_actions/ERPlora/hub/develop`, y GitHub resuelve una action DESCARGANDO un
+  // tarball — hay ficheros, no hay `.git`. Para `hubPath` eso es una fuente perfectamente válida;
+  // para los TAGS no puede serlo, porque los tags son refs y un tarball no tiene ninguna.
+  //
+  // La regla «un hub declarado que no se puede leer es un error» sigue en pie para los FICHEROS.
+  // Aquí no aplica: no es que el hub esté mal, es que a esta pregunta esa copia no puede contestar.
+  // Ponerlo en rojo enseñaría a la CI a ignorar el espejo, que es justo lo que #61 vino a arreglar.
+  const t = fakeT();
+  const notARepo = mkdtempSync(join(tmpdir(), 'hub-tarball-'));
+  assert.equal(hubTags(t, 'v1.1.*', { kind: 'declared', dir: notARepo }), null);
+  assert.equal(t.calls.length, 1, 'it skips');
+  assert.match(t.calls[0], /no es un repositorio git|not a git repository/i);
+});
+
+test('a git checkout with no tags fetched is a SKIP that says so (#201)', () => {
+  // `actions/checkout` no baja los tags por defecto, así que un clon real y legítimo puede no
+  // tener ninguno. Es una fuente sin nada que comparar, no una divergencia.
+  const t = fakeT();
+  const empty = mkdtempSync(join(tmpdir(), 'hub-notags-'));
+  spawnSync('git', ['-C', empty, 'init', '--quiet']);
+  assert.equal(hubTags(t, 'v1.1.*', { kind: 'declared', dir: empty }), null);
+  assert.equal(t.calls.length, 1, 'it skips');
+  assert.match(t.calls[0], /tag/);
+});
+
+test('no hub at all is an honest skip for tags too (#201)', () => {
+  const t = fakeT();
+  assert.equal(hubTags(t, 'v1.1.*', { kind: 'absent', dir: '/nowhere' }), null);
+  assert.equal(t.calls.length, 1);
+});
+
+test('a real checkout WITH tags answers, and never skips (#201)', () => {
+  const t = fakeT();
+  const repo = mkdtempSync(join(tmpdir(), 'hub-tags-'));
+  for (const args of [
+    ['init', '--quiet'],
+    ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-qm', 'x'],
+    ['tag', 'v1.1.99'],
+    ['tag', 'v9.9.9'],
+  ]) spawnSync('git', ['-C', repo, ...args]);
+  const tags = hubTags(t, 'v1.1.*', { kind: 'declared', dir: repo });
+  assert.deepEqual(t.calls, [], 'a readable checkout is never a skip');
+  assert.deepEqual([...tags.keys()], ['v1.1.99'], 'the pattern has to filter');
+  assert.match(tags.get('v1.1.99'), /^\d{4}-\d{2}-\d{2}T/);
 });

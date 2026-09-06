@@ -1,0 +1,152 @@
+// `erplora pack` has to judge the artifact it SHIPS, not the one it is about to overwrite —
+// module-toolkit#201 (N-0 of the review of #202).
+//
+// The hole this closes, reproduced on the real `customers` module before it was fixed:
+//
+//     STAMP BEFORE                          {"outfitkit": "0.1.52"}
+//     node bin/erplora.mjs pack …/customers  PACK EXIT=0   (not one word about the floor)
+//     STAMP AFTER                           {"outfitkit": "0.1.59"}
+//     unzip -p …/customers-v*.zip dist/outfitkit.json  ->  {"outfitkit": "0.1.59"}
+//
+// `pack` validated first and built second, and `build` rewrites `dist/outfitkit.json`
+// (`src/build.mjs:102`). So the publishing door inspected a stamp it then replaced, and the zip
+// left carrying a version no hub can paint — the exact defect this whole PR is about. It hit 25 of
+// the 27 modules: every one whose committed stamp was older than the local `../outfitkit`.
+//
+// 🔴 AND WHY A GREP WAS NOT ENOUGH. The first guard for this seam asserted that `pack.mjs` calls
+// `validate` with `publishing: true`. It passed all along — the flag WAS passed. What was wrong was
+// WHEN, and no assertion about the text of a file can see that. This one drives the CLI and opens
+// the zip.
+//
+// Lives in its own suite because it packs, and packing needs esbuild + lit: declared dependencies
+// of this repository, but not installable on the runner of the module repos' gate. It is named in
+// `CANNOT_RUN_IN_CI` (test/ci-runs-every-suite.test.mjs) for that reason, out loud, and
+// `test/validate-outfitkit-floor.test.mjs` carries the cheap order tripwire that DOES run in CI.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync, execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { newestKnownHub } from '../src/validate-outfitkit-floor.mjs';
+import { stampOutfitkit } from '../src/outfitkit-stamp.mjs';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const CLI = join(ROOT, 'bin', 'erplora.mjs');
+
+/** What `build` will stamp on this machine — the shared `../outfitkit`, whatever it is today. */
+function localOutfitkit() {
+  const probe = mkdtempSync(join(tmpdir(), 'ok-probe-'));
+  mkdirSync(join(probe, 'dist'));
+  return stampOutfitkit(probe);
+}
+
+/**
+ * A module `pack` accepts: a real Lit component, its manifest, and a STALE stamp — the shape of the
+ * 25 modules the hole applied to.
+ */
+function packableModule({ staleStamp, compatibility }) {
+  const id = 'packfloor_fixture';
+  const dir = join(mkdtempSync(join(tmpdir(), 'erplora-packfloor-')), id);
+  mkdirSync(join(dir, 'ui', 'components', 'erp-packfloor'), { recursive: true });
+  mkdirSync(join(dir, 'dist'), { recursive: true });
+  mkdirSync(join(dir, 'locales'), { recursive: true });
+  const manifest = {
+    id,
+    name: 'Pack floor fixture',
+    version: '1.0.0',
+    navigation: [{ path: '/', component: 'erp-packfloor', label: 'packfloor.title' }],
+  };
+  if (compatibility) manifest.compatibility = compatibility;
+  writeFileSync(join(dir, 'module.json'), JSON.stringify(manifest, null, 2));
+  for (const lang of ['en', 'es']) {
+    writeFileSync(join(dir, 'locales', `${lang}.json`), JSON.stringify({ packfloor: { title: 'Pack floor' } }));
+  }
+  writeFileSync(
+    join(dir, 'ui', 'components', 'erp-packfloor', 'erp-packfloor.ts'),
+    "import { LitElement, html } from 'lit';\n" +
+      'export class ErpPackfloor extends LitElement {\n' +
+      '  render() {\n' +
+      '    return html`<div>packfloor</div>`;\n' +
+      '  }\n' +
+      '}\n' +
+      "customElements.define('erp-packfloor', ErpPackfloor);\n",
+  );
+  writeFileSync(join(dir, 'dist', 'outfitkit.json'), JSON.stringify({ outfitkit: staleStamp }));
+  execFileSync(process.execPath, [CLI, 'contracts', dir], { stdio: 'ignore' });
+  return { dir, id, manifest };
+}
+
+function erplora(command, dir) {
+  const res = spawnSync(process.execPath, [CLI, command, dir], { encoding: 'utf8' });
+  return { ...res, out: `${res.stdout}\n${res.stderr}` };
+}
+
+// A stamp older than the fleet: `validate` on it says nothing at all. It is only after `build`
+// re-stamps with the shared checkout that there is anything to catch — which is the whole point.
+const STALE = '0.1.36';
+
+test('pack JUDGES the stamp it ships, not the stale one it is about to overwrite (#201 N-0)', (t) => {
+  const local = localOutfitkit();
+  if (!local) return t.skip('no @erplora/outfitkit resolvable: nothing would be stamped');
+  const ahead = compareAhead(local, newestKnownHub().outfitkit);
+  if (!ahead) {
+    return t.skip(
+      `the local ../outfitkit (${local}) is not ahead of the newest hub ` +
+        `(${newestKnownHub().outfitkit}), so packing cannot produce the situation under test — ` +
+        'this suite proves nothing today, and says so instead of passing',
+    );
+  }
+  const { dir, id } = packableModule({ staleStamp: STALE });
+  const res = erplora('pack', dir);
+
+  assert.equal(res.status, 1, `pack shipped a module no hub can paint:\n${res.out}`);
+  assert.match(res.out, /module-toolkit#201/, `it must say WHY:\n${res.out}`);
+  assert.match(res.out, new RegExp(local.replace(/\./g, '\\.')), 'it must name the stamp it SHIPS');
+  // And the zip must not exist: a blocked publication does not leave an artifact behind.
+  assert.equal(
+    existsSync(join(dir, 'build', `${id}-v1.0.0.zip`)),
+    false,
+    'pack failed and still left a zip: that zip is exactly what would reach a client',
+  );
+});
+
+test('the same module, declaring the floor its bake needs, packs fine (#201 N-0)', (t) => {
+  const local = localOutfitkit();
+  if (!local) return t.skip('no @erplora/outfitkit resolvable');
+  if (!compareAhead(local, newestKnownHub().outfitkit)) return t.skip('local outfitkit not ahead of the fleet');
+  // The way out has to work, or the gate above is just a wall. `9.9.9` is a floor newer than the
+  // table knows: the honest declaration for «this needs a hub that has not shipped yet».
+  const { dir, id } = packableModule({ staleStamp: STALE, compatibility: { min_erplora_version: '9.9.9' } });
+  const res = erplora('pack', dir);
+  assert.equal(res.status, 0, `declaring the floor has to let the module through:\n${res.out}`);
+  const zip = join(dir, 'build', `${id}-v1.0.0.zip`);
+  assert.ok(existsSync(zip), 'a green pack has to produce the zip');
+  // And what travels is the FRESH stamp — the one that was judged.
+  const shipped = JSON.parse(execFileSync('unzip', ['-p', zip, 'dist/outfitkit.json'], { encoding: 'utf8' }));
+  assert.equal(shipped.outfitkit, local, 'the zip must carry the stamp the gate looked at');
+});
+
+/** `a` strictly newer than `b`, by number. Local to this suite: it only orders two known versions. */
+function compareAhead(a, b) {
+  const n = (v) => v.split('.').map(Number);
+  const [pa, pb] = [n(a), n(b)];
+  for (let i = 0; i < 3; i += 1) {
+    if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) > (pb[i] ?? 0);
+  }
+  return false;
+}
+
+test('building first does NOT cost the good error message on a broken manifest (#201 N-0)', () => {
+  // The price of the new order, and it is paid rather than dropped. With `validate` first, a bad
+  // manifest failed with «id inválido»; with `build` first it failed with «no encuentro entry de
+  // WC», which is true and useless. So a failed build asks the validator why before giving up.
+  const dir = join(mkdtempSync(join(tmpdir(), 'erplora-packbroken-')), 'BadId');
+  mkdirSync(join(dir, 'dist'), { recursive: true });
+  writeFileSync(join(dir, 'module.json'), JSON.stringify({ id: 'Bad-Id', name: 'x', version: 'nope' }));
+  const res = erplora('pack', dir);
+  assert.equal(res.status, 1);
+  assert.match(res.out, /id inválido/, `the manifest error is the one that helps:\n${res.out}`);
+  assert.match(res.out, /version SemVer inválida/, res.out);
+});

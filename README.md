@@ -316,6 +316,79 @@ shell, y además corre este escáner sobre las vistas `.vue` del hub —limpias 
 que las dos puertas no digan cosas distintas del mismo marcado. Un chequeo que sobrevive a su causa
 es peor que no tenerlo: enseña que el gate pide cosas que dan igual.
 
+## El suelo de core que el módulo pide (module-toolkit#201)
+
+Los `ok-*` con los que se pinta un módulo son **los del shell**, no los que lleva su bundle: el shell
+los define al arrancar y el `define()` horneado pierde en silencio (ADR-0133 §verificación 2). Y la
+imagen del hub instala `@erplora/outfitkit@latest` en cada build (`hub/docker/Dockerfile`, con
+cachebust), así que el checkout del autor va casi siempre **por delante** de la flota. Publicar
+entonces es publicar una pantalla que ningún hub sabe pintar — pasó dos veces en cuatro días
+(hub#1547 y sales#259) y en las dos lo descubrió el cliente, días después.
+
+La mitad que **decide** ya existía: `compatibility.min_erplora_version` en el manifest, que el hub
+**aplica** al instalar desde hub#521 (por debajo de ese core rechaza la instalación con un mensaje
+accionable en vez de instalar algo a medias). Faltaba la que la **reclama**, y es
+`src/validate-outfitkit-floor.mjs`.
+
+**Trinquete, no big bang** — y el reparto es lo que lo hace desplegable. Hay dos casos y no pesan lo
+mismo:
+
+1. El manifest **declara** un suelo y el sello es más nuevo que el OutfitKit que ese suelo lleva. Es
+   una afirmación del autor demostrablemente falsa → **error siempre**.
+2. El manifest **no declara nada** —que significa «cualquier hub»— y el sello es más nuevo que el
+   OutfitKit del hub más nuevo que existe → **aviso en `validate`, error en `erplora pack`**.
+
+Por qué el (2) no puede ser rojo en `validate`, **medido**: el sello no lo elige el autor.
+`stampOutfitkit()` lo resuelve desde `node_modules/@erplora/outfitkit`, que aquí es
+`file:../outfitkit` —el checkout de desarrollo compartido, hoy 0.1.59 con npm en 0.1.65, o sea por
+delante de la flota (0.1.58) *por la propia premisa*— y `validate` obliga a reconstruir en cuanto se
+toca `ui/**` (`checkBundleArtifact`). Sumado: **27 de 27** módulos se pondrían rojos en su siguiente
+PR de UI, por la cadencia de release del hub y no por nada que hicieran sus autores. Un gate que para
+a todo el mundo se apaga, no se obedece — es el MISMO reparto que hace `bundle-freshness.mjs` al lado
+(con sello → error; sin sello → aviso).
+
+Donde sí bloquea es en `erplora pack`, la puerta del marketplace: construye y prueba contra lo que
+quieras, pero no **publicas** una pantalla que ningún hub sabe pintar. Es el modelo de cualquier
+tienda de aplicaciones.
+
+🔴 **Y `pack` construye ANTES de validar, no al revés.** No es un detalle de estilo: `build`
+reescribe `dist/` —el bundle y `dist/outfitkit.json`—, así que validar primero es juzgar un
+artefacto que la propia orden está a punto de sustituir. Con el orden viejo, `customers` (sello
+commiteado 0.1.52) salía con `EXIT=0`, sin un aviso, y el zip viajaba con 0.1.59: le pasaba a **25
+de los 27** módulos. Y no era solo el sello — `validate` comprueba también que el bundle sea
+CSP-safe, y comprobaba el viejo mientras empaquetaba el nuevo. La regla, en una frase: **se valida
+lo que se publica, no lo que había en el árbol.** El precio del orden nuevo se paga en `pack.mjs`:
+si `build` se cae, se le pregunta al validador por qué, para que un manifest roto siga fallando con
+«id inválido» y no con «no encuentro entry de WC».
+
+Y siempre hay salida de una línea, **con su precio dicho**: declarar `min_erplora_version` con el hub
+que sí lo lleva —o, si no lo lleva ninguno, con el **siguiente** tag—, sabiendo que hub#521 hará que
+el módulo deje de instalarse en los hubs por debajo hasta que actualicen; o reconstruir más abajo,
+sabiendo que eso obliga a mover `../outfitkit`, que es compartido. El día que exista la fuente real
+(hub#1588), el (2) puede volver a ser rojo sin castigar a nadie.
+
+### La tabla `HUB_OUTFITKIT`, y por qué es un apaño honesto
+
+`HUB_OUTFITKIT` (en ese mismo fichero) dice qué OutfitKit lleva cada tag del hub. **Hoy no existe en
+ningún otro sitio**: como el Dockerfile pide `@latest` con cachebust, la versión de una imagen solo se
+deduce de **cuándo** se construyó. Cada fila es «el último `@erplora/outfitkit` publicado en npm antes
+de crearse el tag»; `built_at` es la fecha de creación del tag en `ERPlora/hub`.
+
+- **Se comprueba contra un positivo conocido:** la fila de `1.1.13` → `0.1.58` es la que sales#265
+  midió a mano por otro camino, y `test/validate-outfitkit-floor.test.mjs` la clava para que deje de
+  cuadrar en voz alta el día que la derivación se tuerza.
+- **Es el séptimo espejo del hub, con su alarma.** `canonical-mirrors.test.mjs` lee los TAGS del hub
+  vecino (refs, nunca el working tree) y exige tres cosas: que cada fila nombre un tag que existe de
+  verdad con su fecha de creación; que la **columna de OutfitKit** vuelva a salir de su propia regla
+  de derivación, re-consultada contra npm (skip honesto sin red) — sin eso, falsear una fila
+  intermedia pasaba en verde, y esa columna es justo lo que el control responde; y que el tag más
+  nuevo esté en la tabla, preguntando por **todos** los tags de release y no solo por la línea `1.1`
+  (si no, el día que salga `v1.2.0` la alarma seguiría verde apuntando a `v1.1.13`). Así, «mantenerla es parte
+  de publicar el hub» deja de ser memoria y pasa a ser mecanismo: sin la fila, el control mediría los
+  módulos contra una flota que ya no existe. Skip honesto si no hay hub al lado, como los otros seis.
+- **No es la fuente de verdad.** Quien SABE la versión es el build del hub, que hoy no la publica en
+  ningún artefacto. Que la emita él y esto la lea es la otra mitad, y vive en hub#1588.
+
 ## Los espejos canónicos: contra QUÉ se comparan (module-toolkit#61 y #90)
 
 El toolkit copia a mano siete cosas cuya autoridad vive en `ERPlora/hub` (el esquema del manifest,
