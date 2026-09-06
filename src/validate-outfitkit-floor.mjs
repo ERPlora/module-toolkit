@@ -41,8 +41,25 @@
 // contra lo que quieras, pero no PUBLICAS una pantalla que ningún hub sabe pintar. Es el modelo de
 // cualquier tienda de aplicaciones — compilas contra el SDK nuevo, la tienda comprueba al enviar.
 //
-// El aviso deja de ser decorativo el día que exista la fuente real (hub#1588): con la versión que
-// el build del hub publique de verdad, el (2) puede volver a ser rojo sin castigar a nadie.
+// 🔵 **module-toolkit#203 — la fuente real ya existe, y cuando contesta MANDA.** El día que se
+// escribió lo de arriba, «qué OutfitKit lleva el hub 1.1.13» solo se podía DEDUCIR. Desde
+// ERPlora/hub#1588 el hub lo dice él: `GET /outfitkit-version.json` → `{ outfitkit, hub }`. Cuando
+// `readHubOutfitkit()` (`src/hub-outfitkit-source.mjs`) trae esa lectura, su fila SUSTITUYE a la
+// derivada y la comparación pasa de conjetura a hecho. Eso cambia el resultado en las dos
+// direcciones, y las dos importan:
+//
+//   - **Cierra el agujero.** Un suelo declarado que la tabla no conocía se dejaba pasar con un
+//     aviso («añade el tag cuando se publique») y el módulo se PUBLICABA prometiendo un hub en el
+//     que no cabe. Con la lectura real ese caso se comprueba y se RECHAZA.
+//   - **Quita la falsa alarma.** La derivación va por detrás de la realidad —la imagen instala
+//     `@erplora/outfitkit@latest` en cada build y la tabla anota lo último publicado ANTES del
+//     tag—, así que llamaba «más nuevo que todo hub» a horneados perfectamente pintables.
+//
+// Lo que NO cambia: sin lectura real —nadie configuró `ERPLORA_HUB_URL`, no hay red, o el hub es
+// anterior a #1588 y su capa estática devuelve `index.html` con 200— se usa la tabla derivada y
+// todo se comporta EXACTAMENTE como antes. Degradar siempre se puede; bloquear por una degradación,
+// nunca. Y el trinquete de #201 sigue en pie: con número real, `validate` sigue avisando y quien
+// bloquea sigue siendo `pack`, porque el sello lo pone `../outfitkit`, no el autor.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OUTFITKIT_STAMP } from './outfitkit-stamp.mjs';
@@ -61,9 +78,12 @@ import { OUTFITKIT_STAMP } from './outfitkit-stamp.mjs';
  * que la derivación reproduce el positivo conocido, y `test/validate-outfitkit-floor.test.mjs` la
  * clava para que deje de cuadrar en voz alta el día que la derivación se tuerza.
  *
- * ⚠️ Esta tabla es un APAÑO honesto, no la fuente de verdad: quien SABE la versión es el build del
- * hub, que hoy no la publica en ningún artefacto. Que la emita él (y esto la lea) es la otra mitad,
- * y vive en hub#1588. Mientras tanto, añadir un tag aquí es parte de publicar el hub.
+ * ⚠️ Esta tabla ya NO es la respuesta por defecto: es el CAMINO DEGRADADO (module-toolkit#203).
+ * Quien SABE la versión es el hub, y desde ERPlora/hub#1588 la publica en
+ * `/outfitkit-version.json`; `hubOutfitkitTable(source)` mete esa lectura aquí y la fila real gana.
+ * La tabla es lo que queda cuando no hay hub que preguntar —sin `ERPLORA_HUB_URL`, sin red, o un
+ * hub anterior a #1588—, y mientras haya hubs vivos sin el sello, añadir un tag aquí sigue siendo
+ * parte de publicar el hub.
  *
  * Solo la línea `1.1.x`: `1.0.x` y anteriores son pre-flota, y `1.0.2` se etiquetó 11 segundos
  * después de publicarse 0.1.36 — un margen que no aguanta ninguna afirmación.
@@ -108,9 +128,31 @@ export function compareOutfitkitVersions(a, b) {
   return 0;
 }
 
+/**
+ * Lo que sabemos de la flota: la tabla derivada con la LECTURA REAL encima (module-toolkit#203).
+ *
+ * `source` es la fila que devuelve `readHubOutfitkit()` — `{ hub, outfitkit }` leída del propio hub.
+ * Si la trae, sustituye a la fila derivada de ese mismo tag (un hecho no convive con su conjetura)
+ * o se añade si el tag no estaba. Sin `source`, o con media fila, devuelve la tabla tal cual: ese
+ * es el camino degradado, y tiene que ser idéntico al de antes.
+ *
+ * 🔴 Devuelve SIEMPRE un array nuevo y ordenado por tag. `HUB_OUTFITKIT` es una constante de módulo
+ * compartida por todas las llamadas del proceso: mutarla haría que el resultado de un módulo
+ * dependiera de si otro se validó antes. Y el orden no es estética — `outfitkitForFloor` devuelve
+ * la PRIMERA fila que satisface y `oldestHubShipping` la primera que llega, así que ambas contestan
+ * «la más antigua» solo mientras la tabla esté ordenada.
+ */
+export function hubOutfitkitTable(source = null) {
+  if (!source?.hub || !source?.outfitkit) return HUB_OUTFITKIT;
+  const rows = HUB_OUTFITKIT.filter((row) => compareOutfitkitVersions(row.hub, source.hub) !== 0);
+  rows.push({ hub: source.hub, outfitkit: source.outfitkit, measured: true });
+  rows.sort((a, b) => compareOutfitkitVersions(a.hub, b.hub));
+  return rows;
+}
+
 /** El hub más nuevo que la tabla conoce. Es el techo de lo que hay desplegado. */
-export function newestKnownHub() {
-  return HUB_OUTFITKIT[HUB_OUTFITKIT.length - 1];
+export function newestKnownHub(table = HUB_OUTFITKIT) {
+  return table[table.length - 1];
 }
 
 /**
@@ -123,8 +165,8 @@ export function newestKnownHub() {
  * - Suelo más viejo que toda la tabla → la fila más antigua que conocemos (y el mensaje lo dice).
  * - Suelo más nuevo que toda la tabla → `null`: no lo sabemos, y no se inventa.
  */
-export function outfitkitForFloor(minHubVersion) {
-  const satisfying = HUB_OUTFITKIT.filter(
+export function outfitkitForFloor(minHubVersion, table = HUB_OUTFITKIT) {
+  const satisfying = table.filter(
     (row) => compareOutfitkitVersions(row.hub, minHubVersion) >= 0,
   );
   if (!satisfying.length) return null;
@@ -146,9 +188,9 @@ export function nextHubAfter(hub) {
 }
 
 /** El hub más antiguo que lleva `outfitkitVersion` o algo más nuevo. `null` si ninguno llega. */
-export function oldestHubShipping(outfitkitVersion) {
+export function oldestHubShipping(outfitkitVersion, table = HUB_OUTFITKIT) {
   return (
-    HUB_OUTFITKIT.find(
+    table.find(
       (row) => compareOutfitkitVersions(row.outfitkit, outfitkitVersion) >= 0,
     ) ?? null
   );
@@ -175,9 +217,12 @@ function readStamp(dir) {
  * `publishing` = se está empaquetando para el marketplace (`erplora pack`). Es lo único que separa
  * el aviso del bloqueo en el caso «sin suelo declarado»: ver el trinquete de la cabecera.
  */
-export function checkOutfitkitFloor(dir, manifest, { publishing = false } = {}) {
+export function checkOutfitkitFloor(dir, manifest, { publishing = false, source = null } = {}) {
   const errors = [];
   const warnings = [];
+  // module-toolkit#203: con lectura real del hub, la fila real manda; sin ella, la tabla derivada.
+  const table = hubOutfitkitTable(source);
+  const measured = table.some((row) => row.measured);
 
   const stamp = readStamp(dir);
   if (stamp === undefined) return { errors, warnings };
@@ -191,8 +236,24 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false } = {}) 
   }
 
   const declared = manifest?.compatibility?.min_erplora_version;
-  const needed = oldestHubShipping(stamp);
-  const newestHub = newestKnownHub();
+  const needed = oldestHubShipping(stamp, table);
+  const newestHub = newestKnownHub(table);
+  // De dónde sale CADA número que se cita. Un mensaje que no lo dice deja al autor sin saber si
+  // discute con un hecho o con una deducción — y son dos conversaciones distintas.
+  //
+  // 🔴 Se pregunta por FILA, no por «hay lectura real en la tabla»: `ERPLORA_HUB_URL` puede apuntar
+  // a un cliente en un core viejo, y entonces el techo de la flota que enseñan estos mensajes sigue
+  // siendo el derivado por fecha. Firmarlo como medido en un hub que no lleva ese número convierte
+  // el sello de hub#1588 en una etiqueta decorativa. Y una lectura de CACHE se presenta como lo que
+  // es —un recuerdo—, porque sin `ERPLORA_HUB_URL` se usa sin avisar y puede subir a ERROR en
+  // `pack`: bloquear en silencio con un dato viejo es la otra mitad de ablandarse en silencio.
+  const provenanceOf = (row) =>
+    row?.measured
+      ? source.origin === 'cache'
+        ? `leído del hub ${source.hub} en una consulta ANTERIOR y recordado en cache, así que ` +
+          'puede haberse quedado atrás'
+        : `medido en el hub ${source.hub}, que publica su propio sello (ERPlora/hub#1588)`
+      : 'deducido por la fecha del tag (`HUB_OUTFITKIT`), no medido';
   // 🔴 Las dos salidas se dan CON SU PRECIO. Una salida cuyo coste se calla no es una elección, es
   // una trampa: declarar el tag siguiente deja el módulo sin instalarse en NINGÚN hub vivo hasta
   // que ese tag salga (hub#521 lo aplica), y reconstruir más abajo obliga a mover `../outfitkit`,
@@ -204,7 +265,7 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false } = {}) 
       `COSTE: en los hubs anteriores a ${needed.hub} el módulo dejará de instalarse hasta que ` +
       'actualicen.'
     : `NINGÚN hub publicado lleva OutfitKit ${stamp} todavía (el más nuevo, ${newestHub.hub}, ` +
-      `lleva ${newestHub.outfitkit}). Dos salidas, con su precio: (a) declarar ` +
+      `lleva ${newestHub.outfitkit} — ${provenanceOf(newestHub)}). Dos salidas, con su precio: (a) declarar ` +
       `\`"compatibility": { "min_erplora_version": "${nextHubAfter(newestHub.hub)}" }\`, que es la ` +
       'afirmación CIERTA («necesita un hub más nuevo que ninguno publicado») y hace que el hub ' +
       'rechace la instalación con un mensaje accionable (hub#521) en vez de pintar la pantalla mal ' +
@@ -214,14 +275,24 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false } = {}) 
       'no es tuyo, así que afecta a quien esté trabajando en él.';
 
   if (declared) {
-    const floor = outfitkitForFloor(declared);
+    const floor = outfitkitForFloor(declared, table);
     if (!floor) {
+      // 🔴 module-toolkit#203: este aviso es el agujero por el que se publicaba una promesa falsa
+      // —el suelo se declaraba sobre un hub que la tabla derivada no conocía y nadie lo comprobaba.
+      // Con la lectura real deja de ocurrir por sí solo: si el hub que se declara es el que
+      // contestó, `outfitkitForFloor` lo encuentra y el error de abajo lo rechaza. Se sigue
+      // avisando —nunca bloqueando— cuando el suelo está por encima incluso del hub medido, porque
+      // declarar un core que aún no ha salido es la forma CORRECTA de publicar lo que lo necesita.
       warnings.push(
-        `compatibility.min_erplora_version = ${declared} es más nuevo que cualquier hub que esta ` +
-          `tabla conoce (el último es ${newestKnownHub().hub}), así que no se puede comprobar el ` +
-          `sello ${stamp} contra él. Se deja pasar a propósito: declarar un core que aún no ha ` +
-          'salido es la forma CORRECTA de publicar un módulo que lo necesita, y el hub rechaza la ' +
-          'instalación en los viejos (hub#521). Añade el tag a `HUB_OUTFITKIT` cuando se publique.',
+        `compatibility.min_erplora_version = ${declared} es más nuevo que cualquier hub CONOCIDO ` +
+          `(el último es ${newestHub.hub}), así que no se puede comprobar el sello ${stamp} contra ` +
+          'él. Se deja pasar a propósito: declarar un core que aún no ha salido es la forma ' +
+          'CORRECTA de publicar un módulo que lo necesita, y el hub rechaza la instalación en los ' +
+          'viejos (hub#521). ' +
+          (measured
+            ? `El hub consultado dice ser ${source.hub}: apunta \`ERPLORA_HUB_URL\` a uno que ya ` +
+              `lleve ${declared} y esto se comprobará de verdad.`
+            : 'Añade el tag a `HUB_OUTFITKIT` cuando se publique.'),
       );
       return { errors, warnings };
     }
@@ -229,7 +300,8 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false } = {}) 
       const older = compareOutfitkitVersions(floor.hub, declared) > 0 ? ` (el más antiguo ≥ ${declared})` : '';
       errors.push(
         `el módulo se horneó contra OutfitKit ${stamp}, pero dice correr desde el core ` +
-          `${declared}${older}: el hub ${floor.hub} lleva OutfitKit ${floor.outfitkit}, y los ` +
+          `${declared}${older}: el hub ${floor.hub} lleva OutfitKit ${floor.outfitkit} ` +
+          `(${provenanceOf(floor)}), y los ` +
           '`ok-*` que pintan son los del SHELL, no los del bundle (ADR-0133). Ahí la pantalla sale ' +
           `distinta de como la probaste, sin que nada falle. ${howToDeclare}`,
       );
@@ -241,7 +313,9 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false } = {}) 
     const said =
       `el módulo se horneó contra OutfitKit ${stamp} y no declara ` +
       '`compatibility.min_erplora_version`, o sea que dice correr en CUALQUIER hub — pero el más ' +
-      `nuevo que existe (${newestHub.hub}) lleva OutfitKit ${newestHub.outfitkit}, así que no hay ` +
+      `nuevo que existe (${newestHub.hub}) lleva OutfitKit ${newestHub.outfitkit} ` +
+      `(${provenanceOf(newestHub)}), ` +
+      'así que no hay ' +
       'uno solo que pueda pintarlo. Los `ok-*` que pintan son los del SHELL, no los del bundle ' +
       '(ADR-0133): la pantalla sale rota en casa del cliente y él no puede arreglarlo. ';
     // El trinquete de la cabecera: en `validate` es aviso porque el sello lo pone el checkout
