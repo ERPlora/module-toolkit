@@ -32,6 +32,7 @@ import { checkEmitDedupKey } from './validate-emit-dedup-key.mjs';
 import { checkFilterOps } from './validate-filter-ops.mjs';
 import { checkDeadFilters } from './validate-dead-filters.mjs';
 import { checkBatteryMigrations } from './validate-battery-migrations.mjs';
+import { checkOutfitkitFloor } from './validate-outfitkit-floor.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
 export function assertCspSafe(code, label = 'bundle') {
@@ -374,6 +375,23 @@ export async function validate(moduleDir, { pg = false } = {}) {
     throw new Error(
       'controles Ionic con un `fill` que el hub NUNCA pinta (hub#760):\n  - ' +
         ionicFill.errors.join('\n  - '),
+    );
+  }
+
+  // module-toolkit#201: un módulo no puede publicar una pantalla que NINGÚN hub sabe pintar. Los
+  // `ok-*` que pintan son los del shell, no los del bundle (ADR-0133), y la imagen del hub instala
+  // `@erplora/outfitkit@latest` en cada build: el checkout del autor va casi siempre por delante de
+  // la flota. Pasó dos veces en cuatro días (hub#1547 y sales#259) y en las dos lo descubrió el
+  // cliente. La mitad que DECIDE ya existía —`compatibility.min_erplora_version`, que el hub aplica
+  // desde hub#521—; esta es la que la RECLAMA. Solo bloquea lo demostrablemente falso: un suelo
+  // declarado que no llega al sello, o ningún suelo (= «cualquier hub») cuando ni el hub más nuevo
+  // llega. Los 25 módulos que hoy hornean por debajo de la flota no se enteran.
+  const outfitkitFloor = checkOutfitkitFloor(dir, manifest);
+  for (const w of outfitkitFloor.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (outfitkitFloor.errors.length) {
+    throw new Error(
+      'el módulo pide un OutfitKit que el hub no lleva (module-toolkit#201):\n  - ' +
+        outfitkitFloor.errors.join('\n  - '),
     );
   }
 

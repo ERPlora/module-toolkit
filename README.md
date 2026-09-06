@@ -316,6 +316,46 @@ shell, y además corre este escáner sobre las vistas `.vue` del hub —limpias 
 que las dos puertas no digan cosas distintas del mismo marcado. Un chequeo que sobrevive a su causa
 es peor que no tenerlo: enseña que el gate pide cosas que dan igual.
 
+## El suelo de core que el módulo pide (module-toolkit#201)
+
+Los `ok-*` con los que se pinta un módulo son **los del shell**, no los que lleva su bundle: el shell
+los define al arrancar y el `define()` horneado pierde en silencio (ADR-0133 §verificación 2). Y la
+imagen del hub instala `@erplora/outfitkit@latest` en cada build (`hub/docker/Dockerfile`, con
+cachebust), así que el checkout del autor va casi siempre **por delante** de la flota. Publicar
+entonces es publicar una pantalla que ningún hub sabe pintar — pasó dos veces en cuatro días
+(hub#1547 y sales#259) y en las dos lo descubrió el cliente, días después.
+
+La mitad que **decide** ya existía: `compatibility.min_erplora_version` en el manifest, que el hub
+**aplica** al instalar desde hub#521 (por debajo de ese core rechaza la instalación con un mensaje
+accionable en vez de instalar algo a medias). Faltaba la que la **reclama**, y es
+`src/validate-outfitkit-floor.mjs`.
+
+**Solo bloquea lo demostrablemente falso**, no todo lo sospechoso — el sello dice contra qué OutfitKit
+se horneó, no qué APIs se usan, así que exigir un suelo a todo el que hornee con algo nuevo pondría
+los 27 módulos en rojo el mismo día (misma lección que `FILL_GRANDFATHERED`). Los dos rojos son:
+
+1. El manifest **declara** un suelo y el sello es más nuevo que el OutfitKit que ese suelo lleva.
+2. El manifest **no declara nada** —que significa «cualquier hub»— y el sello es más nuevo que el
+   OutfitKit del hub más nuevo que existe. «Cualquiera» es falso para todos, no solo para los viejos.
+
+Y siempre hay salida de una línea: declarar `compatibility.min_erplora_version` con el hub que sí lo
+lleva, o —si aún no lo lleva ninguno— con el **siguiente** tag. Declararlo no es hacer trampa: es la
+afirmación cierta, y hub#521 la convierte en una instalación rechazada en vez de una pantalla rota.
+
+### La tabla `HUB_OUTFITKIT`, y por qué es un apaño honesto
+
+`HUB_OUTFITKIT` (en ese mismo fichero) dice qué OutfitKit lleva cada tag del hub. **Hoy no existe en
+ningún otro sitio**: como el Dockerfile pide `@latest` con cachebust, la versión de una imagen solo se
+deduce de **cuándo** se construyó. Cada fila es «el último `@erplora/outfitkit` publicado en npm antes
+de crearse el tag»; `built_at` es la fecha de creación del tag en `ERPlora/hub`.
+
+- **Se comprueba contra un positivo conocido:** la fila de `1.1.13` → `0.1.58` es la que sales#265
+  midió a mano por otro camino, y `test/validate-outfitkit-floor.test.mjs` la clava para que deje de
+  cuadrar en voz alta el día que la derivación se tuerza.
+- **Mantenerla es parte de publicar el hub:** un tag nuevo del hub es una fila nueva aquí.
+- **No es la fuente de verdad.** Quien SABE la versión es el build del hub, que hoy no la publica en
+  ningún artefacto. Que la emita él y esto la lea es la otra mitad, y vive en hub#1588.
+
 ## Los espejos canónicos: contra QUÉ se comparan (module-toolkit#61 y #90)
 
 El toolkit copia a mano siete cosas cuya autoridad vive en `ERPlora/hub` (el esquema del manifest,
