@@ -31,6 +31,9 @@ const TOOLKIT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** Every path vendored from the hub, identical on both sides. */
 export const VENDORED_FROM_THE_HUB = [
   'schemas/module.schema.json',
+  // module-toolkit#209: the flow document contract. Vendored so `erplora validate` can judge the
+  // automations a module ships in `flows/` on a runner with no hub — see `src/flow-schema.mjs`.
+  'schemas/flow.schema.json',
   ...KERNEL_CONTRACT_FILES.map((file) => `contracts/kernel/${file}`),
 ];
 

@@ -42,6 +42,24 @@ test('la documentación viaja en el ZIP cuando el módulo la trae', () => {
   }
 });
 
+// module-toolkit#209: the automations a module ships with. It writes them in `flows/`, publishes,
+// and they reach NO hub — the folder was not in `INCLUDE`, so the zip left it behind. The only door
+// that stayed open was a hand-written COPY of the template in the gallery of the `flows` module,
+// and a copy falls behind: it did three times in a single day.
+test('el ZIP declara flows/ — las automatizaciones de fábrica del módulo (#209)', () => {
+  assert.ok(INCLUDE.includes('flows'), `INCLUDE sin flows: ${INCLUDE.join(', ')}`);
+});
+
+test('las automatizaciones de fábrica viajan en el ZIP cuando el módulo las trae (#209)', () => {
+  const dir = mod(['module.json', 'flows/', 'migrations/']);
+  try {
+    const packed = packedPaths(dir);
+    assert.ok(packed.includes('flows'), `flows/ fuera del zip: ${packed.join(', ')}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('un módulo sin documentación sigue empaquetando (no es obligatoria)', () => {
   const dir = mod(['module.json', 'migrations/']);
   try {

@@ -1,0 +1,401 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://erplora.com/schemas/flow.schema.json",
+  "title": "ERPlora hub flow document",
+  "description": "Contrato CONGELADO del documento de un flujo (ADR-0283 K7, hub#661). El core gana esta última familia de primitivas y se congela; el producto (editor visual, plantillas, conectores) vive en el módulo `flows`. `schema_version` es OBLIGATORIO desde el día 1: una versión desconocida se RECHAZA, nunca se ejecuta a medias. v1 es deliberadamente LINEAL (sin branching ni DAG: eso sería una v2 futura) y su lenguaje de mapeo NO es Turing-completo — lo difuso lo resuelve el step `ai`, no un DSL. La autoridad es el runtime (`crates/runtime/src/flows/def.rs`), no este fichero: aquí se declara para que el toolkit y el editor validen en el momento de escribir, y `crates/runtime/tests/flow_schema_matches_the_runtime.rs` impide que las dos mitades se separen.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "steps"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "description": "Versión del documento. Obligatoria; una desconocida se rechaza (no se adivina)."
+    },
+    "name": {
+      "type": "string",
+      "description": "Nombre legible dentro del documento. El nombre que se muestra vive en la fila `_flow.name`; este es opcional y solo documental."
+    },
+    "triggers": {
+      "type": "array",
+      "description": "Qué arranca el flujo. Se materializan a `_flow_triggers` al guardar (idempotente, conservando `next_run`). Un flujo sin triggers solo se dispara a mano.",
+      "items": {
+        "$ref": "#/$defs/trigger"
+      }
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Los pasos, EN ORDEN. v1 es lineal y `on_error` es siempre `stop`: un fallo detiene el run (reintentar un command de negocio por su cuenta es como se cobra dos veces una venta).",
+      "items": {
+        "$ref": "#/$defs/step"
+      }
+    }
+  },
+  "$defs": {
+    "path": {
+      "type": "string",
+      "description": "Ruta del lenguaje de mapeo: `input.<campo>`, `steps.<step_id>.<campo>`, `event.<campo>` (solo dentro de un trigger) o `secret.<NOMBRE>` (SOLO dentro de un step `http`, hub#662: es el único sitio donde una credencial tiene que salir; en cualquier otro step se rechaza al guardar). Los secretos viven en `_flow_secrets`, cifrados y write-only: se referencian por nombre, se sustituyen al construir la petición y NUNCA se persisten en `_flow_run_steps`."
+    },
+    "mapping": {
+      "type": "object",
+      "description": "Mapa `{nombre: valor}`. Un valor es un literal, una RUTA (`input.x` — conserva el tipo), o un string con plantillas `{{ruta}}` (siempre devuelve string). Los objetos y arrays se recorren recursivamente. Mismo estilo que `ReadDef::resolve_params_from_map` de los `reads`.",
+      "additionalProperties": true
+    },
+    "condition": {
+      "type": "object",
+      "description": "Filtro declarativo `{ruta: {operador: valor}}` evaluado en AND. El conjunto de operadores está CONGELADO: uno desconocido se rechaza al guardar (un filtro que casa con todo en silencio es como se acaba enviando un email a la lista entera de clientes). Comparación: `eq`/`neq` estrictos con caída a texto y a número (el dinero es un string, ADR-0123); `gt|gte|lt|lte` numéricos si ambos lados lo son, si no lexicográficos (así ordenan bien las fechas RFC-3339); un campo ausente NUNCA casa salvo `exists: false`.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "eq": {},
+          "neq": {},
+          "in": {
+            "type": "array"
+          },
+          "exists": {
+            "type": "boolean"
+          },
+          "contains": {},
+          "gt": {},
+          "gte": {},
+          "lt": {},
+          "lte": {}
+        }
+      }
+    },
+    "trigger": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "event",
+            "cron",
+            "at",
+            "manual"
+          ],
+          "description": "`event`: casa en el relay del outbox y SOLO inserta el run (el tick lo ejecuta). `cron`/`at`: reloj propio en `_flow_triggers` reutilizando `scheduler::cron::next_after` (NO se tocan las `_scheduled_tasks`); `at` es one-shot y es lo que da los «dentro de 3 días…». `manual`: `POST /api/hub/flows/{id}/run`."
+        },
+        "event": {
+          "type": "string",
+          "description": "Solo `kind: event` — nombre del evento. Obligatorio ahí."
+        },
+        "filter": {
+          "$ref": "#/$defs/condition",
+          "description": "Solo `kind: event` — filtro sobre el payload del evento, con rutas `event.<campo>`. Ausente = casa siempre."
+        },
+        "input": {
+          "$ref": "#/$defs/mapping",
+          "description": "Solo `kind: event` — cómo el payload del evento se convierte en el `input` del run. Ausente/vacío = pasa el evento entero."
+        },
+        "cron": {
+          "type": "string",
+          "description": "Solo `kind: cron` — expresión de 5 campos `min hora dom mes dow` o atajo (`@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly`). Obligatoria ahí. Por campo: `*`, un valor, un rango `a-b`, una lista `a,b`, un paso `*/N` o `a-b/N`; mes y día de semana admiten nombres (`JAN`…`DEC`, `SUN`…`SAT`, p. ej. `0 9 * * MON-FRI`). **Se lee en la ZONA HORARIA DEL NEGOCIO** (`timezone` de los settings, o la deducida de `country_code`/`region_code`) — «a las 9:00» son las 9:00 de la tienda (hub#731). Lo que el hub no sepa ejecutar se **rechaza al guardar** con `flow.invalid_cron` (hub#730): nunca se guarda un trigger activo que no va a disparar."
+        },
+        "at": {
+          "type": "string",
+          "description": "Solo `kind: at` — instante RFC-3339 CON offset (p. ej. `2026-08-11T09:00:00+02:00`). Obligatorio ahí. Lo que no parsee se rechaza al guardar con `flow.invalid_at` (hub#730). No lleva zona aparte: el offset ya está en el propio instante."
+        }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Identidad del paso DENTRO del flujo: es como lo leen los pasos posteriores (`steps.<id>.<campo>`). Único en el documento."
+        },
+        "kind": {
+          "enum": [
+            "command",
+            "query",
+            "condition",
+            "delay",
+            "http",
+            "ai",
+            "notify",
+            "approval"
+          ],
+          "description": "Vocabulario CONGELADO, y todos se ejecutan. `command`/`condition`/`delay` no hacen I/O y los avanza el tick bajo el lock global. `http` (hub#662) y `ai` (hub#665) siguen el contrato claim → I/O → complete: el tick los prepara y el server los ejecuta FUERA del lock. `notify` (hub#821) no cruza esa costura: resuelve el destinatario con una lectura local y ENCOLA un evento host-notify, y quien habla con la red es el relay del outbox, que ya tiene reintentos, backoff y dead-letter. `query` (hub#954) es una LECTURA determinista: tampoco hace I/O y la avanza el tick, acotada por su `limit`. No añade permiso nuevo — pasa por el mismo grant `query` (`GrantKind::Query`) que las lecturas del step `ai` desde hub#665; lo que cambia es que leer ya no exige un modelo de lenguaje de por medio. `approval` (hub#950) es la PAUSA: no hace I/O, escribe una fila en `_flow_approvals` y aparca el run por la MISMA costura por la que lo aparca una propuesta del step `ai`, hasta que una persona contesta. Es lo que hasta ahora solo se conseguía de rebote invocando un modelo."
+        },
+        "query": {
+          "type": "string",
+          "description": "Solo `kind: query` (hub#954) — NOMBRE de la lectura. OBLIGATORIO. Necesita un grant `query` VIVO en el momento de ejecutarse (el mismo `GrantKind::Query` del step `ai`, hub#665: cero superficie de permisos nueva). La query tiene que EXISTIR en el registry al guardar — se rechaza si no, igual que un grant que no nombra nada. Forma tomada de *Get Records* de Salesforce Flow, que es donde converge el mercado: la lectura es un paso declarativo, no código ni un modelo."
+        },
+        "result": {
+          "enum": [
+            "first",
+            "count"
+          ],
+          "default": "first",
+          "description": "Solo `kind: query` — qué queda en `steps.<id>`. `first` (POR DEFECTO): los campos de la PRIMERA fila en la raíz (`steps.week.total`), más `found` (bool) y `count` (cuántas filas CASAN, no cuántas se trajeron). `count`: solo `count` y `found`. **`rows` NO existe en v1**: el lenguaje de mapeo no indexa arrays, así que `steps.week.rows.0.total` no resolvería a nada y ofrecerlo sería ofrecer una mentira. 0 filas NO es un fallo: el run sigue con `found: false` y lo decide un `condition` — así se escribe «avísame SI hay stock bajo»."
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 200,
+          "description": "Solo `kind: query` — tope de filas que la lectura trae al run. Se RECHAZA por encima del máximo en vez de recortarse (`flow.limit_out_of_range`, mismo criterio que `max_iters`): el truncado que no se anuncia es la queja que llenan los foros de Zapier, Make y Shopify Flow, y por eso el DEFECTO es el propio techo y no un número pequeño escondido. La lectura ocurre dentro del tick, bajo el lock global del runtime, así que el techo es también lo que la hace asequible ahí. El `count` NO se recorta: sale del motor paginado (`queries::execute_page`), que da el total de verdad — el «up to a specified limit» de Salesforce y el `Row Count` de Power Automate."
+        },
+        "command": {
+          "type": "string",
+          "description": "Solo `kind: command` — nombre del command. Debe tener un grant vivo (`_flow_grants`) en el momento de ejecutarse; los commands internos (`_`/`internal:true`) están prohibidos, igual que para un caller externo."
+        },
+        "params": {
+          "$ref": "#/$defs/mapping",
+          "description": "`kind: command` — payload del command, mapeado contra el run. `kind: query` — los parámetros de la lectura, mapeados igual. Un `{{secret.X}}` se RECHAZA al guardar en ambos casos: una credencial en un `WHERE` acaba en el log de consultas del módulo."
+        },
+        "when": {
+          "$ref": "#/$defs/condition",
+          "description": "Solo `kind: condition` — guarda. Si no pasa, el run TERMINA (`done`, no `failed`): una guarda que no pasa es el flujo funcionando."
+        },
+        "seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Solo `kind: delay` — espera relativa. El run duerme como una FILA (`wake_at`), nunca como una tarea retenida."
+        },
+        "until": {
+          "$ref": "#/$defs/path",
+          "description": "Solo `kind: delay` — ruta a un instante RFC-3339. Alternativa a `seconds`; hace falta uno de los dos."
+        },
+        "method": {
+          "enum": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ],
+          "description": "Solo `kind: http` — método. Por defecto `GET`. El conjunto está CONGELADO y es pequeño a propósito: `CONNECT`/`TRACE` son la forma de convertir una URL permitida en un túnel."
+        },
+        "url": {
+          "type": "string",
+          "description": "Solo `kind: http` — URL absoluta `http(s)`, con plantillas `{{ruta}}`. OBLIGATORIA. Se templa contra el run y SOLO ENTONCES se compara con los grants `http` del flujo (`https://host/ruta*`): juzgar la forma sin templar autorizaría `https://api.example.com/{{input.path}}` y luego llamaría a lo que trajera el evento. Además, antes de salir se comprueba la DIRECCIÓN a la que resuelve (anti-SSRF): nada dentro de la red del hub."
+        },
+        "headers": {
+          "$ref": "#/$defs/mapping",
+          "description": "Solo `kind: http` — cabeceras, mapeadas contra el run. Es donde va la credencial: `{\"Authorization\": \"Bearer {{secret.API_KEY}}\"}`."
+        },
+        "body": {
+          "description": "Solo `kind: http` — cuerpo. Un objeto/array se envía como JSON (y se le pone `content-type: application/json` si el autor no declaró uno); cualquier otra cosa se envía como texto tal cual, y el autor pone su propia cabecera."
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "description": "Solo `kind: http` — segundos de espera. Por defecto 10, máximo 30: el run mantiene su lease todo ese rato, así que es también lo que cuesta un error. La respuesta se trunca a 1 MB y no se siguen redirecciones (un 3xx es una segunda petición a un sitio que nadie concedió)."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "Solo `kind: ai` — la tarea, en palabras. Obligatorio ahí. Se mapea contra el run como cualquier otro valor, así que admite plantillas `{{input.texto}}`: un turno puede hablar del mensaje que lo disparó. Un `{{secret.X}}` aquí se RECHAZA al guardar: un prompt es justo donde una credencial no puede interpolarse, porque se enviaría al modelo."
+        },
+        "tools": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Solo `kind: ai` — qué puede llamar el modelo EN ESTE step. Es la segunda de tres cribas: lo que se le ofrece es `assemble_tools` (registry + permisos del flujo) ∩ esto ∩ los grants vivos del flujo. Declarar una tool aquí NO la autoriza; hace falta su grant.",
+          "properties": {
+            "queries": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Lecturas. Cada una necesita un grant `query` vivo (hub#665)."
+            },
+            "commands": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Operaciones `command` que el modelo puede invocar. Las que CAMBIAN algo son propuestas: que se ejecuten o no lo decide `policy`. Las que solo CONTESTAN se ejecutan siempre en el turno y su respuesta vuelve al modelo, igual que una `query` (hub#1595) — un command puede ser una lectura porque contestar cruzando datos de otro módulo exige un handler, no porque escriba. Lo decide el hub con la misma regla que el asistente (`assistant::command_only_answers`): sin `sql`, sin `emit`, sin `min_affected_rows`/`expect_rows`, con `risk` normal, y pidiendo un permiso que el módulo también le pide a alguna de sus propias queries. La ausencia de señal se lee SIEMPRE como escritura."
+            }
+          }
+        },
+        "policy": {
+          "enum": [
+            "auto",
+            "manual"
+          ],
+          "default": "manual",
+          "description": "Solo `kind: ai` — qué pasa con una escritura que propone el modelo (ADR-0283 D3). Solo gobierna lo que CAMBIA algo: una operación que únicamente contesta se ejecuta en el turno con cualquiera de las dos políticas (hub#1595), porque una confirmación existe para evitar un cambio por sorpresa y ahí no hay cambio. `manual` (POR DEFECTO): la escritura se convierte en una fila de `_flow_approvals` y el turno TERMINA; al aprobar se ejecuta EXACTAMENTE lo propuesto, con re-chequeo del grant en ese momento y sin volver a entrar al modelo. `auto`: se ejecuta en el turno, por la puerta de `Origin::Automation`. El defecto es el restrictivo a propósito: la opción permisiva es la que nadie escribe y todo el mundo asume, y aquí significaría un modelo escribiendo en la base de datos del negocio a las 3 de la mañana."
+        },
+        "max_iters": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 6,
+          "description": "Solo `kind: ai` — vueltas del bucle de tools. Se RECHAZA por encima del tope en vez de recortarse: cada turno es una llamada real por el proxy del SaaS, que la mide (`AssistantUsage`), y un documento que dice 50 y ejecuta 10 le miente a quien lo escribió."
+        },
+        "title": {
+          "type": "string",
+          "description": "Solo `kind: approval` (hub#950) — LA PREGUNTA, en palabras. OBLIGATORIA: es contra lo que una persona decide a las 9 de la mañana, y una bandeja que enseñara un id opaco sería un botón que la gente pulsa sin leer. Se mapea contra el run (`{{steps.po.supplier_name}}`) y se templa UNA VEZ, al hacer la pregunta, guardándose ya renderizada en la fila — por eso editar el flujo después NO muta una solicitud viva. Un `{{secret.X}}` aquí se RECHAZA al guardar: la bandeja es una pantalla."
+        },
+        "summary": {
+          "type": "string",
+          "description": "Solo `kind: approval` — la segunda línea de la misma pregunta (el importe, el cliente, lo que haga falta para decidir sin salir de la bandeja). Opcional, y se templa y se guarda igual que `title`."
+        },
+        "assignee": {
+          "$ref": "#/$defs/assignee",
+          "description": "Solo `kind: approval` — QUIÉN puede contestar. Opcional; ausente = quien administra el hub, que es lo que la bandeja ha exigido siempre. Es un ROL, nunca una persona: quien se nombra en un documento se va de la empresa y el flujo deja de funcionar (Business Central tuvo que inventar el «sustituto» para tapar justo eso, y Odoo lo resuelve con `Allowed Group`). El rol se resuelve SERVER-SIDE en el momento de decidir, y quien administra el hub puede contestar siempre — si no, un rol que se queda sin nadie deja la pregunta sin salida y el run aparcado."
+        },
+        "expires_in": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2592000,
+          "default": 259200,
+          "description": "Solo `kind: approval` — segundos que la pregunta sigue siendo contestable. Por defecto **72 h** y como máximo **30 días** (el número de Power Automate y el orden de magnitud de un `Due Date Formula` de Business Central). Se RECHAZA por encima del techo en vez de recortarse, igual que `limit` y `max_iters`: un run aparcado más tiempo es una autorización permanente que nadie recuerda haber dado, y mientras espera está EXENTO de la poda de 90 días con su contenido dentro. El vencimiento lo aplica un barrido activo (hub#972/#979), no una comprobación al leer."
+        },
+        "on_expire": {
+          "enum": [
+            "reject",
+            "cancel",
+            "continue"
+          ],
+          "default": "reject",
+          "description": "Solo `kind: approval` — qué le pasa al RUN si nadie contesta antes de `expires_in`. El silencio es una RESPUESTA: `reject` (POR DEFECTO) lo trata como una negativa, que es la lectura conservadora porque los pasos escritos después asumían que se aprobó; `cancel` termina el run sin llamarlo negativa; `continue` sigue al paso siguiente con `steps.<id>.decision == \"expired\"` — el `Limit Wait Time` de n8n y su rama de «sin respuesta». Viaja en la FILA, no se relee del flujo: la política que se aplica es la que estaba en vigor cuando se hizo la pregunta."
+        },
+        "on_reject": {
+          "enum": [
+            "cancel",
+            "continue"
+          ],
+          "default": "cancel",
+          "description": "Solo `kind: approval` — qué le cuesta al run un «no». `cancel` (POR DEFECTO) termina el run como `cancelled`, que es lo que un rechazo hace hoy; `continue` sigue con `steps.<id>.decision == \"rejected\"`. **Con `continue` + un `condition` las tres ramas (aprobado/rechazado/vencido) se componen a partir de primitivas ya congeladas, sin necesidad de una v2 con branching** — que es la misma jugada del step `query`. Viaja en la fila por el mismo motivo que `on_expire`."
+        },
+        "channel": {
+          "enum": [
+            "email",
+            "whatsapp"
+          ],
+          "description": "Solo `kind: notify` — por dónde sale el mensaje. OBLIGATORIO. Necesita su propio grant `notify` VIVO para ese canal: son dos permisos distintos porque no cuestan lo mismo (Meta cobra cada WhatsApp; un email no), y quien permitió el recordatorio por email no ha aceptado pagarlo por WhatsApp. `sms` está en el vocabulario de ADR-0012 y NO se admite: ni el proxy del SaaS ni el hub tienen transporte, así que se rechaza al guardar en vez de morir en el dead-letter."
+        },
+        "to": {
+          "$ref": "#/$defs/recipient",
+          "description": "Solo `kind: notify` — a quién. OBLIGATORIO. Es una query y un campo, NUNCA una dirección: no hay forma de escribir una a mano, y esa ausencia es la garantía de que un flujo (o una plantilla del marketplace) no puede mandar el mensaje a lo que traiga el payload del evento."
+        },
+        "template": {
+          "type": "string",
+          "description": "Solo `kind: notify` — NOMBRE de plantilla; no hay catálogo en el hub (flows.md §5). En WhatsApp es la plantilla aprobada en Meta; en email hace de asunto si `vars` no trae uno. Se mapea contra el run como cualquier otro valor."
+        },
+        "vars": {
+          "$ref": "#/$defs/mapping",
+          "description": "Solo `kind: notify` — el texto y sus variables, mapeados contra el run (`vars.text` es lo que dice un email o un WhatsApp libre). Un `{{secret.X}}` aquí se RECHAZA al guardar: sería una credencial enviada a un cliente."
+        },
+        "offset_seconds": {
+          "type": "integer",
+          "description": "Solo `kind: delay` (hub#951) — segundos que se SUMAN al instante de `until` (negativo = antes). Es el `Offset` de las *Scheduled Paths* de Salesforce, que es donde converge el mercado: la espera se expresa contra un CAMPO de fecha de la cosa («24 h antes de la cita»), no escribiendo una fecha. **En segundos y no «1 mes»**: un desplazamiento de calendario es una operación que el lenguaje congelado no tiene, y Salesforce sí la ofrece — es una limitación consciente de v1. Consecuencia que hay que enseñar en pantalla: un −24 h que cruza un cambio de hora cae una hora desplazado en reloj local. Con `seconds` se RECHAZA al guardar: «dentro de una hora, menos un día» es una contradicción, no una precedencia."
+        },
+        "max_wait": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 7776000,
+          "description": "Solo `kind: delay` (hub#951) — techo de ESTA espera, en segundos. Por defecto y como máximo **90 días** (7 776 000 s), el número de Shopify Flow, el más generoso de las diez referencias estudiadas. Se rechaza por encima al guardar (`flow.delay_horizon`) y el run FALLA con el mismo código si el `until` resuelve más allá: **antes no había techo ninguno** y un `until` al año 3000 dormía como una fila que todas las reglas de retención eximen a propósito."
+        },
+        "past_due_policy": {
+          "enum": [
+            "continue_now",
+            "skip",
+            "fail"
+          ],
+          "default": "skip",
+          "description": "Solo `kind: delay` (hub#951) — qué pasa si el instante resuelto YA pasó. `skip` (POR DEFECTO): el run TERMINA (`done`), como una guarda que no pasa. `continue_now`: sigue con el paso siguiente ahora mismo — el comportamiento de Salesforce, para quien lo escriba. `fail`: el run falla con `flow.delay_past_due`. El defecto NO es el de Salesforce a propósito: manda la regla propia del kernel (la misma que hace `manual` el defecto de `policy`), porque el caso literal es un recordatorio cuya hora ya pasó y mandarlo tarde es peor que no mandarlo. Se aplica igual cuando un `reschedule_on` mueve la espera a un instante ya vencido: una sola lectura de la clave, no dos."
+        },
+        "cancel_on": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/wait_hook"
+          },
+          "description": "Solo `kind: delay` (hub#951) — eventos que SACAN al run de la espera: el run queda `cancelled` y sus esperas hermanas se desarman. Es la salida que le faltaba a la primitiva: hasta aquí una espera tenía un único camino de salida, su reloj, y el recordatorio de una cita cancelada se mandaba igual (el hilo de la comunidad de Square es exactamente eso). Máximo 5 — se cotejan en el camino caliente de CADA evento entregado en el hub."
+        },
+        "reschedule_on": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/wait_hook"
+          },
+          "description": "Solo `kind: delay` (hub#951) — eventos que MUEVEN la espera a un instante nuevo, tomado del propio evento (`until`) con el mismo `offset_seconds` reaplicado: «24 h antes» sigue siendo 24 h antes cuando la cita se mueve. No queda un timer viejo porque no hay cola de timers — un run dormido tiene UN `wake_at` y moverlo es escribir una columna. Máximo 5, y como mucho 20 movimientos por espera (`flow.max_reschedules`): un evento que no para de llegar es un run que no acaba nunca."
+        }
+      }
+    },
+    "assignee": {
+      "type": "object",
+      "required": [
+        "role"
+      ],
+      "additionalProperties": false,
+      "description": "A quién va dirigida una aprobación (hub#950): UN ROL. No hay ninguna forma de escribir una persona —ni un id, ni un email, ni una plantilla que resuelva a uno— y esa ausencia ES la garantía, igual que en `recipient`: un flujo (o una plantilla del marketplace) no puede quedar atado a un empleado concreto, que es lo que se rompe el día que se va. El rol se comprueba SERVER-SIDE contra `hub_user` en el momento de decidir, nunca contra lo que diga la petición, y quien administra el hub cuenta siempre.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "description": "El rol que puede contestar (`admin`, `manager`, `employee`, o el que declare un módulo activo)."
+        }
+      }
+    },
+    "recipient": {
+      "type": "object",
+      "required": [
+        "query",
+        "field"
+      ],
+      "additionalProperties": false,
+      "description": "El destinatario de un step `notify` (hub#821): UN CAMPO de UNA query declarada. El par `<query>#<campo>` tiene que coincidir con un grant `recipient_query` VIVO del flujo — pedir otro campo, u otra query, es un permiso distinto con la misma respuesta por defecto. La query se ejecuta en modo lectura con el contexto del flujo; si devuelve 0 filas o más de 1, el step FALLA (elegir «la primera» dependería de un orden que ningún documento declara, y mandárselo a todas es una campaña que nadie concedió). Y el valor pasa la misma comprobación de forma de siempre: salir de una query concedida no convierte a un email en un número de WhatsApp. Revocar el grant corta el envío AUNQUE el mensaje ya estuviera encolado.",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "La query de la que sale el contacto."
+        },
+        "params": {
+          "$ref": "#/$defs/mapping",
+          "description": "Sus parámetros, mapeados contra el run (`{\"id\": \"input.customer_id\"}`). Es donde se acota la lectura para que devuelva UNA fila."
+        },
+        "field": {
+          "type": "string",
+          "description": "La COLUMNA de esa fila que es el destinatario (`phone`, `email`). Un nombre de columna, no una ruta."
+        }
+      }
+    },
+    "wait_hook": {
+      "type": "object",
+      "required": [
+        "event",
+        "correlate"
+      ],
+      "additionalProperties": false,
+      "description": "Una salida de la espera (hub#951): un evento público, un filtro opcional sobre él y la CORRELACIÓN que lo hace ser sobre ESTE run. La forma es la transición programada de NetSuite SuiteFlow: la espera es un estado con varias salidas y la primera transición atómica se lleva el run — todas las salidas (incluido el reloj) son el mismo `UPDATE` condicional, así que «nunca las dos» no cuesta ni un lock. El kernel solo conoce el nombre del evento y una clave: no sabe qué es una cita, ni una factura, ni un pago.",
+      "properties": {
+        "event": {
+          "type": "string",
+          "description": "Nombre del evento público, cotejado en el relay igual que el de un trigger."
+        },
+        "filter": {
+          "$ref": "#/$defs/condition",
+          "description": "Filtro declarativo opcional sobre el payload del evento (rutas `event.<campo>`). Sin filtro, cualquier ocurrencia del evento que correlacione."
+        },
+        "correlate": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 3,
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Mapa `{<ruta EN EL EVENTO que llega>: <ruta EN ESTE run>}`, y todas las parejas tienen que casar. **Es lo que hace que «esta cita» signifique esta**: sin él, la primera cancelación de cualquier cita se llevaría por delante todos los recordatorios armados del hub. Solo RUTAS a los dos lados y en el lenguaje congelado — una plantilla `{{…}}` del lado del evento sería una clave de correlación que escribe quien emite el evento, y un literal del lado del run correlacionaría contra una constante. La izquierda arranca en `event.`; la derecha, en `input.` o `steps.`. Se guarda solo el VALOR correlacionado, jamás el payload."
+        },
+        "until": {
+          "$ref": "#/$defs/path",
+          "description": "Solo en `reschedule_on`, y ahí OBLIGATORIO — ruta, **en el evento que llega**, al instante nuevo. En `cancel_on` se rechaza al guardar: una espera cancelada no tiene instante nuevo y la clave no la leería nadie (la lección de hub#521)."
+        }
+      }
+    }
+  }
+}

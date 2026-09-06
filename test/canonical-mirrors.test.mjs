@@ -43,6 +43,7 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { BRIDGE_FUNCTIONS } from '../src/validate-sql.mjs';
 import { VENDORED_MANIFEST_SCHEMA_PATH } from '../src/manifest-schema.mjs';
+import { VENDORED_FLOW_SCHEMA_PATH } from '../src/flow-schema.mjs';
 import { REFUSED_PATHS, RETIRED_FIELDS } from '../src/validate-manifest-keys.mjs';
 import { CORE_OPERATIONS } from '../src/contracts.mjs';
 import { GRANDFATHERED } from '../src/validate-migration-guard.mjs';
@@ -111,6 +112,22 @@ test('the vendored schema is byte for byte the hub one (#40)', (t) => {
     readFileSync(VENDORED_MANIFEST_SCHEMA_PATH, 'utf8'),
     readFileSync(canonical, 'utf8'),
     'schemas/module.schema.json moved on in the hub — resync it with `npm run sync-schema`',
+  );
+});
+
+// module-toolkit#209. The SECOND schema vendored from the hub, and for a reason the first one did
+// not have: `flows/*.flow.json` is the automation a module ships with, and until now the ONLY thing
+// that judged one was the module's own python battery — which reads the hub's copy when a checkout
+// happens to be alongside and SKIPS itself in CI (measured in whatsapp_inbox#75: `budget_problems`
+// never ran on a runner). Vendored, `erplora validate` judges the document on every module gate,
+// with no hub in reach, and this mirror is what keeps the frozen vocabulary from drifting.
+test('the vendored FLOW schema is byte for byte the hub one (#209)', (t) => {
+  const canonical = hubPath(t, 'schemas', 'flow.schema.json');
+  if (!canonical) return;
+  assert.equal(
+    readFileSync(VENDORED_FLOW_SCHEMA_PATH, 'utf8'),
+    readFileSync(canonical, 'utf8'),
+    'schemas/flow.schema.json moved on in the hub — resync it with `npm run sync-mirrors`',
   );
 });
 

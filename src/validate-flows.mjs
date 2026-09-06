@@ -1,0 +1,360 @@
+// The `flows/` package contract: the automations a module ships with (module-toolkit#209).
+//
+// WHAT WAS OPEN. A module writes its automations in `flows/` — the flow document, the grants it
+// will ask for, and the version floor it needs — publishes, and they reached NO hub: `erplora pack`
+// did not carry the folder into the zip. So the only way a customer ever saw one was a hand-written
+// COPY of the template in the gallery of the `flows` module, and a copy of a document that nothing
+// validates falls behind: it did three times in a single day, and one resync cost 23.2M tokens.
+//
+// Carrying the folder is `pack.mjs`. This file is the other half: judging what is inside it, in the
+// only door that runs before publishing.
+//
+// WHAT IT JUDGES — the PACKAGE contract, not the automation:
+//
+//   · the NAME: `<family>.<lang>.flow.json`, with `<family>.grants.json` beside it and an optional
+//     `<family>.requires.json`. A stray file in `flows/` is refused, because no reader would ever
+//     open it — the same silence the whole issue is about;
+//   · the SOURCE language: every family carries its `en` document (ADR-0055). English is the source
+//     and the rest are translations, so a family without it has no original;
+//   · the DOCUMENT, against the FROZEN root of `flow.schema.json` — `schema_version`, a non-empty
+//     `steps`, no unknown root key, and every step with an `id` and a `kind` of the frozen
+//     vocabulary. Nothing closed is typed here: it is all READ from the vendored schema
+//     (`src/flow-schema.mjs`), which `test/canonical-mirrors.test.mjs` pins to the hub's;
+//   · the TRANSLATION: the languages of one family must declare the SAME steps in the SAME order
+//     and be triggered by the same thing. A translation is prose — other words, same automation.
+//     When the halves drift, a Spanish hub runs something different from an English one and nothing
+//     says so.
+//
+// WHAT IT DOES NOT. Whether the grants cover what the steps actually use, and whether the prompt
+// orders a tool the module really has, is the SEMANTICS of the automation: that lives in the
+// module's own battery (`whatsapp_inbox/tests/flow_templates.test.py`), which is where the domain
+// and the neighbouring modules are. This door is about the package.
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { loadFlowSchema } from './flow-schema.mjs';
+
+/** `<family>.<lang>.flow.json` — the only shape a template document may be named. */
+const DOCUMENT = /^([a-z][a-z0-9-]*)\.([a-z]{2})\.flow\.json$/;
+
+/** Source language of every string ERPlora ships (ADR-0055): the rest are translations of it. */
+export const SOURCE_LANGUAGE = 'en';
+
+/**
+ * The languages a template MUST carry: the English source and its Spanish (ADR-0055/0199).
+ *
+ * A template is user-visible text — the card the owner reads in the gallery, and the words the
+ * customer reads on WhatsApp — and the standing rule is the English string AND its `es`. Shipping
+ * only `en` installs green and then writes to a Spanish salon's customers in English. Found by a
+ * mutant on `whatsapp_inbox`: deleting its Spanish document left this door open.
+ */
+export const REQUIRED_LANGUAGES = [SOURCE_LANGUAGE, 'es'];
+
+/** The sidecars of a family, and whether every family must carry one. */
+const SIDECARS = [
+  { suffix: '.grants.json', key: 'grants', required: true },
+  { suffix: '.requires.json', key: 'requires', required: false },
+];
+
+const MODULE_ID = /^[a-z][a-z0-9_]*$/;
+const SEMVER = /^\d+\.\d+\.\d+/;
+
+/** Documentation of the folder — prose, never read as a template. */
+const IS_PROSE = /\.md$/i;
+
+/**
+ * The families under `flows/`, and every entry that is not one.
+ *
+ * @returns {{families: Map<string, {documents: Map<string, string>, grants: string|null, requires: string|null}>, problems: string[]}}
+ */
+export function readFlowsFolder(dir) {
+  const families = new Map();
+  const problems = [];
+  const flowsDir = join(dir, 'flows');
+  if (!existsSync(flowsDir)) return { families, problems };
+
+  const family = (name) => {
+    if (!families.has(name)) {
+      families.set(name, { documents: new Map(), grants: null, requires: null });
+    }
+    return families.get(name);
+  };
+
+  for (const entry of readdirSync(flowsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    const name = entry.name;
+    if (name.startsWith('.')) continue;
+    if (entry.isDirectory()) {
+      problems.push(
+        `flows/${name}/: the contract is FLAT — a folder here is read by nobody. Name the ` +
+          'template `<family>.<lang>.flow.json` next to its `<family>.grants.json`.',
+      );
+      continue;
+    }
+    if (IS_PROSE.test(name)) continue;
+
+    const document = DOCUMENT.exec(name);
+    if (document) {
+      const [, base, lang] = document;
+      const languages = family(base).documents;
+      languages.set(lang, name);
+      continue;
+    }
+
+    const sidecar = SIDECARS.find((s) => name.endsWith(s.suffix));
+    if (sidecar) {
+      family(name.slice(0, -sidecar.suffix.length))[sidecar.key] = name;
+      continue;
+    }
+
+    if (name.endsWith('.flow.json')) {
+      problems.push(
+        `flows/${name}: a template is named \`<family>.<lang>.flow.json\` (lower case, words ` +
+          'joined by `-`, a two-letter language) — this one names no language, so nothing can ' +
+          'tell which hub should be offered it.',
+      );
+    } else {
+      problems.push(
+        `flows/${name}: unexpected file. \`flows/\` holds templates ` +
+          '(`<family>.<lang>.flow.json`), their `<family>.grants.json` / `<family>.requires.json`, ' +
+          'and documentation (`*.md`). Anything else travels in the zip and is opened by nobody.',
+      );
+    }
+  }
+  return { families, problems };
+}
+
+/** Reads a JSON file of the folder, or pushes the parse error. Returns `undefined` on failure. */
+function parse(dir, name, errors) {
+  try {
+    return JSON.parse(readFileSync(join(dir, 'flows', name), 'utf8'));
+  } catch (error) {
+    errors.push(`flows/${name}: not readable as JSON — ${error.message}`);
+    return undefined;
+  }
+}
+
+/** The step ids of a document, in order — the shape a translation must not change. */
+function stepIds(document) {
+  return (Array.isArray(document?.steps) ? document.steps : []).map((step, index) =>
+    typeof step?.id === 'string' && step.id ? step.id : `<step ${index + 1} with no id>`,
+  );
+}
+
+/** What fires the flow, as comparable text: `kind` and, for an event, its name. */
+function triggerSignature(document) {
+  return (Array.isArray(document?.triggers) ? document.triggers : [])
+    .map((trigger) => (trigger?.event ? `${trigger.kind}:${trigger.event}` : String(trigger?.kind)))
+    .join(', ');
+}
+
+/** The document itself, against the FROZEN root and step vocabulary of `flow.schema.json`. */
+function checkDocument(name, document, schema, errors) {
+  const where = `flows/${name}`;
+  if (document === null || typeof document !== 'object' || Array.isArray(document)) {
+    errors.push(`${where}: a flow document is a JSON object.`);
+    return;
+  }
+
+  const known = Object.keys(schema.properties);
+  for (const key of Object.keys(document)) {
+    if (!known.includes(key)) {
+      errors.push(
+        `${where}: unknown key \`${key}\` — the root of a flow document is CLOSED ` +
+          `(the contract admits: ${known.join(', ')}). The hub refuses what it cannot read ` +
+          'rather than running the flow half-way.',
+      );
+    }
+  }
+  for (const key of schema.required ?? []) {
+    if (!(key in document)) errors.push(`${where}: \`${key}\` is required by the flow contract.`);
+  }
+
+  const version = schema.properties.schema_version?.const;
+  if ('schema_version' in document && document.schema_version !== version) {
+    errors.push(
+      `${where}: schema_version \`${document.schema_version}\` — this hub core only knows ` +
+        `\`${version}\`, and an unknown version is REFUSED, never guessed.`,
+    );
+  }
+
+  const minimum = schema.properties.steps?.minItems ?? 1;
+  if ('steps' in document) {
+    if (!Array.isArray(document.steps) || document.steps.length < minimum) {
+      errors.push(`${where}: \`steps\` must be a list of at least ${minimum} — a flow with no steps does nothing.`);
+      return;
+    }
+  } else {
+    return;
+  }
+
+  const step = schema.$defs?.step ?? {};
+  const kinds = step.properties?.kind?.enum ?? [];
+  const seen = new Set();
+  document.steps.forEach((declared, index) => {
+    const at = `${where}: step ${index + 1}`;
+    if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) {
+      errors.push(`${at}: a step is a JSON object.`);
+      return;
+    }
+    for (const key of step.required ?? []) {
+      if (typeof declared[key] !== 'string' || !declared[key]) {
+        errors.push(`${at}: \`${key}\` is required — later steps read a step by its \`id\`.`);
+      }
+    }
+    if (typeof declared.kind === 'string' && kinds.length && !kinds.includes(declared.kind)) {
+      errors.push(
+        `${at}: \`${declared.kind}\` is not a step the hub can run — the vocabulary is FROZEN ` +
+          `(${kinds.join(', ')}).`,
+      );
+    }
+    if (typeof declared.id === 'string' && declared.id) {
+      if (seen.has(declared.id)) {
+        errors.push(`${at}: \`${declared.id}\` is declared twice — a step id is unique in the document.`);
+      }
+      seen.add(declared.id);
+    }
+  });
+}
+
+/** `<family>.grants.json`: what the automation will ask the owner to grant before it can run. */
+function checkGrants(name, sidecar, errors) {
+  const where = `flows/${name}`;
+  if (sidecar === null || typeof sidecar !== 'object' || Array.isArray(sidecar)) {
+    errors.push(`${where}: the grants of a template are a JSON object with a \`grants\` list.`);
+    return;
+  }
+  for (const key of Object.keys(sidecar)) {
+    if (key !== 'grants' && !key.startsWith('_')) {
+      errors.push(`${where}: unknown key \`${key}\` — only \`grants\` and \`_\`-prefixed notes.`);
+    }
+  }
+  if (!Array.isArray(sidecar.grants) || sidecar.grants.length === 0) {
+    errors.push(
+      `${where}: \`grants\` must list at least one grant. A template that asks for nothing ` +
+        'cannot read, write or notify anything either — it would install and do nothing.',
+    );
+    return;
+  }
+  sidecar.grants.forEach((grant, index) => {
+    for (const key of ['kind', 'value']) {
+      if (typeof grant?.[key] !== 'string' || !grant[key]) {
+        errors.push(`${where}: grant ${index + 1} has no \`${key}\` — a grant is \`{ kind, value }\`.`);
+      }
+    }
+  });
+}
+
+/** `<family>.requires.json`: the version floor of the modules whose operations the template uses. */
+function checkRequires(name, sidecar, errors) {
+  const where = `flows/${name}`;
+  if (sidecar === null || typeof sidecar !== 'object' || Array.isArray(sidecar)) {
+    errors.push(`${where}: the version floor is a JSON object with a \`modules\` map.`);
+    return;
+  }
+  for (const key of Object.keys(sidecar)) {
+    if (key !== 'modules' && !key.startsWith('_')) {
+      errors.push(`${where}: unknown key \`${key}\` — only \`modules\` and \`_\`-prefixed notes.`);
+    }
+  }
+  const modules = sidecar.modules;
+  if (modules === undefined) return;
+  if (modules === null || typeof modules !== 'object' || Array.isArray(modules)) {
+    errors.push(`${where}: \`modules\` is a map \`{ "<module id>": "<minimum version>" }\`.`);
+    return;
+  }
+  for (const [id, floor] of Object.entries(modules)) {
+    if (!MODULE_ID.test(id)) errors.push(`${where}: \`${id}\` is not a module id.`);
+    if (typeof floor !== 'string' || !SEMVER.test(floor)) {
+      errors.push(
+        `${where}: \`${id}\` floors at \`${floor}\` — a floor is a SemVer version (\`1.1.69\`), ` +
+          'because it is compared against the version installed on the hub.',
+      );
+    }
+  }
+}
+
+/**
+ * Judges the `flows/` folder of a module. Returns `{ errors, warnings }` (arrays of strings); never
+ * throws — the severity is `validate`'s call, as with every other check.
+ */
+export function checkFlows(dir, schema = loadFlowSchema()) {
+  const errors = [];
+  const warnings = [];
+  const { families, problems } = readFlowsFolder(dir);
+  errors.push(...problems);
+
+  for (const [name, family] of families) {
+    if (family.documents.size === 0) {
+      const orphans = SIDECARS.map((s) => family[s.key]).filter(Boolean);
+      errors.push(
+        `flows/${orphans.join(', flows/')}: there is no \`${name}.${SOURCE_LANGUAGE}.flow.json\` ` +
+          'beside it — a sidecar of a template that does not exist is read by nobody.',
+      );
+      continue;
+    }
+    for (const lang of REQUIRED_LANGUAGES) {
+      if (family.documents.has(lang)) continue;
+      errors.push(
+        lang === SOURCE_LANGUAGE
+          ? `flows/${name}.${lang}.flow.json is missing — English is the SOURCE language ` +
+            `(ADR-0055) and the rest are translations of it, so \`${name}\` has no original.`
+          : `flows/${name}.${lang}.flow.json is missing — every string ERPlora ships travels as ` +
+            `English AND its \`${lang}\` (ADR-0055/0199). A template is what the owner reads in ` +
+            'the gallery and what the customer reads in the message, so without it a Spanish ' +
+            'business is offered — and sends — English.',
+      );
+    }
+    for (const sidecar of SIDECARS) {
+      if (sidecar.required && !family[sidecar.key]) {
+        errors.push(
+          `flows/${name}${sidecar.suffix} is missing — without it nobody can tell what \`${name}\` ` +
+            'will ask permission for, and the owner is asked to switch on something opaque.',
+        );
+      }
+    }
+
+    const parsed = new Map();
+    for (const [lang, file] of family.documents) {
+      const document = parse(dir, file, errors);
+      if (document === undefined) continue;
+      checkDocument(file, document, schema, errors);
+      parsed.set(lang, document);
+    }
+
+    // A translation is PROSE: same steps, same order, same trigger — other words. When the two
+    // halves drift, a Spanish hub runs a different automation from an English one and nothing says
+    // so, which is the same shape of bug as a gallery copy left behind (ERPlora/flows#52).
+    const source = parsed.get(SOURCE_LANGUAGE);
+    if (source) {
+      for (const [lang, document] of parsed) {
+        if (lang === SOURCE_LANGUAGE) continue;
+        const here = stepIds(document);
+        const there = stepIds(source);
+        if (here.join(' → ') !== there.join(' → ')) {
+          errors.push(
+            `flows/${family.documents.get(lang)}: its steps are not the translation of ` +
+              `\`${name}.${SOURCE_LANGUAGE}.flow.json\` — \`${here.join(' → ')}\` against ` +
+              `\`${there.join(' → ')}\`. A translation changes the words, never the automation.`,
+          );
+        }
+        if (triggerSignature(document) !== triggerSignature(source)) {
+          errors.push(
+            `flows/${family.documents.get(lang)}: fired by \`${triggerSignature(document)}\` while ` +
+              `\`${name}.${SOURCE_LANGUAGE}.flow.json\` is fired by ` +
+              `\`${triggerSignature(source)}\` — the same template cannot start on two things.`,
+          );
+        }
+      }
+    }
+
+    if (family.grants) {
+      const sidecar = parse(dir, family.grants, errors);
+      if (sidecar !== undefined) checkGrants(family.grants, sidecar, errors);
+    }
+    if (family.requires) {
+      const sidecar = parse(dir, family.requires, errors);
+      if (sidecar !== undefined) checkRequires(family.requires, sidecar, errors);
+    }
+  }
+
+  return { errors, warnings };
+}

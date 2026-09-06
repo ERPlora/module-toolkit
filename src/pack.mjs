@@ -18,6 +18,13 @@ import { signatureFileFor } from './signing.mjs';
 // `README.md`/`CHANGELOG.md` (ADR-0106): el SaaS los extrae del ZIP en cada sync y los guarda en
 // `Module.readme`/`Module.changelog` para pintar la ficha de `/marketplace/<slug>/` desde la BD.
 // Si no viajan aquí, la ficha se queda sin documentación — el ZIP es la fuente de verdad.
+// `flows` (module-toolkit#209): las automatizaciones que el módulo trae DE FÁBRICA — el documento
+// del flujo por idioma, los permisos que pedirá y el suelo de versión que necesita. Viajan como
+// `locales`: por CONVENCIÓN de carpeta, sin clave en el manifest. Es deliberado — la raíz del
+// manifest es un contrato CERRADO (ADR-0286), así que una clave nueva pondría un suelo de versión
+// de hub a cada módulo que la declarase y avisaría en todos los hubs anteriores; por carpeta, un
+// módulo publica hoy sus plantillas y el día que aterrice ERPlora/hub#1611 aparecen solas, sin
+// republicar nada. Lo que hay dentro lo juzga `validate-flows.mjs`.
 export const INCLUDE = [
   'module.json',
   'README.md',
@@ -28,6 +35,7 @@ export const INCLUDE = [
   'commands',
   'schemas',
   'locales',
+  'flows',
 ];
 
 /** Rutas de `INCLUDE` presentes en `dir`, en el orden declarado. Es lo que acaba dentro del zip. */
