@@ -102,7 +102,7 @@ export function checkFiscalRegime(manifest) {
   return errs;
 }
 
-export async function validate(moduleDir, { pg = false } = {}) {
+export async function validate(moduleDir, { pg = false, publishing = false } = {}) {
   const dir = resolve(process.cwd(), moduleDir);
   const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
 
@@ -386,7 +386,7 @@ export async function validate(moduleDir, { pg = false } = {}) {
   // desde hub#521—; esta es la que la RECLAMA. Solo bloquea lo demostrablemente falso: un suelo
   // declarado que no llega al sello, o ningún suelo (= «cualquier hub») cuando ni el hub más nuevo
   // llega. Los 25 módulos que hoy hornean por debajo de la flota no se enteran.
-  const outfitkitFloor = checkOutfitkitFloor(dir, manifest);
+  const outfitkitFloor = checkOutfitkitFloor(dir, manifest, { publishing });
   for (const w of outfitkitFloor.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (outfitkitFloor.errors.length) {
     throw new Error(

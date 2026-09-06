@@ -45,7 +45,11 @@ export async function pack(moduleDir) {
   const id = manifest.id;
   const version = manifest.version;
 
-  await validate(dir);
+  // `publishing: true` es lo que sube de aviso a bloqueo el caso «horneado por delante de todo
+  // hub conocido» (module-toolkit#201). En `validate` a secas es aviso a propósito —el sello lo
+  // pone el checkout compartido `../outfitkit`, no el autor—; aquí no, porque este zip va a un
+  // cliente. Es el modelo de cualquier tienda: compilas con lo que quieras, la tienda comprueba.
+  await validate(dir, { publishing: true });
   await build(dir); // asegura dist/<id>.esm.js fresco
 
   const present = packedPaths(dir);

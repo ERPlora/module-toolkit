@@ -18,20 +18,31 @@
 // mensaje accionable en vez de instalar algo a medias. Lo que faltaba es que alguien la reclamara
 // antes de publicar, que es este fichero.
 //
-// 🔴 **NO es un big bang, y ese es el diseño.** El sello dice contra qué OutfitKit se horneó, no qué
-// APIs se usan: exigir un suelo a todo el que hornee con algo nuevo pondría los 27 módulos en rojo
-// el mismo día por algo que no han hecho, y un gate que bloquea a todo el mundo se apaga, no se
-// obedece (misma lección que `FILL_GRANDFATHERED` en `validate-ionic-fill.mjs`). Así que solo hay
-// dos rojos, y los dos son afirmaciones DEMOSTRABLEMENTE falsas:
+// 🔴 **TRINQUETE, no big bang — y el reparto es lo que lo hace desplegable.** Hay dos casos, y NO
+// pesan lo mismo:
 //
-//   1. El módulo declara un suelo y horneó contra un OutfitKit que ese suelo NO lleva. Dice que
-//      corre en un hub que no puede pintarlo.
-//   2. El módulo no declara nada — que significa «cualquier hub» — y horneó contra un OutfitKit que
-//      NINGÚN hub conocido lleva. «Cualquiera» es falso para todos, no solo para los viejos.
+//   1. El módulo **declara** un suelo y horneó contra un OutfitKit que ese suelo NO lleva. Es una
+//      afirmación del autor demostrablemente falsa: dice correr en un hub que no puede pintarlo.
+//      → **ERROR siempre**, también en `validate`.
+//   2. El módulo **no declara nada** —que significa «cualquier hub»— y horneó contra un OutfitKit
+//      que NINGÚN hub conocido lleva. → **AVISO en `validate`, ERROR en `pack`** (`publishing`).
 //
-// Medido el 2026-09-06 sobre los `dist/outfitkit.json` commiteados del workspace: los sellos van de
-// 0.1.44 a 0.1.59 y el hub más nuevo lleva 0.1.58 → 25 de 27 módulos siguen en verde y los dos que
-// no (`sales` e `inventory`, ambos 0.1.59) son exactamente la clase de fallo que esto persigue.
+// Por qué el (2) no puede ser rojo en `validate`, medido el 2026-09-06 en este árbol: el sello NO
+// lo elige el autor. `stampOutfitkit()` lo resuelve desde `node_modules/@erplora/outfitkit`, que en
+// este repo es **`file:../outfitkit`** — el checkout de desarrollo compartido, hoy en 0.1.59 con
+// npm ya en 0.1.65, o sea por delante de la flota (0.1.58) **por la propia premisa de la issue**. Y
+// `validate` obliga a reconstruir en cuanto se toca `ui/**` (`checkBundleArtifact`). Sumado: la
+// siguiente PR de CUALQUIERA de los 27 módulos que toque su UI se pondría roja por la cadencia de
+// release del hub, no por nada que hiciera su autor. Un gate que para a todo el mundo se apaga, no
+// se obedece — es la misma lección de `FILL_GRANDFATHERED` y el MISMO reparto que hace
+// `bundle-freshness.mjs` al lado (con sello → error; sin sello → aviso).
+//
+// Y donde sí bloquea es en `erplora pack`, que es la puerta del marketplace: construye y prueba
+// contra lo que quieras, pero no PUBLICAS una pantalla que ningún hub sabe pintar. Es el modelo de
+// cualquier tienda de aplicaciones — compilas contra el SDK nuevo, la tienda comprueba al enviar.
+//
+// El aviso deja de ser decorativo el día que exista la fuente real (hub#1588): con la versión que
+// el build del hub publique de verdad, el (2) puede volver a ser rojo sin castigar a nadie.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OUTFITKIT_STAMP } from './outfitkit-stamp.mjs';
@@ -160,8 +171,11 @@ function readStamp(dir) {
  *
  * Devuelve `{ errors, warnings }`. Sin sello no dice nada: es el estado de los módulos construidos
  * antes de que el sello existiera, y el shell ya sabe tratar su ausencia.
+ *
+ * `publishing` = se está empaquetando para el marketplace (`erplora pack`). Es lo único que separa
+ * el aviso del bloqueo en el caso «sin suelo declarado»: ver el trinquete de la cabecera.
  */
-export function checkOutfitkitFloor(dir, manifest) {
+export function checkOutfitkitFloor(dir, manifest, { publishing = false } = {}) {
   const errors = [];
   const warnings = [];
 
@@ -178,17 +192,26 @@ export function checkOutfitkitFloor(dir, manifest) {
 
   const declared = manifest?.compatibility?.min_erplora_version;
   const needed = oldestHubShipping(stamp);
+  const newestHub = newestKnownHub();
+  // 🔴 Las dos salidas se dan CON SU PRECIO. Una salida cuyo coste se calla no es una elección, es
+  // una trampa: declarar el tag siguiente deja el módulo sin instalarse en NINGÚN hub vivo hasta
+  // que ese tag salga (hub#521 lo aplica), y reconstruir más abajo obliga a mover `../outfitkit`,
+  // que es un checkout compartido y no es del autor. Quien decide con el coste delante elige bien.
   const howToDeclare = needed
     ? `Declara \`"compatibility": { "min_erplora_version": "${needed.hub}" }\` en el manifest ` +
       `(el hub más antiguo que lleva OutfitKit ${stamp}) — el hub lo aplica al instalar (hub#521) ` +
-      'y quien tenga un core más viejo recibe un mensaje accionable en vez de una pantalla rota.'
-    : `NINGÚN hub publicado lleva OutfitKit ${stamp} todavía (el más nuevo, ` +
-      `${newestKnownHub().hub}, lleva ${newestKnownHub().outfitkit}). Tienes dos salidas y las dos ` +
-      `valen: reconstruir contra ${newestKnownHub().outfitkit}, o declarar ` +
-      `\`"compatibility": { "min_erplora_version": "${nextHubAfter(newestKnownHub().hub)}" }\` — el ` +
-      'primer core que podrá llevarlo. Declararlo NO es hacer trampa: es la afirmación cierta («esto ' +
-      'necesita un hub más nuevo que ninguno publicado»), y el hub rechaza la instalación en los ' +
-      'viejos con un mensaje accionable (hub#521) en vez de pintar la pantalla mal.';
+      'y quien tenga un core más viejo recibe un mensaje accionable en vez de una pantalla rota. ' +
+      `COSTE: en los hubs anteriores a ${needed.hub} el módulo dejará de instalarse hasta que ` +
+      'actualicen.'
+    : `NINGÚN hub publicado lleva OutfitKit ${stamp} todavía (el más nuevo, ${newestHub.hub}, ` +
+      `lleva ${newestHub.outfitkit}). Dos salidas, con su precio: (a) declarar ` +
+      `\`"compatibility": { "min_erplora_version": "${nextHubAfter(newestHub.hub)}" }\`, que es la ` +
+      'afirmación CIERTA («necesita un hub más nuevo que ninguno publicado») y hace que el hub ' +
+      'rechace la instalación con un mensaje accionable (hub#521) en vez de pintar la pantalla mal ' +
+      `— COSTE: el módulo dejará de instalarse en TODA la flota viva (${newestHub.hub} y ` +
+      'anteriores) hasta que salga ese tag; (b) reconstruir contra ' +
+      `${newestHub.outfitkit} — COSTE: hay que bajar el checkout compartido \`../outfitkit\`, que ` +
+      'no es tuyo, así que afecta a quien esté trabajando en él.';
 
   if (declared) {
     const floor = outfitkitForFloor(declared);
@@ -214,15 +237,24 @@ export function checkOutfitkitFloor(dir, manifest) {
     return { errors, warnings };
   }
 
-  const newest = newestKnownHub();
-  if (compareOutfitkitVersions(stamp, newest.outfitkit) > 0) {
-    errors.push(
+  if (compareOutfitkitVersions(stamp, newestHub.outfitkit) > 0) {
+    const said =
       `el módulo se horneó contra OutfitKit ${stamp} y no declara ` +
-        '`compatibility.min_erplora_version`, o sea que dice correr en CUALQUIER hub — pero el más ' +
-        `nuevo que existe (${newest.hub}) lleva OutfitKit ${newest.outfitkit}, así que no hay uno ` +
-        'solo que pueda pintarlo. Los `ok-*` que pintan son los del SHELL, no los del bundle ' +
-        `(ADR-0133): la pantalla sale rota en casa del cliente y él no puede arreglarlo. ${howToDeclare}`,
-    );
+      '`compatibility.min_erplora_version`, o sea que dice correr en CUALQUIER hub — pero el más ' +
+      `nuevo que existe (${newestHub.hub}) lleva OutfitKit ${newestHub.outfitkit}, así que no hay ` +
+      'uno solo que pueda pintarlo. Los `ok-*` que pintan son los del SHELL, no los del bundle ' +
+      '(ADR-0133): la pantalla sale rota en casa del cliente y él no puede arreglarlo. ';
+    // El trinquete de la cabecera: en `validate` es aviso porque el sello lo pone el checkout
+    // compartido, no el autor; en `pack` es rojo porque ahí es donde el zip sale hacia un cliente.
+    if (publishing) errors.push(`${said}${howToDeclare}`);
+    else {
+      warnings.push(
+        `${said}NO se bloquea aquí a propósito: el sello sale del checkout compartido ` +
+          '`../outfitkit`, que va por delante de la flota por diseño, así que un rojo en `validate` ' +
+          'pararía a todo módulo que toque su UI por la cadencia de release del hub. Donde SÍ para ' +
+          `es en \`erplora pack\`, antes de que el zip llegue a un cliente. ${howToDeclare}`,
+      );
+    }
   }
   return { errors, warnings };
 }

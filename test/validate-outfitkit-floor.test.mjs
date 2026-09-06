@@ -16,7 +16,7 @@
 // already ENFORCES it (hub#521). What was missing is the half that asks for it at the author's door.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,14 +88,40 @@ test('the fleet tag v1.1.13 resolves to OutfitKit 0.1.58 — the pair sales#265 
   assert.equal(row.outfitkit, '0.1.58');
 });
 
-test('a module baked against an OutfitKit NO hub ships is rejected, floor or no floor', () => {
+test('no floor + a bake ahead of every hub WARNS on validate and BLOCKS on publish', () => {
+  // 🔴 THE RATCHET, and it is the whole reason this check is shippable — same split
+  // `bundle-freshness.mjs` already makes next door. The stamp comes from the toolkit's
+  // `file:../outfitkit`, the SHARED development checkout, which is ahead of the fleet by design
+  // (that IS the premise of the issue). And `validate` forces a rebuild the moment `ui/**` moves
+  // (`checkBundleArtifact`). So blocking here would redden the next pull request of EVERY module
+  // that touches its UI — for the hub's release cadence, not for anything the author did — and a
+  // gate that stops everybody gets switched off, not obeyed.
+  //
+  // Where it DOES block is `erplora pack`, the door to the marketplace: the act that reaches a
+  // client. Build and test against whatever you like; you do not PUBLISH a screen no hub can paint.
   const newest = newestKnownHub();
   const { dir, manifest } = moduleDir({ stamp: '0.1.99' });
-  const { errors } = checkOutfitkitFloor(dir, manifest);
-  assert.equal(errors.length, 1, `expected exactly one error, got ${JSON.stringify(errors)}`);
-  assert.match(errors[0], /0\.1\.99/);
-  assert.match(errors[0], new RegExp(newest.outfitkit.replace(/\./g, '\\.')));
-  assert.match(errors[0], /min_erplora_version/, 'the message has to say what to declare');
+
+  const onValidate = checkOutfitkitFloor(dir, manifest);
+  assert.deepEqual(onValidate.errors, [], 'a plain validate must not block on the shared checkout');
+  assert.equal(onValidate.warnings.length, 1, JSON.stringify(onValidate.warnings));
+  assert.match(onValidate.warnings[0], /0\.1\.99/);
+  assert.match(onValidate.warnings[0], new RegExp(newest.outfitkit.replace(/\./g, '\\.')));
+
+  const onPublish = checkOutfitkitFloor(dir, manifest, { publishing: true });
+  assert.equal(onPublish.errors.length, 1, JSON.stringify(onPublish.errors));
+  assert.match(onPublish.errors[0], /0\.1\.99/);
+  assert.match(onPublish.errors[0], /min_erplora_version/, 'the message has to say what to declare');
+});
+
+test('the two ways out are priced, not just named', () => {
+  // An escape hatch whose cost is hidden is not a choice, it is a trap: declaring the next tag
+  // stops the module installing on the WHOLE live fleet until that tag ships (hub#521), and
+  // rebuilding lower means moving `../outfitkit`, a checkout the author does not own.
+  const { dir, manifest } = moduleDir({ stamp: '0.1.99' });
+  const [blocked] = checkOutfitkitFloor(dir, manifest, { publishing: true }).errors;
+  assert.match(blocked, /dejará de instalarse/, 'the cost of declaring the next tag');
+  assert.match(blocked, /\.\.\/outfitkit/, 'the cost of rebuilding lower');
 });
 
 test('the block ALWAYS leaves a one-line way out, even when no hub ships the bake yet', () => {
@@ -104,7 +130,7 @@ test('the block ALWAYS leaves a one-line way out, even when no hub ships the bak
   // which is the true statement («this needs a hub newer than any published») and the one hub#521
   // turns into a refused install instead of a broken screen.
   const { dir, manifest } = moduleDir({ stamp: '0.1.99' });
-  const [error] = checkOutfitkitFloor(dir, manifest).errors;
+  const [error] = checkOutfitkitFloor(dir, manifest, { publishing: true }).errors;
   assert.match(error, new RegExp(nextHubAfter(newestKnownHub().hub).replace(/\./g, '\\.')));
   assert.match(error, /hub#521/, 'it has to say what declaring it buys');
 });
@@ -178,6 +204,22 @@ test('a stamp that cannot be read WARNS instead of blocking on somebody else art
   assert.equal(warnings.length, 1, `expected one warning, got ${JSON.stringify(warnings)}`);
 });
 
+test('a stamp whose version is not a string WARNS: it never reaches the comparison', () => {
+  // Mutant M-A (reviewer of #202): `typeof value === 'string' && value ? value : null` →
+  // `value ?? null` stayed 17/17 green. It is not cosmetic — `{"outfitkit": 159}` then reaches
+  // `compareOutfitkitVersions(159, …)`, which reads it as `[159]` and makes 159 NEWER than
+  // everything, so a typo in someone else's artifact turns into a hard block. The header of
+  // `readStamp` promised to cover «JSON roto o sin la clave», and only the first half was tested.
+  for (const body of ['{ "outfitkit": 159 }', '{}', '{ "outfitkit": "" }', '{ "outfitkit": null }']) {
+    const { dir, manifest } = moduleDir({});
+    mkdirSync(join(dir, 'dist'), { recursive: true });
+    writeFileSync(join(dir, 'dist', 'outfitkit.json'), body);
+    const { errors, warnings } = checkOutfitkitFloor(dir, manifest, { publishing: true });
+    assert.deepEqual(errors, [], `${body} must not block`);
+    assert.equal(warnings.length, 1, `${body}: expected one warning, got ${JSON.stringify(warnings)}`);
+  }
+});
+
 test('outfitkitForFloor answers with the OLDEST hub that satisfies the claim, not the newest', () => {
   // The floor is a promise about the WEAKEST hub the module accepts; resolving it to the newest
   // would make every declaration self-fulfilling and the check would never fire.
@@ -232,11 +274,36 @@ function validatableModule({ stamp, compatibility }) {
 
 const runValidate = (dir) => erplora('validate', dir);
 
-test('`erplora validate` FAILS on a module no hub can paint', () => {
-  const res = runValidate(validatableModule({ stamp: '0.1.99' }));
-  assert.equal(res.status, 1, `expected a red validate, got ${res.status}:\n${res.out}`);
-  assert.match(res.out, /module-toolkit#201/);
-  assert.match(res.out, /0\.1\.99/);
+test('`validate({ publishing })` BLOCKS what plain validate only warns about', async () => {
+  // The publishing door is `erplora pack`, and packing needs esbuild + lit — dependencies the CI
+  // gate of the module repos cannot install (ERPlora/pm#107), so driving `pack` end to end here
+  // would make this suite unrunnable in the one place it has to run. What IS driven is the real
+  // `validate` with the flag `pack` passes, plus the wiring assertion below. Between the two there
+  // is no gap: the flag is honoured, and it is handed over.
+  const { validate } = await import('../src/validate.mjs');
+  const dir = validatableModule({ stamp: '0.1.99' });
+  await assert.rejects(
+    () => validate(dir, { publishing: true }),
+    (err) => /module-toolkit#201/.test(err.message) && /0\.1\.99/.test(err.message),
+    'packing a module no hub can paint has to fail',
+  );
+  // And the same module, without the flag, goes through.
+  await validate(dir);
+});
+
+test('`erplora pack` is what turns the warning into a block: it hands over the flag', () => {
+  // Mutant-proofing the seam. Dropping `{ publishing: true }` in `pack.mjs` would leave every unit
+  // test green while the marketplace door stayed open — the same «correct and unreachable» shape
+  // this file already guards against with its CLI tests.
+  const pack = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'pack.mjs'),
+    'utf8',
+  );
+  assert.match(
+    pack,
+    /await validate\(dir, \{[^}]*publishing: true/,
+    '`pack` must call `validate` with `publishing: true`, or nothing ever blocks a publication',
+  );
 });
 
 test('`erplora validate` FAILS when the declared floor does not reach the bake', () => {
@@ -245,6 +312,26 @@ test('`erplora validate` FAILS when the declared floor does not reach the bake',
   );
   assert.equal(res.status, 1, `expected a red validate, got ${res.status}:\n${res.out}`);
   assert.match(res.out, /1\.1\.0/);
+});
+
+test('`erplora validate` PRINTS the warning: the only channel that asks for the table row', () => {
+  // Mutant M-J (reviewer of #202): deleting the `console.warn` loop from the wiring left 17/17
+  // green. That loop is the only thing that ever says «add the tag to HUB_OUTFITKIT» — and with
+  // the ratchet above it is also how a module learns it is ahead of the fleet. A warning nobody
+  // can see is the same defect as a check nobody calls.
+  const res = runValidate(
+    validatableModule({ stamp: '0.1.99', compatibility: { min_erplora_version: '9.9.9' } }),
+  );
+  assert.equal(res.status, 0, `a floor above the table must not block:\n${res.out}`);
+  assert.match(res.out, /⚠/, `the warning never reached the terminal:\n${res.out}`);
+  assert.match(res.out, /HUB_OUTFITKIT/, `the warning has to say what to do:\n${res.out}`);
+});
+
+test('`erplora validate` WARNS instead of blocking a bake ahead of the fleet', () => {
+  const res = runValidate(validatableModule({ stamp: '0.1.99' }));
+  assert.equal(res.status, 0, `validate must not block on the shared checkout:\n${res.out}`);
+  assert.match(res.out, /⚠/, `the module has to be told, out loud:\n${res.out}`);
+  assert.match(res.out, /0\.1\.99/);
 });
 
 test('`erplora validate` stays GREEN on what the fleet can paint', () => {

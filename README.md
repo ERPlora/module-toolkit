@@ -330,17 +330,32 @@ La mitad que **decide** ya existía: `compatibility.min_erplora_version` en el m
 accionable en vez de instalar algo a medias). Faltaba la que la **reclama**, y es
 `src/validate-outfitkit-floor.mjs`.
 
-**Solo bloquea lo demostrablemente falso**, no todo lo sospechoso — el sello dice contra qué OutfitKit
-se horneó, no qué APIs se usan, así que exigir un suelo a todo el que hornee con algo nuevo pondría
-los 27 módulos en rojo el mismo día (misma lección que `FILL_GRANDFATHERED`). Los dos rojos son:
+**Trinquete, no big bang** — y el reparto es lo que lo hace desplegable. Hay dos casos y no pesan lo
+mismo:
 
-1. El manifest **declara** un suelo y el sello es más nuevo que el OutfitKit que ese suelo lleva.
+1. El manifest **declara** un suelo y el sello es más nuevo que el OutfitKit que ese suelo lleva. Es
+   una afirmación del autor demostrablemente falsa → **error siempre**.
 2. El manifest **no declara nada** —que significa «cualquier hub»— y el sello es más nuevo que el
-   OutfitKit del hub más nuevo que existe. «Cualquiera» es falso para todos, no solo para los viejos.
+   OutfitKit del hub más nuevo que existe → **aviso en `validate`, error en `erplora pack`**.
 
-Y siempre hay salida de una línea: declarar `compatibility.min_erplora_version` con el hub que sí lo
-lleva, o —si aún no lo lleva ninguno— con el **siguiente** tag. Declararlo no es hacer trampa: es la
-afirmación cierta, y hub#521 la convierte en una instalación rechazada en vez de una pantalla rota.
+Por qué el (2) no puede ser rojo en `validate`, **medido**: el sello no lo elige el autor.
+`stampOutfitkit()` lo resuelve desde `node_modules/@erplora/outfitkit`, que aquí es
+`file:../outfitkit` —el checkout de desarrollo compartido, hoy 0.1.59 con npm en 0.1.65, o sea por
+delante de la flota (0.1.58) *por la propia premisa*— y `validate` obliga a reconstruir en cuanto se
+toca `ui/**` (`checkBundleArtifact`). Sumado: **27 de 27** módulos se pondrían rojos en su siguiente
+PR de UI, por la cadencia de release del hub y no por nada que hicieran sus autores. Un gate que para
+a todo el mundo se apaga, no se obedece — es el MISMO reparto que hace `bundle-freshness.mjs` al lado
+(con sello → error; sin sello → aviso).
+
+Donde sí bloquea es en `erplora pack`, la puerta del marketplace (`pack.mjs` llama a
+`validate(dir, { publishing: true })`): construye y prueba contra lo que quieras, pero no **publicas**
+una pantalla que ningún hub sabe pintar. Es el modelo de cualquier tienda de aplicaciones.
+
+Y siempre hay salida de una línea, **con su precio dicho**: declarar `min_erplora_version` con el hub
+que sí lo lleva —o, si no lo lleva ninguno, con el **siguiente** tag—, sabiendo que hub#521 hará que
+el módulo deje de instalarse en los hubs por debajo hasta que actualicen; o reconstruir más abajo,
+sabiendo que eso obliga a mover `../outfitkit`, que es compartido. El día que exista la fuente real
+(hub#1588), el (2) puede volver a ser rojo sin castigar a nadie.
 
 ### La tabla `HUB_OUTFITKIT`, y por qué es un apaño honesto
 
@@ -352,7 +367,11 @@ de crearse el tag»; `built_at` es la fecha de creación del tag en `ERPlora/hub
 - **Se comprueba contra un positivo conocido:** la fila de `1.1.13` → `0.1.58` es la que sales#265
   midió a mano por otro camino, y `test/validate-outfitkit-floor.test.mjs` la clava para que deje de
   cuadrar en voz alta el día que la derivación se tuerza.
-- **Mantenerla es parte de publicar el hub:** un tag nuevo del hub es una fila nueva aquí.
+- **Es el séptimo espejo del hub, con su alarma.** `canonical-mirrors.test.mjs` lee los TAGS del hub
+  vecino (refs, nunca el working tree) y exige dos cosas: que cada fila nombre un tag que existe de
+  verdad con su fecha de creación, y que el tag más nuevo esté en la tabla. Así, «mantenerla es parte
+  de publicar el hub» deja de ser memoria y pasa a ser mecanismo: sin la fila, el control mediría los
+  módulos contra una flota que ya no existe. Skip honesto si no hay hub al lado, como los otros seis.
 - **No es la fuente de verdad.** Quien SABE la versión es el build del hub, que hoy no la publica en
   ningún artefacto. Que la emita él y esto la lea es la otra mitad, y vive en hub#1588.
 

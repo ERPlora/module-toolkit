@@ -52,7 +52,8 @@ import {
   KERNEL_CONTRACT_NOT_MIRRORED,
   VENDORED_KERNEL_CONTRACT_DIR,
 } from '../src/kernel-contract.mjs';
-import { hubPath } from './hub-mirror.mjs';
+import { hubPath, hubTags } from './hub-mirror.mjs';
+import { HUB_OUTFITKIT } from '../src/validate-outfitkit-floor.mjs';
 
 
 /** `pub const BRIDGE_FUNCTIONS: &[&str] = &["erp_now", …];` → the names, in order. */
@@ -379,4 +380,57 @@ test('the kernel prose the hub keeps is NOT vendored here (#121)', () => {
         'nobody checks is worse than no copy — delete it',
     );
   }
+});
+
+// ── The seventh mirror: `HUB_OUTFITKIT` (module-toolkit#201) ───────────────────────────────────
+//
+// The table that says which OutfitKit each hub image carries is DERIVED, not read: the hub's
+// Dockerfile installs `@erplora/outfitkit@latest` with a cachebust, so the version of an image is
+// only deducible from WHEN it was built. That makes the table a mirror of the hub like the six
+// above — and it was the only one with nothing watching it. Two things could rot in silence:
+//
+//   * a row could be wrong, or simply invented. Verified in review: adding a row for a tag that
+//     does not exist (`1.1.14 → 0.1.65`) left the suite 17/17 green.
+//   * the fleet could publish a NEW tag and nobody add it. That one is worse than untidy: the
+//     check would then say «no hub ships OutfitKit 0.1.60» about a module the fleet paints fine.
+//
+// The README said «keeping it up to date is part of publishing the hub», and that is memory, not
+// mechanism. This is the mechanism. It reads the neighbouring hub's TAGS — refs, so no working
+// tree is involved — and skips honestly when there is no hub, exactly like the other six.
+
+test('every row of HUB_OUTFITKIT names a REAL hub tag, dated as the tag is (#201)', (t) => {
+  const tags = hubTags(t, 'v1.1.*');
+  if (!tags) return;
+  const wrong = [];
+  for (const row of HUB_OUTFITKIT) {
+    const built = tags.get(`v${row.hub}`);
+    if (!built) {
+      wrong.push(`${row.hub}: there is no tag \`v${row.hub}\` in ERPlora/hub — invented row`);
+      continue;
+    }
+    if (Date.parse(built) !== Date.parse(row.built_at)) {
+      wrong.push(`${row.hub}: built_at says ${row.built_at}, the tag was created ${built}`);
+    }
+  }
+  assert.deepEqual(
+    wrong,
+    [],
+    'HUB_OUTFITKIT (module-toolkit/src/validate-outfitkit-floor.mjs) drifted from the hub tags. ' +
+      'Every row is «the last @erplora/outfitkit published on npm before this tag was created», ' +
+      'so a wrong date is a wrong OutfitKit and the floor check answers with it',
+  );
+});
+
+test('the NEWEST hub tag is in HUB_OUTFITKIT: publishing the hub adds its row (#201)', (t) => {
+  const tags = hubTags(t, 'v1.1.*');
+  if (!tags) return;
+  const newestTag = [...tags.keys()].sort((a, b) => Date.parse(tags.get(a)) - Date.parse(tags.get(b))).at(-1);
+  assert.ok(
+    HUB_OUTFITKIT.some((row) => `v${row.hub}` === newestTag),
+    `ERPlora/hub published ${newestTag} and HUB_OUTFITKIT does not know it. Until the row is ` +
+      'added, `erplora validate` measures modules against a fleet that no longer exists — it will ' +
+      'warn that «no hub ships OutfitKit X» about screens the fleet paints perfectly. Add the row ' +
+      "(the last `@erplora/outfitkit` published before that tag's creation date), or close " +
+      'hub#1588 so the build publishes the version and the table stops being derived',
+  );
 });

@@ -103,6 +103,59 @@ export function hubPath(t, ...segments) {
 }
 
 /**
+ * The hub's tags matching `pattern`, as `Map<tag, creation date ISO>`, or `null` after skipping.
+ *
+ * Tags are REFS, so unlike `hubPath` there is no working tree to be fooled by and no ref to export:
+ * whichever branch the neighbouring checkout happens to sit on cannot change the answer.
+ *
+ * ⚠️ A checkout with no tags is an honest SKIP, not a failure, and the reason matters:
+ * `actions/checkout` does not fetch tags by default, so the hub's own CI can hand over a real
+ * checkout that legitimately has none. Failing there would teach everyone to ignore this mirror.
+ * What is NOT tolerated is the same thing `hubPath` refuses — a DECLARED hub that is not a
+ * repository at all.
+ *
+ * @param {{skip: (reason: string) => void}} t the test context
+ */
+export function hubTags(t, pattern, given = {}) {
+  const source = asSource(given);
+  if (source.kind === 'absent') {
+    t.skip(
+      `ERPlora/hub is not in this checkout (looked in \`${source.dir}\`) — this mirror is gated ` +
+        'from the hub side instead; clone the hub alongside, or set ERPLORA_HUB_DIR, to run it here',
+    );
+    return null;
+  }
+  const listed = spawnSync(
+    'git',
+    ['-C', source.dir, 'for-each-ref', '--format=%(refname:short)\t%(creatordate:iso-strict)', `refs/tags/${pattern}`],
+    { encoding: 'utf8' },
+  );
+  if (listed.status !== 0) {
+    throw new Error(
+      `\`${source.dir}\` was offered as ERPlora/hub and git cannot list its tags ` +
+        `(${(listed.stderr || '').trim() || 'no stderr'}). A declared hub that cannot be read is an ` +
+        'error, never a skip (module-toolkit#61)',
+    );
+  }
+  const tags = new Map(
+    listed.stdout
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => line.split('\t'))
+      .filter(([, date]) => date),
+  );
+  if (!tags.size) {
+    t.skip(
+      `\`${source.dir}\` carries no \`${pattern}\` tag. \`actions/checkout\` does not fetch tags ` +
+        'by default, so this is a checkout with nothing to compare against, not a divergence — ' +
+        'fetch the tags (`git fetch --tags`) to run it',
+    );
+    return null;
+  }
+  return tags;
+}
+
+/**
  * The source a caller passed explicitly. `{ hubDir, declared }` is the older spelling and still
  * means "this directory, read from disk".
  */
