@@ -342,3 +342,101 @@ test('stays quiet when release.yml already publishes on flows/**', () => {
 test('says nothing about a release workflow that is not there', () => {
   assert.deepEqual(check(wellFormed()), { errors: [], warnings: [] });
 });
+
+// Reviewer mutants on the real module (module-toolkit#214): six survived. A translation changes
+// the WORDS of a step — `prompt`, `vars`, `params`, `title`, `summary`, `body`, `headers` — and
+// nothing else. Changing its `kind`, the tools an `ai` step may call, the command it runs or the
+// condition it branches on is another automation wearing the same step id, and the Spanish hub
+// would run it while the English one runs something else. Measured on `whatsapp_inbox` before
+// writing this: between `en` and `es` only `prompt` and `vars` differ, so the rule costs nothing.
+test('the languages of a family must run the same KIND of step under the same id', () => {
+  const files = wellFormed();
+  files['appointment-from-whatsapp.es.flow.json'] = doc({
+    steps: [
+      { id: 'acknowledge', kind: 'command', command: 'whatsapp_inbox.messages.mark_read' },
+      { id: 'propose_appointment', kind: 'ai', prompt: 'Ofrece un hueco', tools: [] },
+    ],
+  });
+  const errors = check(files).errors;
+  assertNames(errors, 'acknowledge');
+  assertNames(errors, 'kind');
+});
+
+test('the languages of a family must hand an ai step the same tools', () => {
+  const files = wellFormed();
+  files['appointment-from-whatsapp.es.flow.json'] = doc({
+    steps: [
+      { id: 'acknowledge', kind: 'notify', channel: 'whatsapp', vars: { text: '¡Gracias!' } },
+      { id: 'propose_appointment', kind: 'ai', prompt: 'Ofrece un hueco', tools: ['appointments.appointments.cancel'] },
+    ],
+  });
+  assertNames(check(files).errors, 'tools');
+});
+
+test('a translation may change the PROSE of a step — prompt, vars, params, title — and passes clean', () => {
+  const files = wellFormed();
+  files['appointment-from-whatsapp.en.flow.json'] = doc({
+    steps: [
+      { id: 'acknowledge', kind: 'notify', channel: 'whatsapp', vars: { text: 'Thanks!' } },
+      { id: 'propose_appointment', kind: 'ai', prompt: 'Offer a slot', tools: ['appointments.slots.list'] },
+      { id: 'note', kind: 'command', command: 'customers.notes.add', params: { text: 'Came via WhatsApp' } },
+      { id: 'sign_off', kind: 'approval', title: 'Confirm the booking?', summary: 'A new customer' },
+    ],
+  });
+  files['appointment-from-whatsapp.es.flow.json'] = doc({
+    name: 'Cita desde WhatsApp',
+    steps: [
+      { id: 'acknowledge', kind: 'notify', channel: 'whatsapp', vars: { text: '¡Gracias!' } },
+      { id: 'propose_appointment', kind: 'ai', prompt: 'Ofrece un hueco', tools: ['appointments.slots.list'] },
+      { id: 'note', kind: 'command', command: 'customers.notes.add', params: { text: 'Vino por WhatsApp' } },
+      { id: 'sign_off', kind: 'approval', title: '¿Confirmar la cita?', summary: 'Cliente nuevo' },
+    ],
+  });
+  assert.deepEqual(check(files).errors, []);
+});
+
+// The trigger is machinery too, and the hub's `$defs/trigger` is CLOSED with a frozen `kind`
+// vocabulary — but nothing here read it, so a trigger the hub refuses published green in BOTH
+// languages (they matched each other perfectly). Same shape of hole as an unknown step kind.
+test('a trigger outside the FROZEN vocabulary is refused', () => {
+  const files = wellFormed();
+  const triggers = [{ kind: 'webhook', url: 'https://example.com/hook' }];
+  files['appointment-from-whatsapp.en.flow.json'] = doc({ triggers });
+  files['appointment-from-whatsapp.es.flow.json'] = doc({ name: 'Cita desde WhatsApp', triggers });
+  assertNames(check(files).errors, 'webhook');
+});
+
+test('a trigger with a key the contract does not admit is refused — a trigger is closed', () => {
+  const files = wellFormed();
+  const triggers = [{ kind: 'event', event: 'hub.whatsapp.message_received', retries: 3 }];
+  files['appointment-from-whatsapp.en.flow.json'] = doc({ triggers });
+  files['appointment-from-whatsapp.es.flow.json'] = doc({ name: 'Cita desde WhatsApp', triggers });
+  assertNames(check(files).errors, 'retries');
+});
+
+test('a trigger without kind is refused', () => {
+  const files = wellFormed();
+  const triggers = [{ event: 'hub.whatsapp.message_received' }];
+  files['appointment-from-whatsapp.en.flow.json'] = doc({ triggers });
+  files['appointment-from-whatsapp.es.flow.json'] = doc({ name: 'Cita desde WhatsApp', triggers });
+  assertNames(check(files).errors, 'kind');
+});
+
+test('triggers that are not a list are refused', () => {
+  const files = wellFormed();
+  files['appointment-from-whatsapp.en.flow.json'] = doc({ triggers: 'event' });
+  files['appointment-from-whatsapp.es.flow.json'] = doc({ name: 'Cita desde WhatsApp', triggers: 'event' });
+  assertNames(check(files).errors, 'triggers');
+});
+
+// The prose list is a policy of this door (the schema does not tell prose from machinery), so it
+// is the one closed thing typed here — and this is what keeps it honest: every key it names is a
+// key of `$defs/step` in the vendored schema. A key the hub renames or drops cannot linger here.
+test('every prose key of a step is a key of the step contract', async () => {
+  const { PROSE_STEP_KEYS } = await import('../src/validate-flows.mjs');
+  const { loadFlowSchema } = await import('../src/flow-schema.mjs');
+  const known = Object.keys(loadFlowSchema().$defs.step.properties);
+  for (const key of PROSE_STEP_KEYS) {
+    assert.ok(known.includes(key), `\`${key}\` is not a key of $defs/step (${known.join(', ')})`);
+  }
+});

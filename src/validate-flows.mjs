@@ -20,10 +20,14 @@
 //     `steps`, no unknown root key, and every step with an `id` and a `kind` of the frozen
 //     vocabulary. Nothing closed is typed here: it is all READ from the vendored schema
 //     (`src/flow-schema.mjs`), which `test/canonical-mirrors.test.mjs` pins to the hub's;
-//   · the TRANSLATION: the languages of one family must declare the SAME steps in the SAME order
-//     and carry the SAME triggers — whole, down to the `filter` and the `input`, because a trigger
-//     carries no prose. A translation is words, never automation. When the halves drift, a Spanish
-//     hub runs something different from an English one and nothing says so.
+//   · the TRIGGERS, against `$defs/trigger` of the same schema — a CLOSED object with a frozen
+//     `kind` vocabulary. Machinery the hub refuses when unknown, and until the review of
+//     module-toolkit#214 nothing here read it: a `kind: webhook` published green in both languages;
+//   · the TRANSLATION: the languages of one family must declare the SAME steps in the SAME order,
+//     each step the SAME machinery (`kind`, `command`, `tools`, `when`, `channel`… — everything but
+//     its prose, `PROSE_STEP_KEYS`), and carry the SAME triggers — whole, down to the `filter` and
+//     the `input`. A translation is words, never automation. When the halves drift, a Spanish hub
+//     runs something different from an English one and nothing says so.
 //
 // WHAT IT DOES NOT. Whether the grants cover what the steps actually use, and whether the prompt
 // orders a tool the module really has, is the SEMANTICS of the automation: that lives in the
@@ -54,6 +58,19 @@ const SIDECARS = [
   { suffix: '.grants.json', key: 'grants', required: true },
   { suffix: '.requires.json', key: 'requires', required: false },
 ];
+
+/**
+ * The keys of a step that carry PROSE — the only thing a translation may legitimately change.
+ * Everything else in a step is machinery (`kind`, `command`, `query`, `tools`, `when`, `channel`,
+ * `to`, `policy`, `max_iters`…) and has to be the same in every language, or the step is another
+ * automation wearing the same id: the Spanish hub calls a tool the English one never hands out.
+ *
+ * A policy of this door, not of the schema — `flow.schema.json` does not tell prose from
+ * machinery. Every key here is a key of `$defs/step` (test-guarded, so a renamed key cannot leave a
+ * stale entry), and measured on `whatsapp_inbox` before it was written: between `en` and `es` only
+ * `prompt` and `vars` ever differ. `template` is here because on email it doubles as the subject.
+ */
+export const PROSE_STEP_KEYS = ['prompt', 'vars', 'params', 'body', 'headers', 'title', 'summary', 'template'];
 
 const MODULE_ID = /^[a-z][a-z0-9_]*$/;
 const SEMVER = /^\d+\.\d+\.\d+/;
@@ -180,6 +197,66 @@ function triggerDrift(here, there) {
   return [...drifted].sort();
 }
 
+/**
+ * The machinery keys where a translated step differs from its source: every key of either step
+ * except the prose ones. Two steps that only differ in words come back empty.
+ */
+function stepDrift(here, there) {
+  const a = here && typeof here === 'object' && !Array.isArray(here) ? here : {};
+  const b = there && typeof there === 'object' && !Array.isArray(there) ? there : {};
+  const drifted = [];
+  for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    if (PROSE_STEP_KEYS.includes(key)) continue;
+    if (canonical(a[key]) !== canonical(b[key])) drifted.push(key);
+  }
+  return drifted.sort();
+}
+
+/**
+ * `triggers`, against `$defs/trigger`: a CLOSED object whose `kind` is a frozen vocabulary. The hub
+ * refuses a trigger it cannot read, so one that passed here and died there would be the exact
+ * silence this door exists to close — and both languages carrying the same wrong trigger is what
+ * the parity check, on its own, calls a perfect match.
+ */
+function checkTriggers(where, document, schema, errors) {
+  if (!('triggers' in document)) return;
+  const trigger = schema.$defs?.trigger ?? {};
+  const known = Object.keys(trigger.properties ?? {});
+  const kinds = trigger.properties?.kind?.enum ?? [];
+  if (!Array.isArray(document.triggers)) {
+    errors.push(`${where}: \`triggers\` is a list of what fires the flow (${kinds.join(', ')}).`);
+    return;
+  }
+  document.triggers.forEach((declared, index) => {
+    const at = `${where}: trigger ${index + 1}`;
+    if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) {
+      errors.push(`${at}: a trigger is a JSON object.`);
+      return;
+    }
+    if (trigger.additionalProperties === false) {
+      for (const key of Object.keys(declared)) {
+        if (!known.includes(key)) {
+          errors.push(
+            `${at}: unknown key \`${key}\` — a trigger is CLOSED (the contract admits: ` +
+              `${known.join(', ')}). The hub refuses what it cannot read.`,
+          );
+        }
+      }
+    }
+    for (const key of trigger.required ?? []) {
+      if (!(key in declared)) {
+        errors.push(`${at}: \`${key}\` is required — without it nothing can tell what fires the flow.`);
+      }
+    }
+    if (typeof declared.kind === 'string' && kinds.length && !kinds.includes(declared.kind)) {
+      errors.push(
+        `${at}: \`${declared.kind}\` is not something the hub can fire a flow on — the vocabulary ` +
+          `is FROZEN (${kinds.join(', ')}).`,
+      );
+    }
+  });
+}
+
 /** The document itself, against the FROZEN root and step vocabulary of `flow.schema.json`. */
 function checkDocument(name, document, schema, errors) {
   const where = `flows/${name}`;
@@ -209,6 +286,8 @@ function checkDocument(name, document, schema, errors) {
         `\`${version}\`, and an unknown version is REFUSED, never guessed.`,
     );
   }
+
+  checkTriggers(where, document, schema, errors);
 
   const minimum = schema.properties.steps?.minItems ?? 1;
   if ('steps' in document) {
@@ -403,6 +482,18 @@ export function checkFlows(dir, schema = loadFlowSchema()) {
               `\`${name}.${SOURCE_LANGUAGE}.flow.json\` — \`${here.join(' → ')}\` against ` +
               `\`${there.join(' → ')}\`. A translation changes the words, never the automation.`,
           );
+        } else if (Array.isArray(document.steps) && Array.isArray(source.steps)) {
+          // Same ids in the same order: now each step must be the same MACHINERY, other words.
+          document.steps.forEach((step, index) => {
+            const drift = stepDrift(step, source.steps[index]);
+            if (!drift.length) return;
+            errors.push(
+              `flows/${family.documents.get(lang)}: step \`${here[index]}\` is not the translation ` +
+                `of the English one — it differs in \`${drift.join('`, `')}\`. A translation ` +
+                `changes the prose of a step (${PROSE_STEP_KEYS.join(', ')}), never its machinery: ` +
+                'otherwise a Spanish hub runs a different automation under the same name.',
+            );
+          });
         }
         const drift = triggerDrift(document, source);
         if (drift.length) {

@@ -541,10 +541,18 @@ flows/
 - El documento cumple `schemas/flow.schema.json` (raíz **cerrada**, `schema_version: 1`, `steps` no
   vacío, cada paso con `id` único y un `kind` del vocabulario **congelado**). Nada de eso se teclea
   en el validador: se **lee** del esquema vendorizado, que el espejo canónico ata al del hub.
+- Cada trigger cumple `$defs/trigger` del mismo esquema: objeto **cerrado**, `kind` obligatorio y
+  del vocabulario **congelado** (`event`, `cron`, `at`, `manual`). Un trigger que el hub no sabe
+  leer se rechaza aquí, no en el hub de un cliente.
 - **Todos los idiomas de una familia declaran los mismos pasos, en el mismo orden, y el MISMO
   trigger entero** —hasta el `filter` y el `input`—: un trigger no lleva prosa, así que no hay nada
   ahí que una traducción pueda cambiar legítimamente. Si el `filter` deriva, el hub en español
   contesta a mensajes que el inglés ignora y **nada lo dice**.
+- Y **cada paso es la misma MAQUINARIA en todos los idiomas**: una traducción solo cambia la prosa
+  del paso —`prompt`, `vars`, `params`, `body`, `headers`, `title`, `summary`, `template`
+  (`PROSE_STEP_KEYS`)— y nada más. `kind`, `command`, `query`, `tools`, `when`, `channel`, `to`,
+  `policy`, `max_iters`… tienen que coincidir, o el `es` es otra automatización con el mismo nombre
+  (medido en `whatsapp_inbox`: entre `en` y `es` solo difieren `prompt` y `vars`).
 - El **suelo de versión** de `requires.json` es **por plantilla**, y a propósito NO es el
   `depends_on` del módulo: `whatsapp_inbox` fija `appointments >= 1.1.69` para su plantilla y su
   `depends_on` es solo `["customers"]` — la plantilla es opcional, el módulo funciona sin ella.
