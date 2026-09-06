@@ -108,6 +108,10 @@ export const HUB_OUTFITKIT = [
   // v1.1.14 («Develop → main — lote v1.1.14», 2026-09-06): el último @erplora/outfitkit publicado en
   // npm antes de crearse el tag es 0.1.65 (2026-09-05T07:55Z); 0.1.66 no existía aún.
   { hub: '1.1.14', built_at: '2026-09-06T13:50:24Z', outfitkit: '0.1.65' },
+  // v1.1.15 («Develop → main — promoción 06/09 (2.ª)», tagged 2026-09-06T16:11:26Z): the newest
+  // @erplora/outfitkit on npm before the tag is still 0.1.65 (2026-09-05T07:55Z); nothing newer
+  // had been published by then.
+  { hub: '1.1.15', built_at: '2026-09-06T16:11:26Z', outfitkit: '0.1.65' },
 ];
 
 /**

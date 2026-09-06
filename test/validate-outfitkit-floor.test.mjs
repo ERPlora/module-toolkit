@@ -496,25 +496,31 @@ test('every message says whether the number was MEASURED or guessed — both way
   // place that says which, and it is pasted into BOTH ways out of this check — the warning when no
   // floor is declared and the error when one is. A mutant that pins it to the guessed wording left
   // the whole suite green (2026-09-06), so both consumers are pinned here.
-  const source = realHub('1.1.14', '0.1.65');
+  //
+  // The hub that answers is the NEWEST tag of the table, derived — not pinned — because the row it
+  // measures is the ceiling only while no newer tag exists (the test on the cited row below covers
+  // an older hub). Pinning `1.1.14` broke the day `1.1.15` was tagged, exactly as #206 warned.
+  const newest = HUB_OUTFITKIT.at(-1);
+  const source = realHub(newest.hub, newest.outfitkit);
+  const measuredInNewest = new RegExp(`medido en el hub ${newest.hub.replace(/\./g, '\\.')}`);
 
   // (1) No declared floor, bake above the newest hub → warning.
   const bare = moduleDir({ stamp: '0.1.70' });
   const [guessedWarning] = checkOutfitkitFloor(bare.dir, bare.manifest).warnings;
   assert.match(guessedWarning, /deducido por la fecha del tag/);
   const [measuredWarning] = checkOutfitkitFloor(bare.dir, bare.manifest, { source }).warnings;
-  assert.match(measuredWarning, /medido en el hub 1\.1\.14/);
+  assert.match(measuredWarning, measuredInNewest);
   assert.doesNotMatch(measuredWarning, /deducido por la fecha del tag/);
 
   // (2) A floor IS declared and the bake is above it → error. Same duty: a message that blocks has
   // to say where its number came from, because that decides whether the author fixes the bake or
   // the table.
-  const floored = moduleDir({ stamp: '0.1.70', compatibility: { min_erplora_version: '1.1.14' } });
+  const floored = moduleDir({ stamp: '0.1.70', compatibility: { min_erplora_version: newest.hub } });
   const [measuredError] = checkOutfitkitFloor(floored.dir, floored.manifest, {
     source,
     publishing: true,
   }).errors;
-  assert.match(measuredError, /medido en el hub 1\.1\.14/);
+  assert.match(measuredError, measuredInNewest);
   assert.doesNotMatch(measuredError, /deducido por la fecha del tag/);
 });
 
@@ -607,9 +613,12 @@ test('una lectura CACHEADA se presenta como recordada, no como medida ahora', ()
   // avisa de nada — y esa fila puede subir un aviso a ERROR en `pack`. Un número que puede bloquear
   // una publicación tiene que decir que es un recuerdo, y de cuándo: bloquear en silencio con un
   // dato viejo es la otra mitad del mismo defecto que ablandarse en silencio.
+  // The remembered hub is the table's CEILING, derived rather than pinned: with an older one the
+  // cited number would be the newest row's and so would its provenance (the test above).
+  const newest = HUB_OUTFITKIT.at(-1);
   const { dir, manifest } = moduleDir({ stamp: '0.1.70' });
-  const cached = { ...realHub('1.1.14', '0.1.65'), origin: 'cache' };
+  const cached = { ...realHub(newest.hub, newest.outfitkit), origin: 'cache' };
   const [warning] = checkOutfitkitFloor(dir, manifest, { source: cached }).warnings;
   assert.match(warning, /recordad[oa] en cache/, JSON.stringify(warning));
-  assert.match(warning, /1\.1\.14/);
+  assert.match(warning, new RegExp(newest.hub.replace(/\./g, '\\.')));
 });
