@@ -241,6 +241,17 @@ export declare class FlowsApi {
     putSecret(name: string, value: string): Promise<unknown>;
     deleteSecret(name: string): Promise<unknown>;
     schema(): Promise<FlowSchema>;
+    templates(): Promise<ModuleFlowTemplate[]>;
+}
+export interface ModuleFlowTemplate {
+    module: string;
+    family: string;
+    documents: Record<string, unknown>;
+    grants: Array<{
+        kind: string;
+        value: string;
+    }>;
+    requires: Record<string, string>;
 }
 export interface EventFieldShape {
     path: string;
