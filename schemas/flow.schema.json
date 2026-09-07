@@ -28,7 +28,7 @@
     "steps": {
       "type": "array",
       "minItems": 1,
-      "description": "Los pasos, EN ORDEN. v1 es lineal y `on_error` es siempre `stop`: un fallo detiene el run (reintentar un command de negocio por su cuenta es como se cobra dos veces una venta).",
+      "description": "Los pasos, EN ORDEN. v1 es lineal: un fallo detiene el run POR DEFECTO (`on_error: \"stop\"`), y un paso puede decir `on_error: \"continue\"` para que el run siga por el paso siguiente contando cómo terminó (hub#1635). Lo que NO existe ni va a existir es `retry`: reintentar un command de negocio por su cuenta es como se cobra dos veces una venta.",
       "items": {
         "$ref": "#/$defs/step"
       }
@@ -262,7 +262,7 @@
             "continue"
           ],
           "default": "reject",
-          "description": "Solo `kind: approval` — qué le pasa al RUN si nadie contesta antes de `expires_in`. El silencio es una RESPUESTA: `reject` (POR DEFECTO) lo trata como una negativa, que es la lectura conservadora porque los pasos escritos después asumían que se aprobó; `cancel` termina el run sin llamarlo negativa; `continue` sigue al paso siguiente con `steps.<id>.decision == \"expired\"` — el `Limit Wait Time` de n8n y su rama de «sin respuesta». Viaja en la FILA, no se relee del flujo: la política que se aplica es la que estaba en vigor cuando se hizo la pregunta."
+          "description": "`kind: approval` y `kind: ai` — qué le pasa al RUN si nadie contesta antes de `expires_in` (en un paso `ai`, antes de las 72 h de la propuesta). El silencio es una RESPUESTA: `reject` (POR DEFECTO) lo trata como una negativa, que es la lectura conservadora porque los pasos escritos después asumían que se aprobó; `cancel` termina el run sin llamarlo negativa; `continue` sigue al paso siguiente con `steps.<id>.decision == \"expired\"` — el `Limit Wait Time` de n8n y su rama de «sin respuesta». En un paso `ai`, además, el paso conserva el turno aparcado (`steps.<id>.text`) y añade `steps.<id>.status == \"expired\"`, igual que hace con un rechazo: así el paso siguiente puede avisar a quien lleva 72 h esperando. Nada de lo que el modelo propuso se ejecuta — caducar es lo contrario de aprobar. Viaja en la FILA, no se relee del flujo: la política que se aplica es la que estaba en vigor cuando se hizo la pregunta."
         },
         "on_reject": {
           "enum": [
@@ -272,6 +272,40 @@
           "default": "cancel",
           "description": "`kind: approval` y `kind: ai` — qué le cuesta al run un «no». `cancel` (POR DEFECTO) termina el run como `cancelled`, que es lo que un rechazo hace hoy; `continue` sigue con `steps.<id>.decision == \"rejected\"`. En un paso `ai`, además, el paso conserva el turno aparcado (`steps.<id>.text`) y añade `steps.<id>.status == \"rejected\"`, igual que hace la aprobación: así el paso siguiente puede contarle a alguien cómo acabó. **Con `continue` + un `condition` las tres ramas (aprobado/rechazado/vencido) se componen a partir de primitivas ya congeladas, sin necesidad de una v2 con branching** — que es la misma jugada del step `query`. Viaja en la fila por el mismo motivo que `on_expire`."
         },
+        "on_error": {
+          "enum": [
+            "stop",
+            "continue"
+          ],
+          "default": "stop",
+          "description": "Todos los pasos que PUEDEN fallar (`command`, `query`, `delay`, `http`, `ai`, `notify`) — qué le cuesta al run que este paso falle. `stop` (POR DEFECTO, y lo que un fallo ha hecho siempre) termina el run como `failed` y los pasos escritos después no corren; `continue` sigue por el paso siguiente con `steps.<id>.status == \"failed\"` y `steps.<id>.error` con el motivo — la misma forma que `on_reject: \"continue\"` (en un paso `ai` conserva además el turno aparcado, `steps.<id>.text`). El paso sigue constando como `failed` en el historial: `continue` es del RUN. 🔴 El vocabulario está CERRADO en esos dos y `retry` no está ni va a estar (ADR-0283 §1): continuar no es reintentar — no se vuelve a ejecutar nada, se pasa a la instrucción siguiente, que el documento ya trae escrita. `condition` no lo acepta (no falla: no casar es el flujo funcionando) ni `approval` (sus salidas son `on_reject`/`on_expire`)."
+        },
+        "output": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "describe"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "text",
+                  "number",
+                  "options"
+                ],
+                "description": "Qu\u00e9 forma tiene el campo. `text` una l\u00ednea; `number` un n\u00famero (como n\u00famero, para que un `condition` lo compare como tal); `options` la lista que se toca \u2014 `[{id, title, description}]`, la forma de fila de Meta, lista para ser los `rows` de un `interactive` sin que nada la reescriba por el camino. Vocabulario CERRADO a prop\u00f3sito: esto no es un lenguaje de esquemas, son las tres formas de las que el hub puede responder a la salida."
+              },
+              "describe": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Qu\u00e9 va en este campo, en palabras. OBLIGATORIO: es lo \u00fanico que el modelo lee sobre \u00e9l, y un campo sin descripci\u00f3n es un campo que rellena con lo que le parece."
+              }
+            }
+          },
+          "description": "Solo `kind: ai` \u2014 los datos que el turno deja detr\u00e1s, adem\u00e1s de la frase (hub#1639). Ausente (POR DEFECTO) el paso publica lo que ha publicado siempre: `{text, tool_calls}`. Cada campo declarado se publica como `steps.<id>.<nombre>` junto a esos dos, as\u00ed que los huecos que el modelo encontr\u00f3 hablando con la clienta pueden ser los `rows` de la lista que ella toca (`interactive`, hub#1633) y un paso posterior puede ramificar seg\u00fan lo que el turno hizo de verdad. El nombre tiene que poder direccionarse con el lenguaje de mapeo (letra, luego letras, d\u00edgitos o `_`): `resolve_path` parte por `.`, y un nombre con punto resolver\u00eda a nada sin decirlo. `text` y `tool_calls` est\u00e1n reservados \u2014 son lo que el turno publica por s\u00ed mismo."        },
         "channel": {
           "enum": [
             "email",
@@ -290,6 +324,10 @@
         "vars": {
           "$ref": "#/$defs/mapping",
           "description": "Solo `kind: notify` — el texto y sus variables, mapeados contra el run (`vars.text` es lo que dice un email o un WhatsApp libre). Un `{{secret.X}}` aquí se RECHAZA al guardar: sería una credencial enviada a un cliente."
+        },
+        "interactive": {
+          "type": "object",
+          "description": "Solo `kind: notify` en el canal `whatsapp` (hub#1633) — OPCIONES QUE EL CLIENTE TOCA en vez de un número que reescribe. Es el objeto `interactive` de Meta tal cual (`{type: list|button, header?, body, footer?, action}`): hasta 10 filas de lista EN TOTAL o hasta 3 botones. Viaja sin traducir hasta el proxy del SaaS, que comprueba los límites de Meta ANTES de la llamada de pago y responde con código (`too_many_options`, `duplicate_option_id`, `invalid_option`, `unsupported_interactive_type`…); inventar aquí una segunda forma sería un contrato que no existe en ningún otro sitio y que habría que crecer cada vez que Meta añade un campo. Se mapea contra el run como el resto de la copia, así que los huecos que leyó un paso anterior son las filas de la lista. **No convive con `template` ni con `vars.text`/`vars.body`**: un mensaje de Meta tiene UN solo `type` y se rechaza al guardar en vez de dejar caer una de las dos mitades en silencio (el proxy contesta `conflicting_message_type`). Lo que la clienta toca vuelve en el evento `hub.whatsapp.message_received` como `reply_id`/`reply_title`, así que la receta lo compara con un `condition` y sin IA de por medio. Un `{{secret.X}}` aquí se RECHAZA al guardar, igual que en `vars`: sería una credencial impresa en el móvil de un cliente."
         },
         "offset_seconds": {
           "type": "integer",
