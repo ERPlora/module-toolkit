@@ -72,6 +72,72 @@ const SIDECARS = [
  */
 export const PROSE_STEP_KEYS = ['prompt', 'vars', 'params', 'body', 'headers', 'title', 'summary', 'template'];
 
+/**
+ * The prose that lives INSIDE a key which is not prose — the MIXED keys, judged path by path.
+ *
+ * `PROSE_STEP_KEYS` reads a key as one thing or the other. That held until the kernel grew two
+ * keys that are both at once:
+ *
+ *   · `interactive` (hub#1633) — Meta's object as it travels to the phone. Its `type`, the `rows`
+ *     it maps and the `id` a row sends back are machinery; its `body.text`, the button of the
+ *     action and the title of a section are THE WORDS THE CUSTOMER READS. Compared whole, a
+ *     Spanish salon is made to send `Tap whichever slot suits you.` — or the author moves the
+ *     words out and the message goes out in English, which is the bug this door exists to stop;
+ *   · `output` (hub#1639) — what an `ai` step publishes, `{<field>: {type, describe}}`. The `type`
+ *     is the closed vocabulary the kernel enforces and the field NAME is what later steps read by
+ *     `steps.<id>.<field>`, so both are machinery; the `describe` is the only thing the MODEL is
+ *     told about the field, and a model briefed in English on a Spanish conversation answers worse.
+ *
+ * A path is masked out of the comparison, never dropped from it: everything the path does not name
+ * keeps being compared, so `rows` pointing somewhere else is still drift. `*` matches any key
+ * (the field names of `output` are the author's), `[]` any item of a list — and only of a LIST, so
+ * `rows: "steps.pick.slots"`, a mapping path, is compared as the machinery it is.
+ *
+ * Same policy of the door as the list above, and guarded the same way: every path here hangs from
+ * a key of `$defs/step`, so a key the hub renames cannot leave a path masking nothing.
+ */
+export const PROSE_STEP_PATHS = [
+  'interactive.header.text',
+  'interactive.body.text',
+  'interactive.footer.text',
+  'interactive.action.button',
+  'interactive.action.sections[].title',
+  'interactive.action.sections[].rows[].title',
+  'interactive.action.sections[].rows[].description',
+  'interactive.action.buttons[].reply.title',
+  'output.*.describe',
+];
+
+/** `{interactive: [[header, text], …], output: [[*, describe]]}` — the paths, by the key they hang from. */
+const PROSE_PATHS_BY_KEY = PROSE_STEP_PATHS.reduce((by, path) => {
+  const [root, ...rest] = path.split('.').flatMap((s) => (s.endsWith('[]') ? [s.slice(0, -2), '[]'] : [s]));
+  by.set(root, [...(by.get(root) ?? []), rest]);
+  return by;
+}, new Map());
+
+/** What a masked-out leaf reads as: a value no document can carry, so it cannot collide with one. */
+const PROSE = Symbol('prose');
+
+/**
+ * `value` with the prose the `paths` name replaced by `PROSE`, so two languages that only differ
+ * in words compare equal. A path that does not fit the value it lands on (`[]` on a string, a key
+ * that is not there) masks nothing: the value goes through untouched and is compared as machinery.
+ */
+function maskProse(value, paths) {
+  if (paths.some((path) => path.length === 0)) return PROSE;
+  if (Array.isArray(value)) {
+    const inside = paths.filter((path) => path[0] === '[]').map((path) => path.slice(1));
+    return inside.length ? value.map((item) => maskProse(item, inside)) : value;
+  }
+  if (value === null || typeof value !== 'object') return value;
+  const masked = {};
+  for (const [key, inner] of Object.entries(value)) {
+    const inside = paths.filter((path) => path[0] === key || path[0] === '*').map((path) => path.slice(1));
+    masked[key] = inside.length ? maskProse(inner, inside) : inner;
+  }
+  return masked;
+}
+
 const MODULE_ID = /^[a-z][a-z0-9_]*$/;
 const SEMVER = /^\d+\.\d+\.\d+/;
 
@@ -165,6 +231,9 @@ function triggerSummary(document) {
 
 /** JSON with the keys of every object sorted, so two equal triggers compare equal as text. */
 function canonical(value) {
+  // The one thing here that is not JSON: a leaf `maskProse` took out of the comparison. Rendered
+  // unquoted, so it cannot be read as the string `"prose"` a document could legitimately carry.
+  if (typeof value === 'symbol') return String(value.description);
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   const keys = Object.keys(value).sort();
@@ -199,7 +268,8 @@ function triggerDrift(here, there) {
 
 /**
  * The machinery keys where a translated step differs from its source: every key of either step
- * except the prose ones. Two steps that only differ in words come back empty.
+ * except the prose ones — and, for a MIXED key (`PROSE_STEP_PATHS`), except the prose inside it.
+ * Two steps that only differ in words come back empty.
  */
 function stepDrift(here, there) {
   const a = here && typeof here === 'object' && !Array.isArray(here) ? here : {};
@@ -207,7 +277,10 @@ function stepDrift(here, there) {
   const drifted = [];
   for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
     if (PROSE_STEP_KEYS.includes(key)) continue;
-    if (canonical(a[key]) !== canonical(b[key])) drifted.push(key);
+    const paths = PROSE_PATHS_BY_KEY.get(key);
+    const mine = paths ? maskProse(a[key], paths) : a[key];
+    const theirs = paths ? maskProse(b[key], paths) : b[key];
+    if (canonical(mine) !== canonical(theirs)) drifted.push(key);
   }
   return drifted.sort();
 }
@@ -522,7 +595,8 @@ export function checkFlows(dir, schema = loadFlowSchema()) {
             errors.push(
               `flows/${family.documents.get(lang)}: step \`${here[index]}\` is not the translation ` +
                 `of the English one — it differs in \`${drift.join('`, `')}\`. A translation ` +
-                `changes the prose of a step (${PROSE_STEP_KEYS.join(', ')}), never its machinery: ` +
+                `changes the prose of a step (${PROSE_STEP_KEYS.join(', ')}, and the words inside ` +
+                `a mixed key: ${PROSE_STEP_PATHS.join(', ')}), never its machinery: ` +
                 'otherwise a Spanish hub runs a different automation under the same name.',
             );
           });
