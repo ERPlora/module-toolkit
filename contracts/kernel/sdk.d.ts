@@ -250,6 +250,7 @@ export interface ModuleFlowTemplate {
     grants: Array<{
         kind: string;
         value: string;
+        payload?: Record<string, unknown>;
     }>;
     requires: Record<string, string>;
 }
