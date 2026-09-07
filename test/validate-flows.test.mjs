@@ -498,3 +498,161 @@ test('every prose key of a step is a key of the step contract', async () => {
     assert.ok(known.includes(key), `\`${key}\` is not a key of $defs/step (${known.join(', ')})`);
   }
 });
+
+// ── The keys that are prose AND machinery at once (module-toolkit#209, hub#1633/#1639) ──────────
+//
+// `PROSE_STEP_KEYS` reads a step key as one thing or the other, which was true the day it was
+// written and stopped being true twice in a week:
+//
+//   · `interactive` (hub#1633) is Meta's object as it travels — `{type, header?, body, footer?,
+//     action}`. Its `type`, its `rows` mapping and the `id` of a row are machinery, and its
+//     `body.text`, its button and the title of a section are THE WORDS THE CUSTOMER READS on her
+//     phone. Comparing it whole tells a Spanish salon to send `Tap whichever slot suits you.`;
+//   · `output` (hub#1639) is what an `ai` step publishes — `{<field>: {type, describe}}`. The
+//     `type` is the closed vocabulary the kernel enforces; the `describe` is the only thing the
+//     MODEL reads about the field, and a model told in English what a Spanish conversation is
+//     about answers worse.
+//
+// So the door has to judge them PATH by path: the prose inside them is free, the rest is not.
+// Found on `whatsapp_inbox#101`, whose gate went red on a translation that was correct.
+function interactiveDoc(overrides = {}) {
+  return doc({
+    steps: [
+      {
+        id: 'find_slots',
+        kind: 'ai',
+        prompt: 'Find her slots',
+        tools: [],
+        output: { slots: { type: 'options', describe: 'The free slots she may tap' } },
+      },
+      {
+        id: 'offer_slots',
+        kind: 'notify',
+        channel: 'whatsapp',
+        interactive: {
+          type: 'list',
+          body: { text: 'Tap whichever slot suits you.' },
+          action: { button: 'See slots', sections: [{ title: 'Free slots', rows: 'steps.find_slots.slots' }] },
+        },
+      },
+    ],
+    ...overrides,
+  });
+}
+
+/** The same family, its Spanish half built by patching the English steps. */
+function interactiveFamily(patch) {
+  const files = wellFormed();
+  files['appointment-from-whatsapp.en.flow.json'] = interactiveDoc();
+  const es = interactiveDoc({ name: 'Cita desde WhatsApp' });
+  patch(es.steps[0], es.steps[1]);
+  files['appointment-from-whatsapp.es.flow.json'] = es;
+  return files;
+}
+
+test('a translation may translate the words the customer READS inside `interactive`', () => {
+  const files = interactiveFamily((_ai, notify) => {
+    notify.interactive.body.text = 'Toca el hueco que te venga bien.';
+    notify.interactive.action.button = 'Ver huecos';
+    notify.interactive.action.sections[0].title = 'Huecos libres';
+  });
+  assert.deepEqual(check(files).errors, []);
+});
+
+test('a translation may translate what the MODEL reads about an output field — `describe`', () => {
+  const files = interactiveFamily((ai) => {
+    ai.output.slots.describe = 'Los huecos libres que puede tocar';
+  });
+  assert.deepEqual(check(files).errors, []);
+});
+
+test('a translation may translate the words of a row it lists LITERALLY, never its id', () => {
+  const rows = (title) => [{ id: '2026-09-08T10:30|staff:12', title, description: 'With Ana' }];
+  const files = interactiveFamily((_ai, notify) => {
+    notify.interactive.action.sections[0].rows = rows('Martes 10:30');
+    notify.interactive.action.sections[0].rows[0].description = 'Con Ana';
+  });
+  files['appointment-from-whatsapp.en.flow.json'].steps[1].interactive.action.sections[0].rows =
+    rows('Tuesday 10:30');
+  assert.deepEqual(check(files).errors, []);
+});
+
+test('a translation may translate the title of a REPLY BUTTON, never the id it sends back', () => {
+  const action = (title) => ({ buttons: [{ type: 'reply', reply: { id: 'confirm', title } }] });
+  const files = interactiveFamily((_ai, notify) => {
+    notify.interactive.type = 'button';
+    notify.interactive.action = action('Confirmar');
+  });
+  const english = files['appointment-from-whatsapp.en.flow.json'].steps[1].interactive;
+  english.type = 'button';
+  english.action = action('Confirm');
+  assert.deepEqual(check(files).errors, []);
+});
+
+test('the languages must offer the options that come from the SAME place — `rows` is machinery', () => {
+  const files = interactiveFamily((_ai, notify) => {
+    notify.interactive.action.sections[0].rows = 'steps.find_slots.other_slots';
+  });
+  const errors = check(files).errors;
+  assertNames(errors, 'offer_slots');
+  assertNames(errors, 'interactive');
+});
+
+test('the languages must send back the SAME id when a row is listed literally', () => {
+  const rows = (id) => [{ id, title: 'Tuesday 10:30' }];
+  const files = interactiveFamily((_ai, notify) => {
+    notify.interactive.action.sections[0].rows = rows('another-slot');
+  });
+  files['appointment-from-whatsapp.en.flow.json'].steps[1].interactive.action.sections[0].rows =
+    rows('2026-09-08T10:30|staff:12');
+  assertNames(check(files).errors, 'interactive');
+});
+
+test('the languages must be the same KIND of interactive message — `type` is machinery', () => {
+  const files = interactiveFamily((_ai, notify) => {
+    notify.interactive.type = 'button';
+  });
+  assertNames(check(files).errors, 'interactive');
+});
+
+test('the languages must declare the same SHAPE of output — `type` is machinery', () => {
+  const files = interactiveFamily((ai) => {
+    ai.output.slots.type = 'text';
+  });
+  const errors = check(files).errors;
+  assertNames(errors, 'find_slots');
+  assertNames(errors, 'output');
+});
+
+test('the languages must declare the same output FIELDS — a name is machinery, later steps read it', () => {
+  const files = interactiveFamily((ai) => {
+    ai.output = { huecos: { type: 'options', describe: 'Los huecos libres' } };
+  });
+  assertNames(check(files).errors, 'output');
+});
+
+test('a translation that DROPS the words of a mixed key is refused, never sent empty', () => {
+  const files = interactiveFamily((_ai, notify) => {
+    delete notify.interactive.body;
+  });
+  assertNames(check(files).errors, 'interactive');
+});
+
+// The other half of the guard above: a path is dead weight the day the hub renames the key it
+// hangs from, and dead weight in an allowlist is a hole — it stops masking anything and the door
+// silently goes back to comparing the mixed key whole.
+test('every prose PATH of a step hangs from a key of the step contract', async () => {
+  const { PROSE_STEP_PATHS } = await import('../src/validate-flows.mjs');
+  const { loadFlowSchema } = await import('../src/flow-schema.mjs');
+  const step = loadFlowSchema().$defs.step.properties;
+  const known = Object.keys(step);
+  assert.ok(PROSE_STEP_PATHS.length, 'the mixed keys carry no prose path at all');
+  for (const path of PROSE_STEP_PATHS) {
+    const root = path.split('.')[0];
+    assert.ok(known.includes(root), `\`${path}\` hangs from \`${root}\`, no key of $defs/step (${known.join(', ')})`);
+  }
+  // `output` is the one mixed key the schema describes field by field, so its prose is pinned
+  // here too: `describe` renamed in the hub must not leave `output.*.describe` masking nothing.
+  const field = step.output?.additionalProperties?.properties ?? {};
+  assert.deepEqual(Object.keys(field).sort(), ['describe', 'type'], 'the output field contract moved on in the hub');
+});
