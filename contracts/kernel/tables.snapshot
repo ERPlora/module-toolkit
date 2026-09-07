@@ -85,6 +85,7 @@ _flow_grants.granted_by text NOT NULL
 _flow_grants.hub_id text NOT NULL
 _flow_grants.id text NOT NULL
 _flow_grants.kind text NOT NULL
+_flow_grants.payload text NOT NULL
 _flow_grants.revoked_by text NULL
 _flow_grants.value text NOT NULL
 
