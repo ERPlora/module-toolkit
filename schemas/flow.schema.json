@@ -136,17 +136,44 @@
         "result": {
           "enum": [
             "first",
-            "count"
+            "count",
+            "options"
           ],
           "default": "first",
-          "description": "Solo `kind: query` — qué queda en `steps.<id>`. `first` (POR DEFECTO): los campos de la PRIMERA fila en la raíz (`steps.week.total`), más `found` (bool) y `count` (cuántas filas CASAN, no cuántas se trajeron). `count`: solo `count` y `found`. **`rows` NO existe en v1**: el lenguaje de mapeo no indexa arrays, así que `steps.week.rows.0.total` no resolvería a nada y ofrecerlo sería ofrecer una mentira. 0 filas NO es un fallo: el run sigue con `found: false` y lo decide un `condition` — así se escribe «avísame SI hay stock bajo»."
+          "description": "Solo `kind: query` — qué queda en `steps.<id>`. `first` (POR DEFECTO): los campos de la PRIMERA fila en la raíz (`steps.week.total`), más `found` (bool) y `count` (cuántas filas CASAN, no cuántas se trajeron). `count`: solo `count` y `found`. `options` (hub#1641): la lista ENTERA en `steps.<id>.options`, ya con la forma de fila que el transporte espera (`[{id, title, description}]`), más `found` y `count` — se declara con el bloque `options`, y `limit` baja entonces a 10, que es lo que cabe en una lista de Meta. **`rows` NO existe en v1**: el lenguaje de mapeo no indexa arrays, así que `steps.week.rows.0.total` no resolvería a nada y ofrecerlo sería ofrecer una mentira; `options` es la respuesta a para qué se pedía `rows` — la lista viaja ENTERA como un valor (`steps.free.options`) hasta las `rows` de un aviso que se toca (hub#1633) y nadie la indexa. 0 filas NO es un fallo: el run sigue con `found: false` y lo decide un `condition` — así se escribe «avísame SI hay stock bajo»."
         },
         "limit": {
           "type": "integer",
           "minimum": 1,
           "maximum": 200,
           "default": 200,
-          "description": "Solo `kind: query` — tope de filas que la lectura trae al run. Se RECHAZA por encima del máximo en vez de recortarse (`flow.limit_out_of_range`, mismo criterio que `max_iters`): el truncado que no se anuncia es la queja que llenan los foros de Zapier, Make y Shopify Flow, y por eso el DEFECTO es el propio techo y no un número pequeño escondido. La lectura ocurre dentro del tick, bajo el lock global del runtime, así que el techo es también lo que la hace asequible ahí. El `count` NO se recorta: sale del motor paginado (`queries::execute_page`), que da el total de verdad — el «up to a specified limit» de Salesforce y el `Row Count` de Power Automate."
+          "description": "Solo `kind: query` — tope de filas que la lectura trae al run. Se RECHAZA por encima del máximo en vez de recortarse (`flow.limit_out_of_range`, mismo criterio que `max_iters`): el truncado que no se anuncia es la queja que llenan los foros de Zapier, Make y Shopify Flow, y por eso el DEFECTO es el propio techo y no un número pequeño escondido. La lectura ocurre dentro del tick, bajo el lock global del runtime, así que el techo es también lo que la hace asequible ahí. El `count` NO se recorta: sale del motor paginado (`queries::execute_page`), que da el total de verdad — el «up to a specified limit» de Salesforce y el `Row Count` de Power Automate. Con `result: \"options\"` el techo Y el defecto son **10** en vez de 200: esas filas tienen un único destino —la lista que se toca— y Meta sostiene diez, así que una lectura de 200 filas para un mensaje que cabe 10 es un documento que no puede hacer lo que dice. No es la última palabra: el proxy del SaaS sigue comprobando el mensaje entero (3 botones, 10 filas TOTALES entre secciones, y las longitudes de Meta)."
+        },
+        "options": {
+          "type": "object",
+          "required": [
+            "id",
+            "title"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "NOMBRE de la columna cuyo valor vuelve como `event.reply_id` cuando la clienta toca esa fila."
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "description": "NOMBRE de la columna que la clienta lee en la fila."
+            },
+            "description": {
+              "type": "string",
+              "minLength": 1,
+              "description": "NOMBRE de la columna de la segunda línea, opcional. Si la fila la trae vacía, la clave NO se envía: Meta rechaza un `description: null`. Una columna que la lectura NO selecciona se rechaza al ejecutar (`flow.query_bad_option`), igual que `id` y `title`: un typo aquí no dice nada por sí solo, la segunda línea simplemente no saldría nunca."
+            }
+          },
+          "description": "Solo `kind: query` con `result: \"options\"` (hub#1641) — QUÉ COLUMNAS de cada fila componen la opción que se toca. Son NOMBRES de columna, no rutas ni plantillas, el mismo idioma que `to.field` de un `notify` (hub#821): componer un título con dos columnas es una forma que pertenece a la query, que es la misma respuesta que da `resolve_path` a «la tercera línea del tique». OBLIGATORIO con `result: \"options\"` (una lista de columnas de tabla no es algo que un mensaje pueda enviar) y RECHAZADO con cualquier otro `result` (un mapeo que nadie lee es una promesa que el kernel no cumple)."
         },
         "command": {
           "type": "string",
@@ -296,12 +323,12 @@
                   "number",
                   "options"
                 ],
-                "description": "Qu\u00e9 forma tiene el campo. `text` una l\u00ednea; `number` un n\u00famero (como n\u00famero, para que un `condition` lo compare como tal); `options` la lista que se toca \u2014 `[{id, title, description}]`, la forma de fila de Meta, lista para ser los `rows` de un `interactive` sin que nada la reescriba por el camino. Vocabulario CERRADO a prop\u00f3sito: esto no es un lenguaje de esquemas, son las tres formas de las que el hub puede responder a la salida."
+                "description": "Qué forma tiene el campo. `text` una línea; `number` un número (como número, para que un `condition` lo compare como tal); `options` la lista que se toca — `[{id, title, description}]`, la forma de fila de Meta, lista para ser los `rows` de un `interactive` sin que nada la reescriba por el camino. Vocabulario CERRADO a propósito: esto no es un lenguaje de esquemas, son las tres formas de las que el hub puede responder a la salida."
               },
               "describe": {
                 "type": "string",
                 "minLength": 1,
-                "description": "Qu\u00e9 va en este campo, en palabras. OBLIGATORIO: es lo \u00fanico que el modelo lee sobre \u00e9l, y un campo sin descripci\u00f3n es un campo que rellena con lo que le parece."
+                "description": "Qué va en este campo, en palabras. OBLIGATORIO: es lo único que el modelo lee sobre él, y un campo sin descripción es un campo que rellena con lo que le parece."
               }
             }
           },
@@ -364,7 +391,39 @@
           },
           "description": "Solo `kind: delay` (hub#951) — eventos que MUEVEN la espera a un instante nuevo, tomado del propio evento (`until`) con el mismo `offset_seconds` reaplicado: «24 h antes» sigue siendo 24 h antes cuando la cita se mueve. No queda un timer viejo porque no hay cola de timers — un run dormido tiene UN `wake_at` y moverlo es escribir una columna. Máximo 5, y como mucho 20 movimientos por espera (`flow.max_reschedules`): un evento que no para de llegar es un run que no acaba nunca."
         }
-      }
+      },
+      "allOf": [
+        {
+          "$comment": "hub#1641 — lo que el runtime exige de `result: \"options\"`, dicho también aquí para que el editor lo cace donde se escribe y no en un tick a las 3 AM.",
+          "if": {
+            "required": [
+              "result"
+            ],
+            "properties": {
+              "result": {
+                "const": "options"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "options"
+            ],
+            "properties": {
+              "limit": {
+                "maximum": 10
+              }
+            }
+          },
+          "else": {
+            "not": {
+              "required": [
+                "options"
+              ]
+            }
+          }
+        }
+      ]
     },
     "assignee": {
       "type": "object",
