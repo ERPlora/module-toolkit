@@ -279,6 +279,64 @@ test('a family that asks for nothing is refused: it could not do anything either
   assertNames(check(files).errors, 'grants');
 });
 
+// ── the PIN of a grant (hub#1623) ─────────────────────────────────────────────────────────────
+//
+// A `command` grant may FIX part of the payload — «may cancel appointments AS THE CUSTOMER» rather
+// than «may cancel appointments» — which is the whole contention of a template whose `params` a
+// model writes from a stranger's message. The template that needs it is the unattended WhatsApp
+// one, so this door has to let it through; and it has to refuse what the HUB refuses, or the
+// module publishes green and `PUT …/grants` rejects it at the owner's screen with
+// `flow.invalid_grant_payload` — a red nobody can act on, three steps away from here.
+
+test('a command grant may FIX part of the payload: the pin publishes green', () => {
+  const files = wellFormed();
+  files['appointment-from-whatsapp.grants.json'] = {
+    grants: [
+      { kind: 'notify', value: 'whatsapp' },
+      {
+        kind: 'command',
+        value: 'appointments.appointments.cancel',
+        payload: { channel: 'customer' },
+      },
+    ],
+  };
+  assert.deepEqual(check(files).errors, []);
+});
+
+test('a pin that is not an object is refused, exactly as the hub refuses it', () => {
+  for (const payload of ['channel=customer', ['channel'], 42, null]) {
+    const files = wellFormed();
+    files['appointment-from-whatsapp.grants.json'] = {
+      grants: [{ kind: 'command', value: 'appointments.appointments.cancel', payload }],
+    };
+    assertNames(check(files).errors, 'payload');
+  }
+});
+
+// The hub stores a pin ONLY for a `command`, because `check_command_grant` is the one gate that is
+// handed a payload. A pin on any other kind would put a restriction on the owner's screen that
+// nothing applies — which is the failure the whole default-deny design exists to prevent.
+test('a pin on a kind that is not `command` is refused: nothing would enforce it', () => {
+  for (const kind of ['query', 'notify', 'http', 'recipient_query']) {
+    const files = wellFormed();
+    files['appointment-from-whatsapp.grants.json'] = {
+      grants: [{ kind, value: 'customers.list', payload: { channel: 'customer' } }],
+    };
+    assertNames(check(files).errors, 'payload');
+  }
+});
+
+// An EMPTY pin is not a pin: it fixes nothing, so it is the same grant as the bare pair and the hub
+// stores it as `'{}'` — the default of every row that existed before hub#1623. Refusing it here
+// would be this door inventing a rule the hub does not have.
+test('an empty pin is the bare grant, not an error', () => {
+  const files = wellFormed();
+  files['appointment-from-whatsapp.grants.json'] = {
+    grants: [{ kind: 'command', value: 'appointments.appointments.cancel', payload: {} }],
+  };
+  assert.deepEqual(check(files).errors, []);
+});
+
 // The door is worth nothing unless `erplora validate` runs it — and `pack` (and therefore
 // `publish`) calls `validate` first, which is what turns this file into a PUBLISH gate instead of a
 // linter nobody invokes. Without this test, deleting the call in `validate.mjs` leaves every case

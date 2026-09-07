@@ -353,7 +353,39 @@ function checkGrants(name, sidecar, errors) {
         errors.push(`${where}: grant ${index + 1} has no \`${key}\` — a grant is \`{ kind, value }\`.`);
       }
     }
+    checkGrantPin(where, grant, index, errors);
   });
+}
+
+/**
+ * The PIN of a grant (hub#1623): a `command` grant may FIX part of the payload, so «may cancel
+ * appointments AS THE CUSTOMER» stops being the same permission as «may cancel appointments». It
+ * is what contains a template whose `params` a model writes from a stranger's message.
+ *
+ * Both rules below are the HUB's (`flows::grants::replace`), repeated here for the one reason this
+ * file exists: without them the module publishes green and the owner meets the refusal at
+ * `PUT …/grants`, three steps away from anyone who can fix it.
+ */
+function checkGrantPin(where, grant, index, errors) {
+  const pin = grant?.payload;
+  if (pin === undefined) return;
+  if (pin === null || typeof pin !== 'object' || Array.isArray(pin)) {
+    errors.push(
+      `${where}: grant ${index + 1} has a \`payload\` that is not an object — a pin is ` +
+        '`{ "<field>": <fixed value> }`, and the hub refuses anything else ' +
+        '(`flow.invalid_grant_payload`).',
+    );
+    return;
+  }
+  // An EMPTY pin fixes nothing, so it is the bare grant — and `'{}'` is what every row had before
+  // hub#1623. Only a pin that actually restricts something has to name a kind that enforces it.
+  if (Object.keys(pin).length > 0 && grant.kind !== 'command') {
+    errors.push(
+      `${where}: grant ${index + 1} pins \`payload\` on a \`${grant.kind}\` grant, and only a ` +
+        '`command` grant can fix payload values — the hub is handed a payload at no other gate, so ' +
+        'the fixed fields would restrict nothing (`flow.invalid_grant_payload`).',
+    );
+  }
 }
 
 /** `<family>.requires.json`: the version floor of the modules whose operations the template uses. */

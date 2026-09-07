@@ -150,7 +150,7 @@
         },
         "command": {
           "type": "string",
-          "description": "Solo `kind: command` — nombre del command. Debe tener un grant vivo (`_flow_grants`) en el momento de ejecutarse; los commands internos (`_`/`internal:true`) están prohibidos, igual que para un caller externo."
+          "description": "Solo `kind: command` — nombre del command. Debe tener un grant vivo (`_flow_grants`) en el momento de ejecutarse; los commands internos (`_`/`internal:true`) están prohibidos, igual que para un caller externo. Desde hub#1623 el grant puede además FIJAR campos del payload (`payload` del grant): si el paso manda un valor distinto —o se deja el campo fuera— el run termina en `flow.grant_payload_denied` sin escribir nada. Es la contención que necesita un `params` redactado por un paso `ai`, porque ahí los argumentos los elige un modelo leyendo un mensaje de fuera."
         },
         "params": {
           "$ref": "#/$defs/mapping",
@@ -270,7 +270,7 @@
             "continue"
           ],
           "default": "cancel",
-          "description": "Solo `kind: approval` — qué le cuesta al run un «no». `cancel` (POR DEFECTO) termina el run como `cancelled`, que es lo que un rechazo hace hoy; `continue` sigue con `steps.<id>.decision == \"rejected\"`. **Con `continue` + un `condition` las tres ramas (aprobado/rechazado/vencido) se componen a partir de primitivas ya congeladas, sin necesidad de una v2 con branching** — que es la misma jugada del step `query`. Viaja en la fila por el mismo motivo que `on_expire`."
+          "description": "`kind: approval` y `kind: ai` — qué le cuesta al run un «no». `cancel` (POR DEFECTO) termina el run como `cancelled`, que es lo que un rechazo hace hoy; `continue` sigue con `steps.<id>.decision == \"rejected\"`. En un paso `ai`, además, el paso conserva el turno aparcado (`steps.<id>.text`) y añade `steps.<id>.status == \"rejected\"`, igual que hace la aprobación: así el paso siguiente puede contarle a alguien cómo acabó. **Con `continue` + un `condition` las tres ramas (aprobado/rechazado/vencido) se componen a partir de primitivas ya congeladas, sin necesidad de una v2 con branching** — que es la misma jugada del step `query`. Viaja en la fila por el mismo motivo que `on_expire`."
         },
         "channel": {
           "enum": [
