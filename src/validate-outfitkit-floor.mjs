@@ -112,6 +112,10 @@ export const HUB_OUTFITKIT = [
   // @erplora/outfitkit on npm before the tag is still 0.1.65 (2026-09-05T07:55Z); nothing newer
   // had been published by then.
   { hub: '1.1.15', built_at: '2026-09-06T16:11:26Z', outfitkit: '0.1.65' },
+  // v1.1.16 («Develop — lote v1.1.16», tagged 2026-09-07T14:14:49Z): the newest
+  // @erplora/outfitkit on npm before the tag is STILL 0.1.65 (2026-09-05T07:55Z) — it is the
+  // latest version published at all, so three hub releases in a row derive the same floor.
+  { hub: '1.1.16', built_at: '2026-09-07T14:14:49Z', outfitkit: '0.1.65' },
 ];
 
 /**
