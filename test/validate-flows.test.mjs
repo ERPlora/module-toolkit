@@ -313,11 +313,35 @@ test('a pin that is not an object is refused, exactly as the hub refuses it', ()
   }
 });
 
-// The hub stores a pin ONLY for a `command`, because `check_command_grant` is the one gate that is
-// handed a payload. A pin on any other kind would put a restriction on the owner's screen that
-// nothing applies — which is the failure the whole default-deny design exists to prevent.
-test('a pin on a kind that is not `command` is refused: nothing would enforce it', () => {
-  for (const kind of ['query', 'notify', 'http', 'recipient_query']) {
+// A `query` grant may pin too since hub#1662 — «may read a diary» becomes «may read THIS
+// customer's diary», which is what makes an agenda read safe in a template whose params a model
+// writes from a stranger's message. `GrantKind::can_pin` is `Command | Query`, and this door has to
+// say the same: refusing it here is what stopped whatsapp_inbox#119 from publishing at all.
+test('a query grant may FIX part of the payload: the pin publishes green (hub#1662)', () => {
+  const files = wellFormed();
+  files['appointment-from-whatsapp.grants.json'] = {
+    grants: [
+      { kind: 'notify', value: 'whatsapp' },
+      {
+        kind: 'query',
+        value: 'appointments.appointments.list_for_customer',
+        payload: { customer_id: 'steps.resolve_customer.id' },
+      },
+    ],
+  };
+  assert.deepEqual(check(files).errors, []);
+});
+
+// The hub stores a pin only for the kinds that are ever HANDED values to judge — a `command`'s
+// payload (hub#1623) and a `query`'s parameters (hub#1662). A pin on any other kind would put a
+// restriction on the owner's screen that nothing applies, which is the failure the whole
+// default-deny design exists to prevent.
+//
+// 🔴 `query` used to be in this list and it was RIGHT to be: until hub#1662 the hub refused it.
+// The list mirrors `GrantKind::can_pin`, so it moves when the kernel moves — it is not a rule of
+// this file's own.
+test('a pin on a kind that cannot enforce it is refused: nothing would apply it', () => {
+  for (const kind of ['notify', 'http', 'recipient_query']) {
     const files = wellFormed();
     files['appointment-from-whatsapp.grants.json'] = {
       grants: [{ kind, value: 'customers.list', payload: { channel: 'customer' } }],
