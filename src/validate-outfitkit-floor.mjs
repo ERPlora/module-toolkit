@@ -116,6 +116,11 @@ export const HUB_OUTFITKIT = [
   // @erplora/outfitkit on npm before the tag is STILL 0.1.65 (2026-09-05T07:55Z) — it is the
   // latest version published at all, so three hub releases in a row derive the same floor.
   { hub: '1.1.16', built_at: '2026-09-07T14:14:49Z', outfitkit: '0.1.65' },
+  // v1.1.17 («Develop — lote v1.1.17», tagged 2026-09-08T10:09:01Z): the run of three releases on
+  // 0.1.65 ENDS here — `@erplora/outfitkit` shipped 0.1.66 (2026-09-07T16:32Z) and 0.1.67
+  // (2026-09-07T18:11Z) hours after `v1.1.16` was cut, so the newest published before this tag is
+  // 0.1.67. It is the first row in a while where the derivation actually moves the floor.
+  { hub: '1.1.17', built_at: '2026-09-08T10:09:01Z', outfitkit: '0.1.67' },
 ];
 
 /**

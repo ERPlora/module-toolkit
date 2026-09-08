@@ -451,7 +451,11 @@ test('the real reading also CLEARS the false alarm the derived table was raising
   // OutfitKit past the table's newest row with no declared floor is a block at `pack` against the
   // table and green against a hub that answers that very version. Blocking a publish that is fine
   // is the same defect as waving one through: both come from answering with a guess.
-  const aheadOfTheTable = '0.1.66';
+  // 🔴 DERIVED from the table, never pinned — the lesson of #206/#208 one column over. This said
+  // `'0.1.66'`, and it stopped meaning «ahead of the table» the minute `v1.1.17` landed carrying
+  // 0.1.67: the first assertion below went from 1 error to 0 and the test failed on the ROW, not on
+  // the behaviour it exists to pin. `nextHubAfter` is a plain patch bump, so it reads either column.
+  const aheadOfTheTable = nextHubAfter(HUB_OUTFITKIT.at(-1).outfitkit);
   const { dir, manifest } = moduleDir({ stamp: aheadOfTheTable });
   assert.equal(checkOutfitkitFloor(dir, manifest, { publishing: true }).errors.length, 1);
 
@@ -468,11 +472,25 @@ test('a bake ahead of the REAL hub still warns on validate and blocks on publish
   // `validate` start blocking. The stamp comes from the shared `../outfitkit` checkout, not from
   // the author, and reddening every UI pull request for the hub release cadence is how a gate dies.
   const { dir, manifest } = moduleDir({ stamp: '0.1.70' });
-  const source = realHub('1.1.14', '0.1.65');
+  // 🔴 The hub that answers has to be the NEWEST one, or «the warning names the measured number» is
+  // not what is being checked. This read `realHub('1.1.14', '0.1.65')` and passed by COINCIDENCE:
+  // 0.1.65 was also what the newest derived row carried, so the assertion held whichever of the two
+  // the message named. `v1.1.17` (0.1.67) broke the tie and the test went red on the row. Measuring
+  // the newest hub makes the fact the ceiling, and the two numbers are pinned apart below.
+  const derived = HUB_OUTFITKIT.at(-1);
+  const measured = '0.1.36';
+  assert.notEqual(measured, derived.outfitkit, 'the fact has to DIFFER from the guess it replaces');
+  const source = realHub(derived.hub, measured);
   const onValidate = checkOutfitkitFloor(dir, manifest, { source });
   assert.deepEqual(onValidate.errors, []);
   assert.equal(onValidate.warnings.length, 1, JSON.stringify(onValidate.warnings));
-  assert.match(onValidate.warnings[0], /0\.1\.65/, 'the warning names the number that was measured');
+  const named = new RegExp(measured.replace(/\./g, '\\.'));
+  assert.match(onValidate.warnings[0], named, 'the warning names the number that was measured');
+  assert.doesNotMatch(
+    onValidate.warnings[0],
+    new RegExp(`OutfitKit ${derived.outfitkit.replace(/\./g, '\\.')}`),
+    'and NOT the one the table guessed for that same tag',
+  );
   assert.equal(checkOutfitkitFloor(dir, manifest, { source, publishing: true }).errors.length, 1);
 });
 
