@@ -453,7 +453,7 @@ test('the wrong KIND is one finding, not two: the hub never reaches the values e
 // The hub judges the pin's TOP-LEVEL fields only (`replace` iterates `payload`, `resolve_pin`
 // asks `pin_reference` of each written value and never descends). Refusing a nested one here would
 // be this door inventing a rule the hub does not have — which is the failure that cuts the other
-// way. Reported as its own hub question in ERPlora/hub#1667.
+// way. Reported as its own hub question in ERPlora/hub#1666.
 test('the pin is judged FIELD BY FIELD, exactly as the hub iterates it — nothing nested', () => {
   assert.deepEqual(check(withPin('command', { where: { customer: 'secret.token' } })).errors, []);
 });
