@@ -391,11 +391,17 @@ function withPin(kind, payload) {
   });
 }
 
+// The hub asks `text.contains("{{")`, not «starts with»: a template buried in prose
+// (`cust-{{…}}`) is exactly the «text with templates in it» the rule names, and it renders to a
+// string the run will never equal. Measured: with `startsWith('{{')` the suite stayed green, so the
+// second value below is the one that keeps this door as wide as the hub's.
 test('a pin written as a TEMPLATE is refused: an unresolved `{{…}}` renders empty and stops matching', () => {
   for (const kind of ['command', 'query']) {
-    const errors = check(withPin(kind, { customer_id: '{{steps.resolve_customer.id}}' })).errors;
-    assertNames(errors, 'customer_id');
-    assert.equal(errors.length, 1, `${kind}: ${errors.join(' | ')}`);
+    for (const written of ['{{steps.resolve_customer.id}}', 'cust-{{steps.resolve_customer.id}}']) {
+      const errors = check(withPin(kind, { customer_id: written })).errors;
+      assertNames(errors, 'customer_id');
+      assert.equal(errors.length, 1, `${kind} ${written}: ${errors.join(' | ')}`);
+    }
   }
 });
 
@@ -420,8 +426,11 @@ test('the two roots the run DOES carry publish green — the pin the kernel land
   }
 });
 
+// `'{one brace}'` rides along on purpose: the template rule is `{{`, and a single brace is an
+// ordinary character the hub stores as it stands — a door that refused `{` would stop a literal
+// the hub keeps. Measured: with `includes('{')` the suite stayed green.
 test('a LITERAL publishes green whatever its type: the hub compares it as it stands', () => {
-  for (const literal of [42, true, null, 'customer', ['a'], { nested: 1 }]) {
+  for (const literal of [42, true, null, 'customer', '{one brace}', ['a'], { nested: 1 }]) {
     assert.deepEqual(check(withPin('command', { channel: literal })).errors, [], JSON.stringify(literal));
   }
 });
