@@ -451,6 +451,56 @@ function checkGrants(name, sidecar, errors) {
  */
 const CAN_PIN = new Set(['command', 'query']);
 
+/**
+ * The roots a pin may REFERENCE, mirroring `PIN_ROOTS` in the hub. The run scope the executor
+ * builds is `{ input, steps }` and nothing else (`grants.rs::run_scope`), so these two are all of
+ * it. Both absences are deliberate and neither is an oversight:
+ *
+ * - `secret.…` would make the gate an ORACLE: «granted» exactly when a value equals the secret, and
+ *   a caller that can retry reads it one guess at a time.
+ * - `event.…` names something the run scope does not carry, so the pin could only ever deny — a
+ *   permission that authorises nothing, which is the one thing a permission must not be.
+ */
+const PIN_ROOTS = ['input', 'steps'];
+
+/**
+ * Every root the mapping language addresses, mirroring `def::is_path`. It matters that this is the
+ * FULL list and not `PIN_ROOTS`: a dotted string whose root is none of these — `appointments.list`,
+ * `customer.vip` — is an ordinary LITERAL the hub stores without complaint, and refusing it here
+ * would be this door stopping a template from publishing something that works.
+ */
+const PATH_ROOTS = [...PIN_ROOTS, 'event', 'secret'];
+
+/** Is `text` a reference into the run rather than a literal? Mirrors `def::is_path` in the hub. */
+function isRunPath(text) {
+  const root = text.split('.')[0];
+  return PATH_ROOTS.includes(root) && text.length > root.length + 1;
+}
+
+/**
+ * Why the hub would refuse this fixed VALUE, or `null` if it would keep it — the mirror of
+ * `grants.rs::check_pin_value`. Judged field by field, exactly as the hub iterates the pin: it asks
+ * `pin_reference` of each written value and never descends, so a nested one is a literal to both.
+ */
+function pinValueProblem(written) {
+  // A number, a bool, a structure: a literal, compared as it stands.
+  if (typeof written !== 'string') return null;
+  if (written.includes('{{')) {
+    return (
+      'a pin is a value, not text with templates in it — an UNRESOLVED `{{…}}` renders empty, so ' +
+      'the pin would quietly stop matching and the containment would read as working while it ' +
+      'denied everything; name the path on its own (`steps.<step>.<field>`) so its type survives'
+    );
+  }
+  if (isRunPath(written) && !PIN_ROOTS.includes(written.split('.')[0])) {
+    return (
+      `\`${written}\` is not something a run carries; a pin may name ` +
+      `${PIN_ROOTS.map((root) => `\`${root}.…\``).join(' or ')} and nothing else`
+    );
+  }
+  return null;
+}
+
 function checkGrantPin(where, grant, index, errors) {
   const pin = grant?.payload;
   if (pin === undefined) return;
@@ -471,6 +521,16 @@ function checkGrantPin(where, grant, index, errors) {
         'handed values to judge at no other gate, so the fixed fields would restrict nothing ' +
         '(`flow.invalid_grant_payload`).',
     );
+    return; // The kind is the first thing the hub refuses; it never reaches the values.
+  }
+  for (const [field, written] of Object.entries(pin)) {
+    const problem = pinValueProblem(written);
+    if (problem !== null) {
+      errors.push(
+        `${where}: grant ${index + 1} fixes \`${field}\` to something it cannot be: ${problem} ` +
+          '(`flow.invalid_grant_payload`).',
+      );
+    }
   }
 }
 
