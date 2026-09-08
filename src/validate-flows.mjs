@@ -464,12 +464,18 @@ const CAN_PIN = new Set(['command', 'query']);
 const PIN_ROOTS = ['input', 'steps'];
 
 /**
- * Every root the mapping language addresses, mirroring `def::is_path`. It matters that this is the
- * FULL list and not `PIN_ROOTS`: a dotted string whose root is none of these — `appointments.list`,
- * `customer.vip` — is an ordinary LITERAL the hub stores without complaint, and refusing it here
- * would be this door stopping a template from publishing something that works.
+ * Every root the mapping language addresses, mirroring `def::is_path` — which in the hub reads its
+ * OWN four constants and knows nothing of `PIN_ROOTS`. Two things ride on that:
+ *
+ * - It is the FULL list and not `PIN_ROOTS`: a dotted string whose root is none of these —
+ *   `appointments.list`, `customer.vip` — is an ordinary LITERAL the hub stores without complaint,
+ *   and refusing it here would stop a template from publishing something that works.
+ * - It is written out and NOT derived from `PIN_ROOTS`. Deriving it looks tidier and is a trap:
+ *   narrowing `PIN_ROOTS` would narrow this one with it, `input.…` would stop being a reference at
+ *   all and the door would go quiet on exactly the value the hub still refuses. Measured — with the
+ *   derived version, dropping `input` from `PIN_ROOTS` left the whole suite green.
  */
-const PATH_ROOTS = [...PIN_ROOTS, 'event', 'secret'];
+const PATH_ROOTS = ['input', 'steps', 'event', 'secret'];
 
 /** Is `text` a reference into the run rather than a literal? Mirrors `def::is_path` in the hub. */
 function isRunPath(text) {
