@@ -121,6 +121,10 @@ export const HUB_OUTFITKIT = [
   // (2026-09-07T18:11Z) hours after `v1.1.16` was cut, so the newest published before this tag is
   // 0.1.67. It is the first row in a while where the derivation actually moves the floor.
   { hub: '1.1.17', built_at: '2026-09-08T10:09:01Z', outfitkit: '0.1.67' },
+  // v1.1.18 («Develop — lote v1.1.18», tagged 2026-09-08T13:38:24Z): nothing newer than
+  // 0.1.67 (2026-09-07T18:11Z) has been published to npm since `v1.1.17` was cut this
+  // morning, so the derivation lands on the same floor — the ceiling does not move here.
+  { hub: '1.1.18', built_at: '2026-09-08T13:38:24Z', outfitkit: '0.1.67' },
 ];
 
 /**
