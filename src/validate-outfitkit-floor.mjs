@@ -125,6 +125,13 @@ export const HUB_OUTFITKIT = [
   // 0.1.67 (2026-09-07T18:11Z) has been published to npm since `v1.1.17` was cut this
   // morning, so the derivation lands on the same floor — the ceiling does not move here.
   { hub: '1.1.18', built_at: '2026-09-08T13:38:24Z', outfitkit: '0.1.67' },
+  // v1.1.19 («Develop — lote v1.1.19», tagged 2026-09-08T18:53:49Z): still nothing newer than
+  // 0.1.67 (2026-09-07T18:11Z) on npm, so the derivation lands on the same floor for the third
+  // release in a row. 🔴 And this row is the first one that did NOT have to be derived: the
+  // fleet already serves this tag, and `GET https://banco-pre.a.erplora.com/outfitkit-version.json`
+  // answered `{"outfitkit":"0.1.67","hub":"1.1.19"}` — the hub's own reading (hub#1588) and the
+  // date derivation agree, which is the control that says the rule above still reproduces reality.
+  { hub: '1.1.19', built_at: '2026-09-08T18:53:49Z', outfitkit: '0.1.67' },
 ];
 
 /**
