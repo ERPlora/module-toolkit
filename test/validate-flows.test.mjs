@@ -436,6 +436,20 @@ test('a string that is not a reference publishes green: `is_path` needs a KNOWN 
   }
 });
 
+// The kind is the FIRST thing the hub refuses (`replace` returns before it reads any value), and
+// this door says the same: an author who picked the wrong kind gets one finding naming the cause,
+// not a second one about a value that was never going to be looked at.
+test('the wrong KIND is one finding, not two: the hub never reaches the values either', () => {
+  const files = wellFormed({
+    'appointment-from-whatsapp.grants.json': {
+      grants: [{ kind: 'notify', value: 'whatsapp', payload: { text: '{{steps.draft.body}}' } }],
+    },
+  });
+  const { errors } = check(files);
+  assert.equal(errors.length, 1, errors.join(' | '));
+  assert.ok(errors[0].includes('`notify` grant'), errors[0]);
+});
+
 // The hub judges the pin's TOP-LEVEL fields only (`replace` iterates `payload`, `resolve_pin`
 // asks `pin_reference` of each written value and never descends). Refusing a nested one here would
 // be this door inventing a rule the hub does not have — which is the failure that cuts the other
