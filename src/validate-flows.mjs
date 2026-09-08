@@ -431,14 +431,26 @@ function checkGrants(name, sidecar, errors) {
 }
 
 /**
- * The PIN of a grant (hub#1623): a `command` grant may FIX part of the payload, so «may cancel
- * appointments AS THE CUSTOMER» stops being the same permission as «may cancel appointments». It
+ * The PIN of a grant (hub#1623, widened by hub#1662): a grant may FIX part of the values it will be
+ * handed, so «may cancel appointments AS THE CUSTOMER» stops being the same permission as «may
+ * cancel appointments», and «may read THIS customer's diary» stops being «may read the diary». It
  * is what contains a template whose `params` a model writes from a stranger's message.
  *
  * Both rules below are the HUB's (`flows::grants::replace`), repeated here for the one reason this
  * file exists: without them the module publishes green and the owner meets the refusal at
  * `PUT …/grants`, three steps away from anyone who can fix it.
+ *
+ * 🔴 And that mirror cuts BOTH ways: while this door refused what the hub had started allowing,
+ * the module could not publish at all. Measured in whatsapp_inbox#119 — the pin the kernel landed
+ * for it (hub#1662) was rejected here, so the security fix could not ship.
  */
+/**
+ * The kinds a pin can restrict, mirroring `GrantKind::can_pin` in the hub: the ones ever HANDED
+ * values to judge — a `command`'s payload (hub#1623) and a `query`'s parameters (hub#1662). A pin
+ * on any other kind would put a restriction on the owner's screen that nothing applies.
+ */
+const CAN_PIN = new Set(['command', 'query']);
+
 function checkGrantPin(where, grant, index, errors) {
   const pin = grant?.payload;
   if (pin === undefined) return;
@@ -452,11 +464,12 @@ function checkGrantPin(where, grant, index, errors) {
   }
   // An EMPTY pin fixes nothing, so it is the bare grant — and `'{}'` is what every row had before
   // hub#1623. Only a pin that actually restricts something has to name a kind that enforces it.
-  if (Object.keys(pin).length > 0 && grant.kind !== 'command') {
+  if (Object.keys(pin).length > 0 && !CAN_PIN.has(grant.kind)) {
     errors.push(
-      `${where}: grant ${index + 1} pins \`payload\` on a \`${grant.kind}\` grant, and only a ` +
-        '`command` grant can fix payload values — the hub is handed a payload at no other gate, so ' +
-        'the fixed fields would restrict nothing (`flow.invalid_grant_payload`).',
+      `${where}: grant ${index + 1} pins \`payload\` on a \`${grant.kind}\` grant, and only ` +
+        `${[...CAN_PIN].map((k) => `\`${k}\``).join(' and ')} grants can fix values — the hub is ` +
+        'handed values to judge at no other gate, so the fixed fields would restrict nothing ' +
+        '(`flow.invalid_grant_payload`).',
     );
   }
 }
