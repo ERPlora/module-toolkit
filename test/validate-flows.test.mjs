@@ -361,6 +361,129 @@ test('an empty pin is the bare grant, not an error', () => {
   assert.deepEqual(check(files).errors, []);
 });
 
+// ── the VALUE of a pin (hub#1662, module-toolkit#233) ─────────────────────────────────────────
+//
+// #231 mirrored WHICH kind may fix values; this mirrors WHICH VALUES are ones. A pin is a literal
+// or a reference into the run, and the run scope the executor builds is `{ input, steps }` and
+// nothing else (`grants.rs::run_scope`), so `PIN_ROOTS` is those two:
+//
+//   - `secret.…` is out ON PURPOSE — a gate that answered «granted» exactly when a value equalled
+//     a secret is an ORACLE, and a caller that can retry reads the secret one guess at a time.
+//   - `event.…` is out because the scope does not carry it, so the pin could only ever deny: a
+//     permission that authorises nothing.
+//   - `{{…}}` prose is out because a pin is a VALUE, not a sentence — rendering flattens a number
+//     to a string and an UNRESOLVED template renders EMPTY, so the pin silently stops matching and
+//     the containment reads as working while it denies everything.
+//
+// Without this mirror the module publishes green and the owner meets `flow.invalid_grant_payload`
+// at `PUT …/grants` — and because that call is ALL-OR-NOTHING the recipe is not left with the wide
+// permission, it is left with NO permission and dies at its first step.
+/** The well-formed family with one pinned grant, which is what every case below varies. */
+function withPin(kind, payload) {
+  const value = kind === 'command' ? 'appointments.appointments.cancel' : 'appointments.appointments.list_for_customer';
+  return wellFormed({
+    'appointment-from-whatsapp.grants.json': {
+      grants: [
+        { kind: 'notify', value: 'whatsapp' },
+        { kind, value, payload },
+      ],
+    },
+  });
+}
+
+// The hub asks `text.contains("{{")`, not «starts with»: a template buried in prose
+// (`cust-{{…}}`) is exactly the «text with templates in it» the rule names, and it renders to a
+// string the run will never equal. Measured: with `startsWith('{{')` the suite stayed green, so the
+// second value below is the one that keeps this door as wide as the hub's.
+test('a pin written as a TEMPLATE is refused: an unresolved `{{…}}` renders empty and stops matching', () => {
+  for (const kind of ['command', 'query']) {
+    for (const written of ['{{steps.resolve_customer.id}}', 'cust-{{steps.resolve_customer.id}}']) {
+      const errors = check(withPin(kind, { customer_id: written })).errors;
+      assertNames(errors, 'customer_id');
+      assert.equal(errors.length, 1, `${kind} ${written}: ${errors.join(' | ')}`);
+    }
+  }
+});
+
+test('a pin on a root this run does not carry is refused: `event.…` could only ever deny', () => {
+  for (const kind of ['command', 'query']) {
+    assertNames(check(withPin(kind, { customer_id: 'event.payload.from' })).errors, 'event.payload.from');
+  }
+});
+
+test('a pin on `secret.…` is refused: a gate that matched a secret would be an ORACLE', () => {
+  for (const kind of ['command', 'query']) {
+    assertNames(check(withPin(kind, { token: 'secret.whatsapp_token' })).errors, 'secret.whatsapp_token');
+  }
+});
+
+// The other direction of the same mirror, and the one that cost whatsapp_inbox#119 a whole round:
+// a door that refuses what the hub ALLOWS stops the module from publishing at all. Every value
+// below is one `check_pin_value` returns `Ok` for, so every one of them has to publish green.
+test('the two roots the run DOES carry publish green — the pin the kernel landed for', () => {
+  for (const path of ['steps.resolve_customer.id', 'input.customer_id']) {
+    assert.deepEqual(check(withPin('query', { customer_id: path })).errors, [], path);
+  }
+});
+
+// `'{one brace}'` rides along on purpose: the template rule is `{{`, and a single brace is an
+// ordinary character the hub stores as it stands — a door that refused `{` would stop a literal
+// the hub keeps. Measured: with `includes('{')` the suite stayed green.
+test('a LITERAL publishes green whatever its type: the hub compares it as it stands', () => {
+  for (const literal of [42, true, null, 'customer', '{one brace}', ['a'], { nested: 1 }]) {
+    assert.deepEqual(check(withPin('command', { channel: literal })).errors, [], JSON.stringify(literal));
+  }
+});
+
+// `def::is_path` asks for a KNOWN root AND something after the dot, so these are plain strings and
+// not references — a pin fixing a status to `steps` or a code to `event.` is nobody's mistake, but
+// a door that widened `is_path` to «any dotted string» would refuse `appointments.list` too, and
+// that one is an ordinary value a template does pin.
+test('a string that is not a reference publishes green: `is_path` needs a KNOWN root and a path after it', () => {
+  for (const literal of ['appointments.list', 'steps', 'event.', 'input', 'secret', 'customer.vip']) {
+    assert.deepEqual(check(withPin('command', { channel: literal })).errors, [], literal);
+  }
+});
+
+// The kind is the FIRST thing the hub refuses (`replace` returns before it reads any value), and
+// this door says the same: an author who picked the wrong kind gets one finding naming the cause,
+// not a second one about a value that was never going to be looked at.
+test('the wrong KIND is one finding, not two: the hub never reaches the values either', () => {
+  const files = wellFormed({
+    'appointment-from-whatsapp.grants.json': {
+      grants: [{ kind: 'notify', value: 'whatsapp', payload: { text: '{{steps.draft.body}}' } }],
+    },
+  });
+  const { errors } = check(files);
+  assert.equal(errors.length, 1, errors.join(' | '));
+  assert.ok(errors[0].includes('`notify` grant'), errors[0]);
+});
+
+// The hub judges the pin's TOP-LEVEL fields only (`replace` iterates `payload`, `resolve_pin`
+// asks `pin_reference` of each written value and never descends). Refusing a nested one here would
+// be this door inventing a rule the hub does not have — which is the failure that cuts the other
+// way. Reported as its own hub question in ERPlora/hub#1666.
+test('the pin is judged FIELD BY FIELD, exactly as the hub iterates it — nothing nested', () => {
+  assert.deepEqual(check(withPin('command', { where: { customer: 'secret.token' } })).errors, []);
+});
+
+// The finding has to name the FIELD, because a pin is a map and «this grant is wrong» sends the
+// author to read four values to find the one the hub will reject.
+//
+// 🔴 The bad value is deliberately the SECOND one, and the good one comes FIRST: the hub judges
+// EVERY field (`for (field, written) in payload`), so a door that stopped at the first — the shape
+// every «scan» guard drifts into — would publish this pin green. Measured: with the loop cut to
+// `.slice(0, 1)` this is the test that goes red.
+test('the refusal names the field and the file, so the author knows which value to fix', () => {
+  const [first, ...rest] = check(withPin('query', { staff_id: 'input.staff', customer_id: 'event.from' })).errors;
+  assert.equal(rest.length, 0);
+  assert.ok(first.includes('appointment-from-whatsapp.grants.json'), first);
+  assert.ok(first.includes('customer_id'), first);
+  assert.ok(!first.includes('staff_id'), first);
+  assert.ok(first.includes('flow.invalid_grant_payload'), first);
+});
+
+
 // The door is worth nothing unless `erplora validate` runs it — and `pack` (and therefore
 // `publish`) calls `validate` first, which is what turns this file into a PUBLISH gate instead of a
 // linter nobody invokes. Without this test, deleting the call in `validate.mjs` leaves every case
