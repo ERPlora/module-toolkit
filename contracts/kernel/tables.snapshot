@@ -51,6 +51,7 @@ _flow.hub_id text NOT NULL
 _flow.id text NOT NULL
 _flow.name text NOT NULL
 _flow.schema_version integer NOT NULL
+_flow.template_ref text NULL
 _flow.updated_at text NOT NULL
 _flow.updated_by text NOT NULL
 

@@ -220,7 +220,8 @@ export interface RunPage<T = unknown> {
 }
 export declare class FlowsApi {
     private readonly send;
-    constructor(send: (req: CoreRequest) => Promise<unknown>);
+    private readonly moduleId;
+    constructor(send: (req: CoreRequest) => Promise<unknown>, moduleId?: string);
     list(): Promise<Flow[]>;
     create(flow: FlowInput): Promise<Flow>;
     get(id: string): Promise<Flow>;
@@ -242,6 +243,8 @@ export declare class FlowsApi {
     deleteSecret(name: string): Promise<unknown>;
     schema(): Promise<FlowSchema>;
     templates(): Promise<ModuleFlowTemplate[]>;
+    activateTemplate(family: string): Promise<Flow>;
+    deactivateTemplate(family: string): Promise<Flow>;
 }
 export interface ModuleFlowTemplate {
     module: string;
@@ -253,6 +256,10 @@ export interface ModuleFlowTemplate {
         payload?: Record<string, unknown>;
     }>;
     requires: Record<string, string>;
+    installed?: {
+        flow_id: string;
+        enabled: boolean;
+    } | null;
 }
 export interface EventFieldShape {
     path: string;
