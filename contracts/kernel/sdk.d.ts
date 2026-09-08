@@ -350,6 +350,33 @@ export declare class EventsApi {
     retryAll(): Promise<RetryAllResult>;
     trace(id: string): Promise<EventTrace>;
 }
+export declare const WHATSAPP_TEMPLATES_BASE_PATH = "/api/hub/whatsapp/templates";
+export interface WhatsappTemplate {
+    name: string;
+    language: string;
+    category?: string;
+    status: string;
+    rejected_reason?: string;
+    meta_id?: string;
+    [field: string]: unknown;
+}
+export interface WhatsappTemplateList {
+    templates: WhatsappTemplate[];
+    stale: boolean;
+}
+export interface WhatsappTemplateInput {
+    name: string;
+    language: string;
+    category?: string;
+    [field: string]: unknown;
+}
+export declare class WhatsappTemplatesApi {
+    private readonly send;
+    constructor(send: (req: CoreRequest) => Promise<unknown>);
+    list(): Promise<WhatsappTemplateList>;
+    register(template: WhatsappTemplateInput): Promise<WhatsappTemplate>;
+    remove(name: string): Promise<void>;
+}
 export declare const PRINT_JOBS_BASE_PATH = "/api/print/jobs";
 export interface PrintRetryResult {
     jobId: string;
@@ -375,6 +402,7 @@ export declare class ErploraClient {
     private flowsApi?;
     private eventsApi?;
     private printApi?;
+    private whatsappTemplatesApi?;
     constructor(transport: ErploraTransport, opts?: {
         permissions?: () => ReadonlySet<string>;
         notifier?: (n: Notification) => void;
@@ -390,6 +418,7 @@ export declare class ErploraClient {
     forModule(moduleId: string): ErploraClient;
     get flows(): FlowsApi;
     get events(): EventsApi;
+    get whatsappTemplates(): WhatsappTemplatesApi;
     get printQueue(): PrintApi;
     query<T = unknown>(name: string, params?: Record<string, unknown>): Promise<T>;
     queryOptional<T = unknown>(name: string, params?: Record<string, unknown>): Promise<T | undefined>;
