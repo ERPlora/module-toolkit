@@ -460,8 +460,13 @@ test('the pin is judged FIELD BY FIELD, exactly as the hub iterates it — nothi
 
 // The finding has to name the FIELD, because a pin is a map and «this grant is wrong» sends the
 // author to read four values to find the one the hub will reject.
+//
+// 🔴 The bad value is deliberately the SECOND one, and the good one comes FIRST: the hub judges
+// EVERY field (`for (field, written) in payload`), so a door that stopped at the first — the shape
+// every «scan» guard drifts into — would publish this pin green. Measured: with the loop cut to
+// `.slice(0, 1)` this is the test that goes red.
 test('the refusal names the field and the file, so the author knows which value to fix', () => {
-  const [first, ...rest] = check(withPin('query', { customer_id: 'event.from', staff_id: 'input.staff' })).errors;
+  const [first, ...rest] = check(withPin('query', { staff_id: 'input.staff', customer_id: 'event.from' })).errors;
   assert.equal(rest.length, 0);
   assert.ok(first.includes('appointment-from-whatsapp.grants.json'), first);
   assert.ok(first.includes('customer_id'), first);
