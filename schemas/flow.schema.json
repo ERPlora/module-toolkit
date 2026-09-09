@@ -41,12 +41,12 @@
     },
     "mapping": {
       "type": "object",
-      "description": "Mapa `{nombre: valor}`. Un valor es un literal, una RUTA (`input.x` — conserva el tipo), o un string con plantillas `{{ruta}}` (siempre devuelve string). Los objetos y arrays se recorren recursivamente. Mismo estilo que `ReadDef::resolve_params_from_map` de los `reads`.",
+      "description": "Mapa `{nombre: valor}`. Un valor es un literal, una RUTA (`input.x` — conserva el tipo), o un string con plantillas `{{ruta}}` (siempre devuelve string). Las raíces son `input`, `steps`, `event` (dentro de un trigger), `secret` (solo en un step `http`) y `now` — el reloj del run, con `now.iso` como instante RFC-3339 en UTC. Los objetos y arrays se recorren recursivamente. Mismo estilo que `ReadDef::resolve_params_from_map` de los `reads`.",
       "additionalProperties": true
     },
     "condition": {
       "type": "object",
-      "description": "Filtro declarativo `{ruta: {operador: valor}}` evaluado en AND. El conjunto de operadores está CONGELADO: uno desconocido se rechaza al guardar (un filtro que casa con todo en silencio es como se acaba enviando un email a la lista entera de clientes). Comparación: `eq`/`neq` estrictos con caída a texto y a número (el dinero es un string, ADR-0123); `gt|gte|lt|lte` numéricos si ambos lados lo son, si no lexicográficos (así ordenan bien las fechas RFC-3339); un campo ausente NUNCA casa salvo `exists: false`.",
+      "description": "Filtro declarativo `{ruta: {operador: valor}}` evaluado en AND. El conjunto de operadores está CONGELADO: uno desconocido se rechaza al guardar (un filtro que casa con todo en silencio es como se acaba enviando un email a la lista entera de clientes). Comparación: `eq`/`neq` estrictos con caída a texto y a número (el dinero es un string, ADR-0123); `gt|gte|lt|lte` numéricos si ambos lados lo son, si no lexicográficos (así ordenan bien las fechas RFC-3339); un campo ausente NUNCA casa salvo `exists: false`. `within_last` es la ÚNICA que mira el reloj: la izquierda es un instante RFC-3339 y la derecha los SEGUNDOS de ventana (86400 = un día), y responde `false` cuando no puede juzgar (sin instante, sin reloj en el ámbito). El lado DERECHO de un operador es texto literal, nunca se resuelve: por eso una ruta `now.…` ahí se rechaza al guardar en vez de compararse como los caracteres `now.iso` y no casar jamás.",
       "additionalProperties": {
         "type": "object",
         "additionalProperties": false,
@@ -63,7 +63,12 @@
           "gt": {},
           "gte": {},
           "lt": {},
-          "lte": {}
+          "lte": {},
+          "within_last": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Ventana en SEGUNDOS contra el reloj del run: casa si la fecha de la izquierda no es más vieja que eso (86400 = un día — la ventana de 24 h que Meta exige en WhatsApp). Las duraciones de este documento son segundos, como `delay.seconds` y `max_wait`."
+          }
         }
       }
     },
