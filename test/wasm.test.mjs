@@ -68,7 +68,9 @@ function manifestWith(functions, file = 'dist/handler.wasm') {
     name: 'Demo',
     version: '1.0.0',
     commands: Object.fromEntries(
-      functions.map((fn) => [`demo.${fn}`, { sql: [], handler: { type: 'wasm', file, function: fn } }]),
+      // `permission` is required by the canonical schema, the same contract the hub applies: a
+      // command without it is refused on install (module-toolkit#247).
+      functions.map((fn) => [`demo.${fn}`, { permission: `demo.${fn}`, sql: [], handler: { type: 'wasm', file, function: fn } }]),
     ),
   };
 }

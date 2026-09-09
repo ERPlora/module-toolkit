@@ -171,13 +171,19 @@ jobs:
             || erplora_infra_fail 'rustup no ha podido instalar la toolchain de Rust'
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      # Two public dependencies, installed one by one (never `npm install`, which would try to
+      # Three public dependencies, installed one by one (never `npm install`, which would try to
       # resolve the three `file:` paths into sibling checkouts that do not exist on a runner).
       #
       # `@ionic/core` is here for ONE assertion, and it is the one that must not skip: the
       # `fill`/`mode="md"` guard (hub#760) reads Ionic's own CSS to prove it still has a reason to
       # exist. Letting that test skip itself for want of the package is exactly the hole of
       # module-toolkit#61 — an alarm that is silent because nobody notices it never rang.
+      #
+      # `ajv` is what EVALUATES the canonical manifest schema (module-toolkit#247) instead of only
+      # reading its key names; without it `test/validate-*.test.mjs` dies on ERR_MODULE_NOT_FOUND.
+      # This list and the module gate's are not kept in step by hand: `test/gate-wiring.test.mjs`
+      # reads the validator's own import graph and fails the pull request that adds a package
+      # without installing it in BOTH files.
       - name: Install the public dependencies the validator needs
         run: |
           set -euo pipefail
@@ -191,13 +197,16 @@ jobs:
           # a peer family bumps major on the registry — vitest 5.0.0 took the whole module CI down on
           # 2026-09-03 (module-toolkit#171). A throwaway prefix with an explicit package list needs no
           # peer resolution. Guard: test/npm-scratch-install-skips-peer-resolution.test.mjs
-          for pkg in typescript @ionic/core; do
+          for pkg in typescript @ionic/core ajv; do
             want=$(node -p "require('./package.json').dependencies['$pkg']")
             npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error --legacy-peer-deps "$pkg@$want"
           done
           ln -sfn "$deps/node_modules/typescript" node_modules/typescript
           mkdir -p node_modules/@ionic
           ln -sfn "$deps/node_modules/@ionic/core" node_modules/@ionic/core
+          # Only `ajv` itself is linked: node resolves a symlink through its realpath, so ajv's own
+          # four dependencies are found next to it inside the scratch prefix.
+          ln -sfn "$deps/node_modules/ajv" node_modules/ajv
 
       - name: Start the scratch Postgres
         env:

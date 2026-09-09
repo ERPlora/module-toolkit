@@ -227,3 +227,90 @@ test('the pairing action exists and takes the three inputs the gate passes', () 
     'the action must invoke the checked module, not reimplement it',
   );
 });
+
+// ── Every public package the validator imports is installed by BOTH YAMLs (#247) ─────────────
+//
+// The same failure as the SDK chain above, one layer down and far easier to introduce: the two
+// files that install the validator's dependencies (`validate-module/action.yml` for the 27 module
+// gates, `ci.yml` for this repository's own suite) list their packages BY HAND. Adding an import
+// to `src/` and forgetting either list does not go red here — it goes red on 27 repos with
+// `ERR_MODULE_NOT_FOUND`, blaming the modules. #247 added `ajv` and is that pull request.
+//
+// The list is not asserted against a hard-coded copy of itself, which would have to be edited by
+// the very change it is meant to catch: it is DERIVED from the validator's own static import
+// graph.
+
+/** The package a bare specifier resolves to: `ajv/dist/2020.js` → `ajv`, `@a/b/c.js` → `@a/b`. */
+function packageOf(specifier) {
+  const parts = specifier.split('/');
+  return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
+}
+
+/**
+ * The public packages reachable from `src/validate.mjs` through static imports. Relative
+ * specifiers are followed; `node:` builtins need no installing.
+ */
+function publicDependenciesOfTheValidator() {
+  const seen = new Set();
+  const packages = new Set();
+  const walk = (abs) => {
+    if (seen.has(abs)) return;
+    seen.add(abs);
+    let source;
+    try {
+      source = readFileSync(abs, 'utf8');
+    } catch {
+      return; // A specifier that does not resolve to a file is not a package to install.
+    }
+    const specifiers = /(?:^|[\s;])(?:import|export)[\s\S]{0,400}?from\s+['"]([^'"]+)['"]|import\(\s*['"]([^'"]+)['"]\s*\)|import\s+['"]([^'"]+)['"]/g;
+    let hit;
+    while ((hit = specifiers.exec(source))) {
+      const specifier = hit[1] || hit[2] || hit[3];
+      if (!specifier || specifier.startsWith('node:')) continue;
+      if (specifier.startsWith('.') || specifier.startsWith('/')) {
+        walk(join(dirname(abs), specifier));
+        continue;
+      }
+      packages.add(packageOf(specifier));
+    }
+  };
+  walk(join(REPO, 'src/validate.mjs'));
+  return { packages, files: seen.size };
+}
+
+test('the import graph this guard reads is really the validator’s, not an empty set', () => {
+  // Without this, a regex that stops matching turns the two tests below into green prose: an empty
+  // set satisfies «every package is installed». `typescript` has been in the graph since #61.
+  const { packages, files } = publicDependenciesOfTheValidator();
+  assert.ok(files > 20, `the walk reached only ${files} files — the graph is not being followed`);
+  assert.ok(
+    packages.has('typescript'),
+    `contracts.mjs imports typescript; the walk found ${[...packages].join(', ') || 'nothing'}`,
+  );
+});
+
+for (const [name, file] of [
+  ['the module gate', '.github/actions/validate-module/action.yml'],
+  ['this repository’s CI', '.github/workflows/ci.yml'],
+]) {
+  test(`${name} installs every public package the validator imports`, () => {
+    const yaml = readFileSync(join(REPO, file), 'utf8');
+    const installed = /for pkg in ([^;\n]+); do/.exec(yaml);
+    assert.ok(installed, `${file} must install its packages through the \`for pkg in …\` loop`);
+    const list = installed[1].trim().split(/\s+/);
+    for (const pkg of publicDependenciesOfTheValidator().packages) {
+      assert.ok(
+        list.includes(pkg),
+        `${file} does not install \`${pkg}\`, which src/validate.mjs imports — the gate would die `
+          + `with ERR_MODULE_NOT_FOUND. Installed: ${list.join(', ')}`,
+      );
+      // Installing into the scratch prefix is half of it: ESM ignores NODE_PATH, so the package
+      // also has to be resolvable from the toolkit's own node_modules.
+      assert.match(
+        yaml,
+        new RegExp(`ln -sfn "\\$deps/node_modules/(${pkg.replace('/', '\\/')}|\\$pkg)"`),
+        `${file} installs \`${pkg}\` but never links it into node_modules`,
+      );
+    }
+  });
+}

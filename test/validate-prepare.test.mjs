@@ -419,7 +419,9 @@ test('`validate --pg` FAILS when it could not check anything', async () => {
     id: 'demo',
     name: 'Demo',
     version: '1.0.0',
-    queries: { 'demo.q': { sql: 'queries/q.sql' } },
+    // `permission` is required by the canonical schema, the same contract the hub applies
+    // (module-toolkit#247): without it the manifest never reaches the --pg door under test.
+    queries: { 'demo.q': { permission: 'demo.read', sql: 'queries/q.sql' } },
   };
   const { dir } = mod({
     'module.json': JSON.stringify(moduleJson),
