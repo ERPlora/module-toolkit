@@ -147,3 +147,44 @@ test('the schema is EVALUATED, not just read for key names', () => {
   const broken = checkManifestSchema({ ...base(), scheduled_tasks: [{ command: 'demo.do' }] });
   assert.ok(broken.errors.length + broken.warnings.length > 0, 'but a missing required field is seen');
 });
+
+// The one rule the canonical schema and another check BOTH carry (#247). The schema's conditional
+// on `commands.*` (hub#1091) says the same thing `checkRowGates` says in
+// `validate-row-gates.mjs` — but the schema can only render it as «this field is not admitted
+// here», which reads as if `min_affected_rows` were banned outright, while the row-gates message
+// names how many statements there are, why the guard is neutralisable and what to declare instead.
+// Same severity, same exit code, strictly better wording: this check stays quiet, exactly as it
+// already does for the keys `checkManifestKeys` owns.
+test('the min_affected_rows rule is left to checkRowGates, which can name the statement', async () => {
+  const manifest = {
+    ...base(),
+    commands: {
+      'demo.wipe': { permission: 'demo.write', sql: ['a.sql', 'b.sql'], min_affected_rows: 1 },
+    },
+  };
+  const { errors, warnings } = checkManifestSchema(manifest);
+  assert.deepEqual(
+    [...errors, ...warnings].filter((m) => m.includes('min_affected_rows')),
+    [],
+    'this check must not say it too — the row-gates message is the one that helps',
+  );
+
+  // And the coverage MOVED, it did not vanish: the same manifest is still refused, by the check
+  // that owns the rule. Without this half, deleting the rule everywhere would pass the test above.
+  const { checkRowGates } = await import('../src/validate-row-gates.mjs');
+  const owner = checkRowGates(manifest);
+  assert.equal(owner.length, 1, `checkRowGates must still refuse it: ${JSON.stringify(owner)}`);
+  assert.match(owner[0], /min_affected_rows/);
+});
+
+test('a defect NEXT TO the row gate is still reported — the silence is the rule, not the command', () => {
+  // The narrow filter proves itself here: everything else about `commands.*` keeps being checked.
+  const { errors } = checkManifestSchema({
+    ...base(),
+    commands: {
+      'demo.wipe': { permission: 'demo.write', sql: ['a.sql', 'b.sql'], min_affected_rows: 1, transaction: 'yes' },
+    },
+  });
+  assert.equal(errors.length, 1, `expected exactly the \`transaction\` defect: ${JSON.stringify(errors)}`);
+  assert.match(errors[0], /transaction/);
+});

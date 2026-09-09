@@ -41,6 +41,30 @@ import { REFUSED_PATHS, variants } from './validate-manifest-keys.mjs';
  */
 const OWNED_ELSEWHERE = new Set(['additionalProperties', 'pattern', 'maxLength', 'minLength', 'enum']);
 
+/**
+ * The subtrees of the schema whose rule ANOTHER check owns, the same idea as `OWNED_ELSEWHERE` one
+ * level up: not a keyword this validator renders badly, but a whole conditional another file states
+ * better. Today that is exactly one — the `min_affected_rows` rule of hub#1091, which
+ * `checkRowGates` (validate-row-gates.mjs) reports naming how many statements there are, why the
+ * guard is neutralisable and what to declare instead. The schema can only render it as «this field
+ * is not admitted here», which reads as if the field were banned outright.
+ *
+ * The paths are DERIVED from the schema, never written down: this file is a vendored mirror of the
+ * hub's and gets re-synced, so an index pinned by hand would either drift or turn every sync red.
+ * If the rule ever moves out of `commands.*`, nothing is silenced and the duplicate message comes
+ * back — noisy, never silent, which is the direction this validator errs in.
+ */
+function subtreesOwnedByTheRowGates(schema) {
+  const conditionals = schema?.properties?.commands?.additionalProperties?.allOf ?? [];
+  const owned = [];
+  conditionals.forEach((rule, i) => {
+    if (JSON.stringify(rule).includes('min_affected_rows')) {
+      owned.push(`#/properties/commands/additionalProperties/allOf/${i}/`);
+    }
+  });
+  return owned;
+}
+
 /** The keywords that state an ALTERNATION failed. Their sub-errors are branch readings, not defects. */
 const ALTERNATION = new Set(['oneOf', 'anyOf', 'not', 'if']);
 
@@ -212,7 +236,12 @@ export function checkManifestSchema(manifest, schema = loadManifestSchema()) {
   const validate = validatorFor(schema);
   if (validate(manifest)) return { errors, warnings };
 
-  const raw = validate.errors ?? [];
+  // Dropped BEFORE the alternation pass: the rule emits an `if` anchor of its own, so leaving it
+  // in would make it the anchor of everything else wrong with that command.
+  const owned = subtreesOwnedByTheRowGates(schema);
+  const raw = (validate.errors ?? []).filter(
+    (e) => !owned.some((prefix) => (e.schemaPath ?? '').startsWith(prefix)),
+  );
   // An alternation nested INSIDE another one's branch is not a second defect: the widget's `oneOf`
   // holds a `not` in each arm, so declaring `kind` and `component` together makes ajv emit three
   // errors for one mistake. Only the OUTERMOST alternation speaks; the rest become its reasons.
