@@ -132,6 +132,18 @@ export const HUB_OUTFITKIT = [
   // answered `{"outfitkit":"0.1.67","hub":"1.1.19"}` — the hub's own reading (hub#1588) and the
   // date derivation agree, which is the control that says the rule above still reproduces reality.
   { hub: '1.1.19', built_at: '2026-09-08T18:53:49Z', outfitkit: '0.1.67' },
+  // v1.1.20 («Develop — lote v1.1.20», tagged 2026-09-08T23:15:50Z): still nothing newer than
+  // 0.1.67 (2026-09-07T18:11Z) on npm, so the derivation lands on the same floor for the fourth
+  // release in a row. ⚠️ Unlike 1.1.19, this row COULD NOT be confirmed against the hub itself:
+  // `GET https://banco-pre.a.erplora.com/outfitkit-version.json` still answered
+  // `{"outfitkit":"0.1.67","hub":"1.1.19"}` when it was written, so the bench had not been moved
+  // to this tag yet. It is derived, and it says so.
+  { hub: '1.1.20', built_at: '2026-09-08T23:15:50Z', outfitkit: '0.1.67' },
+  // v1.1.21 («Develop — lote v1.1.21», tagged 2026-09-09T01:29:18Z): cut ~2h after v1.1.20 and
+  // nothing was published to npm in between, so the floor does not move here either — 0.1.67
+  // (2026-09-07T18:11Z) is still the newest version published at all. Derived, like the row above:
+  // the PRE bench was serving 1.1.19 when this was written.
+  { hub: '1.1.21', built_at: '2026-09-09T01:29:18Z', outfitkit: '0.1.67' },
 ];
 
 /**
