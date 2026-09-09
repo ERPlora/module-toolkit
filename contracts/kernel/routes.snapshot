@@ -76,6 +76,12 @@ POST    /api/hub/import/inspect                        auth:admin
 GET     /api/hub/import/report                         auth:admin+any-credential
 POST    /api/hub/import/retry                          auth:admin+any-credential
 POST    /api/hub/import/undo                           auth:admin+any-credential
+GET     /api/hub/policies                              auth:admin
+POST    /api/hub/policies                              auth:admin
+DELETE  /api/hub/policies/:id                          auth:admin
+GET     /api/hub/policies/:id                          auth:admin
+PUT     /api/hub/policies/:id                          auth:admin
+GET     /api/hub/policies/checkpoints                  auth:admin
 POST    /api/hub/public-claims                         auth:any-credential
 POST    /api/hub/reset                                 auth:admin+any-credential
 POST    /api/hub/reset/plan                            auth:admin+any-credential

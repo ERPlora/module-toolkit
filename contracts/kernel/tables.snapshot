@@ -249,6 +249,21 @@ _module_capability_grants.granted_by text NOT NULL
 _module_capability_grants.hub_id text NOT NULL
 _module_capability_grants.module_id text NOT NULL
 
+_policy.checkpoint text NOT NULL
+_policy.condition text NOT NULL
+_policy.created_at text NOT NULL
+_policy.created_by text NOT NULL
+_policy.deleted_at text NULL
+_policy.deleted_by text NULL
+_policy.hub_id text NOT NULL
+_policy.id text NOT NULL
+_policy.is_active integer NOT NULL
+_policy.message text NOT NULL
+_policy.mode text NOT NULL
+_policy.outcome text NOT NULL
+_policy.updated_at text NOT NULL
+_policy.updated_by text NOT NULL
+
 _print_host.device_id text NOT NULL
 _print_host.hub_id text NOT NULL
 _print_host.label text NOT NULL
