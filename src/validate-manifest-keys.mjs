@@ -68,7 +68,7 @@ export const RETIRED_FIELDS = [
 ];
 
 /** Resolves an internal `$ref` (`#/$defs/widget`) against the root of the schema. */
-function deref(node, root, seen = 0) {
+export function deref(node, root, seen = 0) {
   if (!node || typeof node !== 'object' || seen > 16) return null;
   if (!node.$ref) return node;
   const target = node.$ref
@@ -84,7 +84,7 @@ function deref(node, root, seen = 0) {
  * whether the document is valid, only WHICH KEYS it may carry — and a key any branch admits is not
  * unknown. Unioning is the safe direction: it never invents an unknown that is not one.
  */
-function variants(node, root, out = [], seen = 0) {
+export function variants(node, root, out = [], seen = 0) {
   const n = deref(node, root, seen);
   if (!n || seen > 16) return out;
   out.push(n);

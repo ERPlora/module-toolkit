@@ -9,10 +9,13 @@
 #
 # WHY NOT `npm install`. Three of this package's dependencies are `file:` paths into sibling
 # checkouts (`../hub/packages/module-sdk`, `../hub/packages/module-types`, `../outfitkit`) that do
-# not exist on a runner, so a plain install fails as a whole. `validate` needs exactly ONE public
-# package — `typescript`, used by contracts.mjs to read the module's .ts — so that one is installed
-# on its own, at the version this repo declares. If the validator ever grows another dependency the
-# gate dies with ERR_MODULE_NOT_FOUND, loudly; it never degrades into a green.
+# not exist on a runner, so a plain install fails as a whole. `validate` needs TWO public packages —
+# `typescript`, used by contracts.mjs to read the module's .ts, and `ajv`, which EVALUATES the
+# canonical manifest schema (module-toolkit#247) instead of only reading its key names — so those
+# are installed on their own, at the versions this repo declares. If the validator ever grows a
+# third the gate dies with ERR_MODULE_NOT_FOUND, loudly; it never degrades into a green. The list
+# below is not kept in step by hand either: `test/gate-wiring.test.mjs` reads the validator's own
+# import graph and fails the pull request that adds a package without installing it here.
 #
 # WHAT IS AND IS NOT VERIFIED. Manifest, portable SQL, migrations (including the two rules the
 # runtime's `migration_guard` applies on install — module-toolkit#51), JSON schemas, ADR-0127
@@ -115,9 +118,8 @@ runs:
       run: |
         set -euo pipefail
         toolkit=$(cd "$ACTION_PATH/../../.." && pwd)
-        # The version comes from the toolkit's own package.json: the gate cannot drift from the
+        # The versions come from the toolkit's own package.json: the gate cannot drift from the
         # validator it runs.
-        ts=$(node -p "require('$toolkit/package.json').dependencies.typescript")
         deps="$RUNNER_TEMP/erplora-validator-deps"
         # Belt and braces: the runner wipes $RUNNER_TEMP at the start of every job (measured on
         # ci-runner-1, 2026-09-03: every idle slot holds an empty _work/_temp), so this only matters
@@ -130,10 +132,15 @@ runs:
         # a peer family bumps major on the registry — vitest 5.0.0 took the whole module CI down on
         # 2026-09-03 (module-toolkit#171). A throwaway prefix with an explicit package list needs no
         # peer resolution. Guard: test/npm-scratch-install-skips-peer-resolution.test.mjs
-        npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error --legacy-peer-deps "typescript@$ts"
         mkdir -p "$toolkit/node_modules"
-        # ESM ignores NODE_PATH, so the package has to be physically resolvable from the toolkit.
-        ln -sfn "$deps/node_modules/typescript" "$toolkit/node_modules/typescript"
+        for pkg in typescript ajv; do
+          want=$(node -p "require('$toolkit/package.json').dependencies['$pkg']")
+          npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error --legacy-peer-deps "$pkg@$want"
+          # ESM ignores NODE_PATH, so the package has to be physically resolvable from the toolkit.
+          # Only the package itself is linked: Node resolves a symlink to its realpath, so `ajv`'s
+          # own four dependencies are found next to it inside the scratch prefix.
+          ln -sfn "$deps/node_modules/$pkg" "$toolkit/node_modules/$pkg"
+        done
         echo "ERPLORA_TOOLKIT=$toolkit" >> "$GITHUB_ENV"
 
     - name: Start the scratch Postgres
