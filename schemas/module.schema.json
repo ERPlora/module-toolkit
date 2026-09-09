@@ -984,6 +984,34 @@
               }
             }
           }
+        },
+        "usage": {
+          "type": "object",
+          "description": "De dónde saca el SHELL lo que este hub lleva CONSUMIDO de su cuota (ERPlora/whatsapp_inbox#131). Sin este bloque la pestaña «Plan» solo dice lo que un plan INCLUYE (`tiers[].quota`), que es la mitad del dato: el consumo es lo que avisa de que el módulo está a punto de dejar de responder. Se DECLARA, no se adivina: el shell no puede saber que `inbound_this_month` es un consumo y `conversations_per_month` su cuota — esas palabras son del autor del módulo, igual que en `settings.get` o `widgets.*.query`. El Hub solo TRANSPORTA el bloque (el shell lee el `module.json` crudo); la query la llama el dispatcher de siempre, así que el permiso del propio módulo sigue decidiendo quién puede leerla.",
+          "additionalProperties": false,
+          "required": [
+            "query",
+            "metric",
+            "used"
+          ],
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Query namespaced del propio módulo que devuelve el consumo del periodo en curso (p. ej. `whatsapp_inbox.usage.get`)."
+            },
+            "metric": {
+              "type": "string",
+              "description": "Qué clave de `tiers[].quota` cuenta esta query. Es la que el shell traduce con `locales/<lang>.json` → `billing.quota.<metric>`, para no pintar `conversations_per_month` en crudo."
+            },
+            "used": {
+              "type": "string",
+              "description": "Columna de la respuesta con lo consumido. Si no se puede leer como número no negativo, el shell no pinta nada: «NaN de 30» es un número que el cliente se cree."
+            },
+            "limit": {
+              "type": "string",
+              "description": "Columna con el límite que DE VERDAD se aplica (0 = sin tope). Ausente → el shell usa la `quota` del nivel en el que está el hub. Declararla es lo correcto cuando el tope efectivo lo guarda el módulo y puede no coincidir con el del manifest."
+            }
+          }
         }
       }
     },
