@@ -66,6 +66,21 @@ test('inside an OPERATION the same defect is an ERROR: it changes what runs', ()
   assert.match(errors[0], /`permission`/);
 });
 
+// The narrow case of the same hole, filed on its own (#216) and closed by this change: an author
+// forgets the permission of a QUERY, publishes green, and the hub refuses the module on install
+// because `QueryDef.permission` is not an `Option`. Pinned by name because it is a CLOSED issue:
+// `queries.*` dropping out of `REFUSED_PATHS` would bring it back with nothing going red.
+test('a QUERY without `permission` is an error that names the query (#216)', () => {
+  const { errors, warnings } = checkManifestSchema({
+    ...base(),
+    queries: { 'demo.list': { sql: 'queries/list.sql' } },
+  });
+  assert.deepEqual(warnings, [], 'the hub REFUSES the module for this: it cannot be a warning');
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /queries\.demo\.list/, 'and WHICH query, the way the author wrote it');
+  assert.match(errors[0], /`permission`/);
+});
+
 test('a defect one level INSIDE a refused container is an error too', () => {
   const { errors } = checkManifestSchema({
     ...base(),

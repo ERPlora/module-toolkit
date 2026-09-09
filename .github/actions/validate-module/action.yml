@@ -111,7 +111,7 @@ runs:
       with:
         node-version: ${{ inputs.node-version }}
 
-    - name: Install the single public dependency the validator needs
+    - name: Install the public dependencies the validator needs
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
