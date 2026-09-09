@@ -508,6 +508,33 @@ test('the NEWEST hub tag is in HUB_OUTFITKIT: publishing the hub adds its row (#
   );
 });
 
+test('EVERY release tag from the table floor up is in HUB_OUTFITKIT, not just the newest (#201)', (t) => {
+  // 🔴 The test above pins only `listed.at(-1)`, and that leaves a hole the fleet fell into on
+  // 2026-09-09: `v1.1.20` and `v1.1.21` were cut ~2 h apart, nobody added a row in between, and
+  // once `v1.1.21` landed the suite went back to 20/20 GREEN with `1.1.20` still missing —
+  // measured by deleting that row, which survived every mirror. Only the hub's own per-tag job
+  // («the toolkit table knows this tag») stayed red, and that job does not block the release.
+  //
+  // A missing intermediate row is not cosmetic: `checkOutfitkitFloor` answers from this table, so
+  // a module declaring `min_erplora_version: 1.1.20` is measured against a hub the table does not
+  // know. This closes the skip — every release at or above `TABLE_STARTS_AT` has to be here.
+  const listed = releaseTags(t);
+  if (!listed) return;
+  const known = new Set(HUB_OUTFITKIT.map((row) => `v${row.hub}`));
+  const missing = listed
+    .map(([tag]) => tag)
+    .filter((tag) => atLeast(tagParts(tag), TABLE_STARTS_AT))
+    .filter((tag) => !known.has(tag));
+  assert.deepEqual(
+    missing,
+    [],
+    'ERPlora/hub published these releases and HUB_OUTFITKIT has no row for them. Being older than ' +
+      'the newest tag does not make a gap harmless: the table is what `checkOutfitkitFloor` reads, ' +
+      'so a module that declares one of these as its floor is measured against a hub nobody wrote ' +
+      'down. Add the row (the last `@erplora/outfitkit` published before that tag was created)',
+  );
+});
+
 test('the OutfitKit column is DERIVED, and the derivation is re-run against npm (#201, N-1)', async (t) => {
   // 🔴 N-1 of the review of #202. The mirror above proves every row names a real tag with its real
   // date — and that is only half. The column the check actually CONSUMES is `outfitkit`, and
