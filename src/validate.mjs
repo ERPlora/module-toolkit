@@ -1,12 +1,20 @@
 // `erplora validate <dir>`: valida el manifest, el SQL portable "ERPlora SQL" (ADR-0007) y, si hay
-// bundle, que sea CSP-safe. Sin dependencias externas.
+// bundle, que sea CSP-safe.
 //
-// El manifest se comprueba por DOS vías, y la primera dejó de ser un espejo escrito a mano
+// El manifest se comprueba por TRES vías, y la primera dejó de ser un espejo escrito a mano
 // (module-toolkit#30): las claves admitidas se LEEN del schema canónico
 // (`schemas/module.schema.json`, vendorizado del hub — ver `manifest-schema.mjs`), así que un
-// bloque nuevo del contrato se conoce en cuanto se sincroniza el schema. Lo que sigue escrito aquí
-// son las reglas de FORMATO y de negocio que el schema no expresa (códigos de taxonomía, enums de
-// billing, bloques movidos de sitio por el ADR-0007).
+// bloque nuevo del contrato se conoce en cuanto se sincroniza el schema. La segunda EVALÚA ese
+// mismo schema (module-toolkit#247, `validate-manifest-schema.mjs`): hasta entonces solo se leían
+// los NOMBRES de las claves, así que un campo obligatorio ausente o un tipo cambiado pasaban en
+// verde y el bloque no aparecía en el hub sin decir nada. Lo que sigue escrito aquí son las reglas
+// de FORMATO y de negocio que el schema no expresa (códigos de taxonomía, enums de billing,
+// bloques movidos de sitio por el ADR-0007).
+//
+// ⚠️ UNA dependencia pública además de `typescript`: `ajv`, la del evaluador de #247. El gate la
+// instala en su prefijo scratch (`.github/actions/validate-module/action.yml`) igual que aquella, y
+// `test/gate-wiring.test.mjs` falla si se añade una tercera sin instalarla — sin eso el gate muere
+// con `ERR_MODULE_NOT_FOUND` en los 27 repos de módulo a la vez.
 import { readFileSync, existsSync, writeFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
@@ -23,6 +31,7 @@ import { missingPathDeps } from './run-cargo.mjs';
 import { checkNotifyChannels } from './validate-notify-channels.mjs';
 import { checkHandlerPermissionCeiling } from './validate-handler-permissions.mjs';
 import { checkManifestKeys } from './validate-manifest-keys.mjs';
+import { checkManifestSchema } from './validate-manifest-schema.mjs';
 import { checkBundleArtifact } from './bundle-freshness.mjs';
 import { checkErrorsCatalog } from './validate-errors-catalog.mjs';
 import { checkRowGates } from './validate-row-gates.mjs';
@@ -161,6 +170,16 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
   const keys = checkManifestKeys(manifest);
   for (const w of keys.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   errs.push(...keys.errors);
+
+  // module-toolkit#247: y el CONTENIDO, no solo los nombres de las claves. El schema canónico se
+  // leía para saber qué claves existen y nada más, así que `required`, `type`, `minimum`, el
+  // `oneOf` de un widget y el `if/then` de un record no los evaluaba nadie: un bloque escrito a
+  // medias —`billing.usage` sin `used`— imprimía exactamente las mismas líneas que uno correcto, y
+  // el fallo aparecía como un hueco en la pantalla de un cliente, sin error en ningún sitio.
+  // Misma escala de severidad que la puerta de arriba (`REFUSED_PATHS`, hub#521).
+  const schemaCheck = checkManifestSchema(manifest);
+  for (const w of schemaCheck.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  errs.push(...schemaCheck.errors);
 
   // hub#1091: las guardas de filas afectadas. `checkManifestKeys` no las ve — lee claves
   // desconocidas, patrones y vocabularios cerrados, y lo que el schema canónico declara para esto
