@@ -393,6 +393,7 @@ hub_session.created_at text NOT NULL
 hub_session.credential_kind text NOT NULL
 hub_session.credential_ref text NOT NULL
 hub_session.device_id text NULL
+hub_session.ended_reason text NOT NULL
 hub_session.expires_at text NOT NULL
 hub_session.hub_id text NOT NULL
 hub_session.token text NOT NULL
