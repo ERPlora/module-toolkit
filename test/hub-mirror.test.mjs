@@ -24,9 +24,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { hubTags, hubPath, hubDir, hubSource } from './hub-mirror.mjs';
 
 /** A stand-in for node's `t`, recording whether `skip` was called and with what reason. */
@@ -240,4 +241,208 @@ test('a real checkout WITH tags answers, and never skips (#201)', () => {
   assert.deepEqual(t.calls, [], 'a readable checkout is never a skip');
   assert.deepEqual([...tags.keys()], ['v1.1.99'], 'the pattern has to filter');
   assert.match(tags.get('v1.1.99'), /^\d{4}-\d{2}-\d{2}T/);
+});
+
+// ── The tag the hub's own CI flattens under itself (module-toolkit#201, measured 2026-09-11) ────
+//
+// `HUB_OUTFITKIT` dates every row with WHEN THE TAG WAS CREATED, because that is when the image
+// was built and `@erplora/outfitkit@latest` resolved. For an annotated tag that instant is the
+// TAGGER date — and for nine of the table's rows it is minutes or DAYS away from the date of the
+// commit the tag points at (`v1.1.4`: tagged 2026-08-16T08:59:55Z, committed 2026-08-14T20:07:13Z,
+// 44 h and two OutfitKit releases apart). Reading the commit instead is not a rounding error, it
+// is a different OutfitKit.
+//
+// 🔴 AND THE HUB'S OWN JOB CANNOT READ THE TAGGER DATE, because it destroys the tag on the way in.
+// From the log of the `v1.1.22` run (34596411236, job «la tabla del toolkit conoce este tag»), with
+// `fetch-depth: 0` and `fetch-tags: true` both set:
+//
+//     /usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules \
+//         origin +0e438184dc73c1ddb47ff36ae7a63b8bad004025:refs/tags/v1.1.22
+//      t [tag update]        0e438184dc73c1ddb47ff36ae7a63b8bad004025 -> v1.1.22
+//
+// `actions/checkout` resolves a tag ref to `github.sha` — the COMMIT — and writes that straight
+// into `refs/tags/v1.1.22`, replacing the annotated object the runner's cached clone already had.
+// `[tag update]` is the flattening happening. After it, `%(creatordate)` silently changes meaning
+// from "tagger date" to "commit date", and the mirror reports a table that drifted when what
+// drifted was the checkout: `1.1.22: built_at says 2026-09-11T11:48:46Z, the tag was created
+// 2026-09-11T13:48:36+02:00` — ten seconds, the gap between the release commit and its tag.
+//
+// The twelve releases before it were lightweight tags, where both readings are the same date, so
+// the flattening changed nothing and nobody saw it. `v1.1.22` is the first ANNOTATED tag this job
+// ran on, and it blocked the release with the table pointing at itself.
+//
+// The fix is to put the tag back before reading it, and these tests are what stops the next person
+// from "fixing" the red by rewriting the row to the commit date instead — which would unblock one
+// release and silently re-derive the whole column from the wrong clock.
+
+/** The real `v1.1.22` numbers: the release commit, and the tag cut ten seconds later. */
+const COMMITTED_AT = '2026-09-11T13:48:36+02:00';
+const TAGGED_AT = '2026-09-11T13:48:46+02:00';
+
+const RESTORE_TAGS = fileURLToPath(new URL('../scripts/restore-hub-tags.sh', import.meta.url));
+
+/** `git` in a directory, or a throw that says what failed: a silent setup makes a test worthless. */
+function git(dir, args, env = {}) {
+  const run = spawnSync('git', ['-C', dir, ...args], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      GIT_AUTHOR_NAME: 't',
+      GIT_AUTHOR_EMAIL: 't@t',
+      GIT_COMMITTER_NAME: 't',
+      GIT_COMMITTER_EMAIL: 't@t',
+      ...env,
+    },
+  });
+  if (run.status !== 0) {
+    throw new Error(`git ${args.join(' ')} in ${dir} failed: ${run.stderr || run.stdout}`);
+  }
+  return run.stdout.trim();
+}
+
+/**
+ * A hub whose `v1.1.99` is ANNOTATED ten seconds after its commit, and a checkout of it that
+ * `actions/checkout` has flattened exactly the way the `v1.1.22` log shows.
+ */
+function hubWithAFlattenedTag() {
+  const root = mkdtempSync(join(tmpdir(), 'hub-annotated-tag-'));
+  const origin = join(root, 'origin');
+  const checkout = join(root, 'checkout');
+  mkdirSync(origin);
+  git(origin, ['init', '--quiet', '-b', 'main']);
+  git(origin, ['commit', '--allow-empty', '-qm', 'Develop — lote v1.1.99'], {
+    GIT_AUTHOR_DATE: COMMITTED_AT,
+    GIT_COMMITTER_DATE: COMMITTED_AT,
+  });
+  git(origin, ['tag', '-a', 'v1.1.99', '-m', 'v1.1.99'], { GIT_COMMITTER_DATE: TAGGED_AT });
+  git(root, ['clone', '--quiet', origin, checkout]);
+
+  // The flattening, verbatim: the commit sha forced into the tag ref, `--no-tags` so the object
+  // that carries the tagger date is never asked for.
+  const commit = git(checkout, ['rev-parse', 'refs/tags/v1.1.99^{}']);
+  git(checkout, ['fetch', '--no-tags', '--prune', '--quiet', 'origin', `+${commit}:refs/tags/v1.1.99`]);
+  return { root, origin, checkout };
+}
+
+test('a flattened tag reads as its COMMIT — the wrong source the table must never be built from (#201)', () => {
+  // The precondition, pinned on its own so the test below cannot go green by the fixture quietly
+  // stopping to reproduce the bug.
+  const { checkout } = hubWithAFlattenedTag();
+  assert.equal(
+    git(checkout, ['cat-file', '-t', 'refs/tags/v1.1.99']),
+    'commit',
+    'the fixture has to reproduce the flattening: an annotated tag replaced by its commit',
+  );
+  const flattened = hubTags(fakeT(), 'v1.1.*', { kind: 'declared', dir: checkout });
+  assert.equal(
+    Date.parse(flattened.get('v1.1.99')),
+    Date.parse(COMMITTED_AT),
+    'a flattened tag answers with the commit date, which is NOT when the image was built',
+  );
+});
+
+test('restoring the hub tags gives the mirrors the TAGGER date back (#201)', () => {
+  const { checkout } = hubWithAFlattenedTag();
+  const restored = spawnSync(RESTORE_TAGS, [checkout], { encoding: 'utf8' });
+  assert.equal(restored.status, 0, `restore-hub-tags.sh failed: ${restored.stderr || restored.stdout}`);
+
+  const tags = hubTags(fakeT(), 'v1.1.*', { kind: 'declared', dir: checkout });
+  assert.equal(
+    Date.parse(tags.get('v1.1.99')),
+    Date.parse(TAGGED_AT),
+    'after restoring, the date has to be the tag\'s own — the instant HUB_OUTFITKIT is dated by. ' +
+      'Reading the commit here is what turned the v1.1.22 release red against a correct table',
+  );
+});
+
+test('the mirrors action restores the tags BEFORE it reads them (#201)', () => {
+  // A repair nobody calls is not a repair. This is the wiring: the hub's per-tag job runs this
+  // action, and the action is the only place that knows it was handed a checkout `actions/checkout`
+  // just flattened.
+  const action = readFileSync(
+    new URL('../.github/actions/check-canonical-mirrors/action.yml', import.meta.url),
+    'utf8',
+  );
+  const restores = action.indexOf('restore-hub-tags.sh');
+  // The COMMAND that reads, not the prose: `canonical-mirrors.test.mjs` is also named in the
+  // header comment, and anchoring there compares against a line that runs nothing.
+  const reads = action.indexOf('node --test');
+  assert.ok(restores > 0, 'the action no longer restores the hub tags: every annotated release tag ' +
+    'reaches the mirrors flattened to its commit, and the table is judged against the wrong clock');
+  assert.ok(
+    restores < reads,
+    'the restore has to run BEFORE the mirrors read the tags, or it repairs nothing in time',
+  );
+});
+
+test('restoring is a NO-OP where there are no refs to restore, never a failure (#201)', () => {
+  // The same copy `hubTags` skips for: GitHub resolves an action by downloading a tarball, so a
+  // DECLARED hub can legitimately have files and no `.git`. Turning that into a red step would take
+  // the six FILE mirrors — which need no tags at all — down with it.
+  const notARepo = mkdtempSync(join(tmpdir(), 'hub-tarball-restore-'));
+  const run = spawnSync(RESTORE_TAGS, [notARepo], { encoding: 'utf8' });
+  assert.equal(run.status, 0, `a checkout with no refs must not fail: ${run.stderr}`);
+});
+
+test('a restore that CANNOT reach the hub fails loudly instead of reading a flattened tag (#201)', () => {
+  // The whole point of this file: a guard that degrades quietly is worse than no guard. If the tags
+  // cannot be put back, the mirror would compare the table against commit dates and blame the
+  // table — the exact wrong diagnosis that cost this release two red runs.
+  const { origin, checkout } = hubWithAFlattenedTag();
+  rmSync(origin, { recursive: true, force: true });
+  const run = spawnSync(RESTORE_TAGS, [checkout], { encoding: 'utf8' });
+  assert.notEqual(run.status, 0, 'an unreachable hub has to fail the step');
+  assert.match(`${run.stderr}${run.stdout}`, /tag/i, 'and say what could not be restored');
+});
+
+test('restoring PUTS BACK, it does not widen: a checkout with no tags still has none (#201)', () => {
+  // The hub's PR workflow (`canonical-mirrors.yml`) checks out with `fetch-depth: 0` and NO
+  // `fetch-tags`, and `hubTags` skips honestly there — «a checkout with nothing to compare against,
+  // not a divergence». A repair that fetched every tag would quietly switch those mirrors ON, and
+  // the first release the fleet cut without adding its row would turn every unrelated hub PR red.
+  // This repair only restores refs the checkout already has and origin still recognises.
+  const { origin, root } = hubWithAFlattenedTag();
+  const bare = join(root, 'no-tags');
+  git(root, ['clone', '--quiet', '--no-tags', origin, bare]);
+  assert.deepEqual(git(bare, ['tag', '-l']), '', 'precondition: this checkout has no tags');
+
+  const run = spawnSync(RESTORE_TAGS, [bare], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(
+    git(bare, ['tag', '-l']),
+    '',
+    'the repair introduced a tag the checkout never fetched: it is not restoring any more, it is ' +
+      'widening what the mirrors judge, on every caller at once',
+  );
+});
+
+test('a tag that exists only HERE cannot break the repair (#201, and #258 is why)', () => {
+  // The shared hub checkout carries refs nobody pushed — `v1.1.22-local-10sep-backup` was sitting
+  // in it while this was being written (#258). Asking origin for a ref it never heard of fails the
+  // whole fetch, so the repair asks origin what it HAS first and restores the intersection.
+  const { checkout } = hubWithAFlattenedTag();
+  git(checkout, ['tag', 'v1.1.99-local-backup']);
+
+  const run = spawnSync(RESTORE_TAGS, [checkout], { encoding: 'utf8' });
+  assert.equal(run.status, 0, `a local-only tag must not fail the repair: ${run.stderr}`);
+  const tags = hubTags(fakeT(), 'v1.1.*', { kind: 'declared', dir: checkout });
+  assert.equal(Date.parse(tags.get('v1.1.99')), Date.parse(TAGGED_AT), 'and the real tag is back');
+});
+
+test('a checkout with SOME tags keeps some: the repair restores, it never completes the set (#201)', () => {
+  // The other half of "it does not widen", and the one the empty-checkout test above cannot see:
+  // the hub's runner is self-hosted and reuses a cached clone, so a PR run can arrive with a
+  // handful of tags rather than none. `git fetch --tags` there would quietly pull in every release
+  // the hub ever cut and put the whole table on trial in a job that was asked about six files.
+  const { origin, checkout } = hubWithAFlattenedTag();
+  git(origin, ['tag', 'v1.1.98']);
+
+  const run = spawnSync(RESTORE_TAGS, [checkout], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(
+    git(checkout, ['tag', '-l']).split('\n').filter(Boolean),
+    ['v1.1.99'],
+    'the repair pulled in a tag this checkout never had: what the mirrors judge now depends on how ' +
+      'warm the runner cache is, not on what the job was asked',
+  );
 });

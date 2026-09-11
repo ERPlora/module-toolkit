@@ -74,6 +74,18 @@ import { OUTFITKIT_STAMP } from './outfitkit-stamp.mjs';
  * creación del tag en `ERPlora/hub`. El margen más ajustado de la tabla es el de `1.1.4` (12
  * minutos); el resto van de horas a días.
  *
+ * 🔴 WHICH instant, because "the tag's date" is TWO dates and they are not the same one. For an
+ * annotated tag, `built_at` is the TAGGER date — when the tag was cut, which is when the image was
+ * built — and NEVER the date of the commit it points at. Nine rows here are annotated and the gap
+ * is not cosmetic: `v1.1.4` was tagged 44 h after its commit, two OutfitKit releases later. Both
+ * `git for-each-ref --format='%(creatordate:iso-strict)'` (on a checkout that has the real tag
+ * objects) and `repos/ERPlora/hub/git/tags/<sha>`'s `tagger.date` give that instant; `git log -1`
+ * on the tag gives the other one. A checkout can quietly offer only the wrong one —
+ * `actions/checkout` flattens the tag it is testing into its commit — so the hub's per-tag job
+ * restores the tag objects first (`scripts/restore-hub-tags.sh`). That confusion is what blocked
+ * `v1.1.22` twice against a row that was right; the guards live at the end of
+ * `test/hub-mirror.test.mjs`.
+ *
  * La fila de `1.1.13` es la que sales#265 midió a mano por otro camino y coincide: es el control de
  * que la derivación reproduce el positivo conocido, y `test/validate-outfitkit-floor.test.mjs` la
  * clava para que deje de cuadrar en voz alta el día que la derivación se tuerza.
