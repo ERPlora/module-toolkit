@@ -37,6 +37,21 @@ import { createServer } from 'node:http';
 let fixtures = 0;
 
 /**
+ * A bake one patch ABOVE the table's ceiling — «newer than every hub anybody knows about».
+ *
+ * 🔴 DERIVED, never pinned, and this constant exists because pinning it has now broken the suite
+ * TWICE for the same reason. It read `'0.1.66'` until `v1.1.17` landed carrying 0.1.67 (#237), was
+ * bumped to `'0.1.70'`, and stopped meaning «ahead of the table» again the minute `v1.1.22` landed
+ * carrying 0.1.72 — four OutfitKit releases shipped between the two hub tags. A literal here is not
+ * a constant: it is a bet against the hub's release cadence, and it loses on a schedule.
+ *
+ * The stamps that are still literals below are the ones whose ceiling is LOCAL — they hand
+ * `checkOutfitkitFloor` its own `source`, or declare a floor the table has never heard of, so the
+ * table's newest row does not decide their outcome and cannot catch up with them.
+ */
+const AHEAD_OF_THE_TABLE = nextHubAfter(HUB_OUTFITKIT.at(-1).outfitkit);
+
+/**
  * A module directory with the given stamp (or none) and the given manifest extras.
  *
  * Each one gets its OWN parent and its OWN id on purpose. `validate` resolves the contract universe
@@ -141,6 +156,29 @@ test('the block ALWAYS leaves a one-line way out, even when no hub ships the bak
 test('nextHubAfter bumps the patch, and copes with a two-part tag', () => {
   assert.equal(nextHubAfter('1.1.13'), '1.1.14');
   assert.equal(nextHubAfter('1.2'), '1.2.1');
+});
+
+test('AHEAD_OF_THE_TABLE is above EVERY row, or the tests built on it stop testing anything (#201)', () => {
+  // 🔴 The regression guard for a rot that has now landed twice, both times found by the hub's
+  // release cadence instead of by this suite. Four tests hand `checkOutfitkitFloor` a bake that is
+  // supposed to be «newer than every hub anybody knows about»; the moment the table's ceiling
+  // catches up with that number, they stop exercising that case. Pinned to `'0.1.66'` it fell to
+  // `v1.1.17` (0.1.67); pinned to `'0.1.70'` it fell to `v1.1.22` (0.1.72), which shipped four
+  // OutfitKit versions after the tag before it.
+  //
+  // Measured before being written: replacing the constant with either literal turns this red
+  // together with the four tests that consume it, so a literal cannot come back in quietly. What it
+  // does NOT touch is a literal stamp whose ceiling is LOCAL — those hand the check their own
+  // `source`, and the table cannot catch up with them.
+  for (const row of HUB_OUTFITKIT) {
+    assert.ok(
+      compareOutfitkitVersions(AHEAD_OF_THE_TABLE, row.outfitkit) > 0,
+      `AHEAD_OF_THE_TABLE is ${AHEAD_OF_THE_TABLE} and hub ${row.hub} already ships ` +
+        `${row.outfitkit}. It has to be DERIVED from the newest row (\`nextHubAfter\`), never ` +
+        'written out: a literal here is a bet against the hub release cadence, and the tests that ' +
+        'use it go quietly green on a case they no longer reach',
+    );
+  }
 });
 
 test('a declared floor is HONOURED: baking newer than the hub you claim to support is rejected', () => {
@@ -451,17 +489,18 @@ test('the real reading also CLEARS the false alarm the derived table was raising
   // OutfitKit past the table's newest row with no declared floor is a block at `pack` against the
   // table and green against a hub that answers that very version. Blocking a publish that is fine
   // is the same defect as waving one through: both come from answering with a guess.
-  // 🔴 DERIVED from the table, never pinned — the lesson of #206/#208 one column over. This said
-  // `'0.1.66'`, and it stopped meaning «ahead of the table» the minute `v1.1.17` landed carrying
-  // 0.1.67: the first assertion below went from 1 error to 0 and the test failed on the ROW, not on
-  // the behaviour it exists to pin. `nextHubAfter` is a plain patch bump, so it reads either column.
-  const aheadOfTheTable = nextHubAfter(HUB_OUTFITKIT.at(-1).outfitkit);
-  const { dir, manifest } = moduleDir({ stamp: aheadOfTheTable });
+  // 🔴 DERIVED from the table, never pinned — the lesson of #206/#208 one column over, and the
+  // reason `AHEAD_OF_THE_TABLE` is shared rather than written out here: this said `'0.1.66'` and
+  // stopped meaning «ahead of the table» the minute `v1.1.17` landed carrying 0.1.67, and the same
+  // literal spelled `'0.1.70'` fell to `v1.1.22` (0.1.72) four sites over. When it rots, the first
+  // assertion below goes from 1 error to 0 and the test fails on the ROW, not on the behaviour it
+  // exists to pin.
+  const { dir, manifest } = moduleDir({ stamp: AHEAD_OF_THE_TABLE });
   assert.equal(checkOutfitkitFloor(dir, manifest, { publishing: true }).errors.length, 1);
 
   const measured = checkOutfitkitFloor(dir, manifest, {
     publishing: true,
-    source: realHub(nextHubAfter(HUB_OUTFITKIT.at(-1).hub), aheadOfTheTable),
+    source: realHub(nextHubAfter(HUB_OUTFITKIT.at(-1).hub), AHEAD_OF_THE_TABLE),
   });
   assert.deepEqual(measured.errors, [], JSON.stringify(measured));
   assert.deepEqual(measured.warnings, [], JSON.stringify(measured));
@@ -523,7 +562,7 @@ test('every message says whether the number was MEASURED or guessed — both way
   const measuredInNewest = new RegExp(`medido en el hub ${newest.hub.replace(/\./g, '\\.')}`);
 
   // (1) No declared floor, bake above the newest hub → warning.
-  const bare = moduleDir({ stamp: '0.1.70' });
+  const bare = moduleDir({ stamp: AHEAD_OF_THE_TABLE });
   const [guessedWarning] = checkOutfitkitFloor(bare.dir, bare.manifest).warnings;
   assert.match(guessedWarning, /deducido por la fecha del tag/);
   const [measuredWarning] = checkOutfitkitFloor(bare.dir, bare.manifest, { source }).warnings;
@@ -533,7 +572,7 @@ test('every message says whether the number was MEASURED or guessed — both way
   // (2) A floor IS declared and the bake is above it → error. Same duty: a message that blocks has
   // to say where its number came from, because that decides whether the author fixes the bake or
   // the table.
-  const floored = moduleDir({ stamp: '0.1.70', compatibility: { min_erplora_version: newest.hub } });
+  const floored = moduleDir({ stamp: AHEAD_OF_THE_TABLE, compatibility: { min_erplora_version: newest.hub } });
   const [measuredError] = checkOutfitkitFloor(floored.dir, floored.manifest, {
     source,
     publishing: true,
@@ -618,7 +657,7 @@ test('la procedencia es la de la fila que se CITA, no la de que exista una lectu
   // enseña es el del TECHO (la última fila de la tabla), que sigue siendo DEDUCIDO por fecha. Decir «medido en
   // el hub 1.1.5» de un número que 1.1.5 no lleva convierte el sello del que va toda la issue en
   // una etiqueta decorativa: el autor cree que discute con un hecho y discute con la conjetura.
-  const { dir, manifest } = moduleDir({ stamp: '0.1.70' });
+  const { dir, manifest } = moduleDir({ stamp: AHEAD_OF_THE_TABLE });
   const [warning] = checkOutfitkitFloor(dir, manifest, { source: realHub('1.1.5', '0.1.40') }).warnings;
   const ceiling = HUB_OUTFITKIT.at(-1).outfitkit;
   assert.match(warning, new RegExp(ceiling.replace(/\./g, '\\.')), 'el número citado es el del techo derivado');
@@ -634,7 +673,7 @@ test('una lectura CACHEADA se presenta como recordada, no como medida ahora', ()
   // The remembered hub is the table's CEILING, derived rather than pinned: with an older one the
   // cited number would be the newest row's and so would its provenance (the test above).
   const newest = HUB_OUTFITKIT.at(-1);
-  const { dir, manifest } = moduleDir({ stamp: '0.1.70' });
+  const { dir, manifest } = moduleDir({ stamp: AHEAD_OF_THE_TABLE });
   const cached = { ...realHub(newest.hub, newest.outfitkit), origin: 'cache' };
   const [warning] = checkOutfitkitFloor(dir, manifest, { source: cached }).warnings;
   assert.match(warning, /recordad[oa] en cache/, JSON.stringify(warning));

@@ -144,6 +144,20 @@ export const HUB_OUTFITKIT = [
   // (2026-09-07T18:11Z) is still the newest version published at all. Derived, like the row above:
   // the PRE bench was serving 1.1.19 when this was written.
   { hub: '1.1.21', built_at: '2026-09-09T01:29:18Z', outfitkit: '0.1.67' },
+  // v1.1.22 («v1.1.22», tagged 2026-09-11T11:48:46Z): the run of FOUR releases on 0.1.67 ends here,
+  // and by the widest jump the table has ever taken. Four versions shipped in the ~2.3 days since
+  // `v1.1.21` was cut — 0.1.68 (2026-09-09T22:29Z), 0.1.69 (22:31Z), 0.1.70 (2026-09-10T16:45Z) and
+  // 0.1.71 (2026-09-11T01:30Z) — so the newest published before this tag is 0.1.72
+  // (2026-09-11T07:28:49Z).
+  // 🔴 `0.1.71` circulated as the answer for this row and is WRONG: it was the newest only between
+  // 01:30Z and 07:28Z of the same morning. The column is a function of the tag's CREATION DATE, so
+  // it is derived AFTER the cut — a row written before the tag exists is an invented row, which is
+  // what the mirror next door exists to catch.
+  // ⚠️ Derived, not confirmed against the hub itself: `GET
+  // https://banco-pre.a.erplora.com/outfitkit-version.json` still answered
+  // `{"outfitkit":"0.1.67","hub":"1.1.19"}` when this was written, so the bench had not been moved
+  // to this tag yet.
+  { hub: '1.1.22', built_at: '2026-09-11T11:48:46Z', outfitkit: '0.1.72' },
 ];
 
 /**
