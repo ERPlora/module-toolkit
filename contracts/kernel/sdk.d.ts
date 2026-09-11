@@ -490,7 +490,7 @@ export interface BridgeTransport {
     discoverPrinters(): Promise<BridgePrinter[]>;
     getDevices(): Promise<BridgeDevice[]>;
     print(printerId: string, documentType: string, data: Record<string, unknown>, jobId?: string): Promise<void>;
-    testPrint(printerId: string): Promise<void>;
+    testPrint(printerId: string, data?: Record<string, unknown>): Promise<void>;
     openDrawer(printerId: string, pin?: number): Promise<void>;
     setDeviceRole(keyOrMac: string, role: string): Promise<BridgeDevice[]>;
     notify(title: string, body: string): Promise<void>;
@@ -520,7 +520,7 @@ export declare class IpcBridgeTransport implements BridgeTransport {
     discoverPrinters(): Promise<BridgePrinter[]>;
     getDevices(): Promise<BridgeDevice[]>;
     print(printerId: string, documentType: string, data: Record<string, unknown>, jobId?: string): Promise<void>;
-    testPrint(printerId: string): Promise<void>;
+    testPrint(printerId: string, data?: Record<string, unknown>): Promise<void>;
     openDrawer(printerId: string, pin?: number): Promise<void>;
     setDeviceRole(keyOrMac: string, role: string): Promise<BridgeDevice[]>;
     notify(title: string, body: string): Promise<void>;
