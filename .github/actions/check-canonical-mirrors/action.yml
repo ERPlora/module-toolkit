@@ -74,6 +74,21 @@ runs:
         ln -sfn "$deps/node_modules/typescript" "$toolkit/node_modules/typescript"
         echo "ERPLORA_TOOLKIT=$toolkit" >> "$GITHUB_ENV"
 
+    # The tags the caller's own checkout flattened, put back (module-toolkit#201). `actions/checkout`
+    # resolves a tag ref to `github.sha` and forces the COMMIT into `refs/tags/<tag>`, over the
+    # annotated object — so `%(creatordate)` stops meaning "when the tag was cut" and starts meaning
+    # "when the commit was made". `HUB_OUTFITKIT` is dated by the first, which is when the image was
+    # built, so without this the mirror judges a correct table against the wrong clock: it is what
+    # turned the `v1.1.22` release red. It runs HERE and not in the caller because this action is the
+    # only side that knows the tags are what it is about to read.
+    - name: The hub's real tags, back before anything reads them
+      shell: bash
+      env:
+        ERPLORA_HUB_DIR: ${{ inputs.hub-dir }}
+      run: |
+        set -euo pipefail
+        "$ERPLORA_TOOLKIT/scripts/restore-hub-tags.sh" "$ERPLORA_HUB_DIR"
+
     # `ERPLORA_HUB_DIR` is DECLARED here on purpose. That is what makes a missing or misspelled hub
     # an error instead of a skip (`test/hub-mirror.mjs`): if this step could not read the hub it
     # would otherwise switch every comparison off and still report green — the precise failure
