@@ -39,6 +39,9 @@ const TOOLKIT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** The stable reference of the hub. Not a branch anyone works on — the integration branch. */
 export const HUB_REF = 'origin/develop';
 
+/** The remote a source with no ref of its own is asked. Every hub checkout has one; CI clones it. */
+const DEFAULT_REMOTE = 'origin';
+
 /**
  * Where the mirrors get the hub, and how. Three sources, in strict order of preference:
  *
@@ -105,8 +108,20 @@ export function hubPath(t, ...segments) {
 /**
  * The hub's tags matching `pattern`, as `Map<tag, creation date ISO>`, or `null` after skipping.
  *
- * Tags are REFS, so unlike `hubPath` there is no working tree to be fooled by and no ref to export:
- * whichever branch the neighbouring checkout happens to sit on cannot change the answer.
+ * Only tags ORIGIN RECOGNISES (module-toolkit#258). Being a ref spares this the working tree that
+ * `hubPath` has to export around — whichever branch the neighbour sits on cannot change the answer
+ * — but it does NOT make the answer the hub's: `git fetch --tags` and `git tag` write the same file,
+ * so a ref on disk cannot say who put it there. Measured on the shared checkout on 2026-09-11,
+ * `v1.1.22` sat in it for hours before anyone pushed it, and the two table mirrors went red on every
+ * branch asserting that «ERPlora/hub published v1.1.22» about a tag no other machine had. The CI of
+ * the same commit was green, because the runner clones from origin. Three branches in a row were
+ * handed over as "two pre-existing local failures, not mine" — and an alarm whose correct response
+ * is to learn to ignore it has stopped being one.
+ *
+ * This is the same medicine #249 gave the REF and #90 gave the files: do not take a shared checkout
+ * at its word, ask its remote. When the remote cannot be asked this SKIPS and says why, which is the
+ * honest answer to "what did the hub publish" from a machine that cannot find out — going red over
+ * refs that are in nobody's repository is the failure this closes.
  *
  * ⚠️ A checkout with no tags is an honest SKIP, not a failure, and the reason matters:
  * `actions/checkout` does not fetch tags by default, so the hub's own CI can hand over a real
@@ -161,7 +176,62 @@ export function hubTags(t, pattern, given = {}) {
     );
     return null;
   }
+
+  // Which of them the hub actually PUBLISHED (#258). Asked once per checkout: `releaseTags` runs
+  // for each of the four table mirrors, and against github.com that is a network round trip.
+  const remote = source.ref ? source.ref.split('/')[0] : DEFAULT_REMOTE;
+  const published = publishedTags(source.dir, remote);
+  if (published.error) {
+    t.skip(
+      `could not ask \`${remote}\` which tags it has, from \`${source.dir}\` (${published.error}). ` +
+        'A tag on disk does not say who created it — `git fetch --tags` and `git tag` write the ' +
+        'same ref — so without the remote there is no way to tell a release of the hub from a ' +
+        'local one, and the mirrors that read this would report «the hub published X» about a tag ' +
+        'nobody else has (module-toolkit#258)',
+    );
+    return null;
+  }
+  for (const tag of tags.keys()) if (!published.names.has(tag)) tags.delete(tag);
+  if (!tags.size) {
+    t.skip(
+      `\`${source.dir}\` carries \`${pattern}\` tags but \`${remote}\` recognises none of them, so ` +
+        'they were all created here and there is no hub release to compare against (module-toolkit#258)',
+    );
+    return null;
+  }
   return tags;
+}
+
+/**
+ * Tag names `remote` recognises, memoised per (checkout, remote) for the same reason `EXPORTED` is:
+ * the suite asks the same question once per mirror and the answer cannot change under a test run.
+ *
+ * Failure is RETURNED, not thrown: unlike `theHubItReallyIs`, which is about to overwrite vendored
+ * files and must stop, this feeds guards whose honest answer offline is a skip.
+ */
+const PUBLISHED = new Map();
+
+function publishedTags(dir, remote) {
+  const key = `${dir}\u0000${remote}`;
+  if (!PUBLISHED.has(key)) {
+    const asked = spawnSync('git', ['-C', dir, 'ls-remote', '--tags', remote], { encoding: 'utf8' });
+    PUBLISHED.set(
+      key,
+      asked.status === 0
+        ? {
+            names: new Set(
+              (asked.stdout || '')
+                .split('\n')
+                .map((line) => line.split('\t')[1])
+                .filter(Boolean)
+                // `refs/tags/v1.1.22` and, for an annotated tag, its `^{}` peel. Same name.
+                .map((ref) => ref.replace(/^refs\/tags\//, '').replace(/\^\{\}$/, '')),
+            ),
+          }
+        : { error: (asked.stderr || '').trim().split('\n').pop() || `git exit ${asked.status}` },
+    );
+  }
+  return PUBLISHED.get(key);
 }
 
 /**

@@ -230,17 +230,121 @@ test('no hub at all is an honest skip for tags too (#201)', () => {
 
 test('a real checkout WITH tags answers, and never skips (#201)', () => {
   const t = fakeT();
-  const repo = mkdtempSync(join(tmpdir(), 'hub-tags-'));
-  for (const args of [
-    ['init', '--quiet'],
-    ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '--allow-empty', '-qm', 'x'],
-    ['tag', 'v1.1.99'],
-    ['tag', 'v9.9.9'],
-  ]) spawnSync('git', ['-C', repo, ...args]);
+  // Both tags are PUBLISHED, because since #258 that is what makes a tag a hub release: the
+  // question this answers is "what did the hub ship", and a ref on disk alone cannot say.
+  const root = mkdtempSync(join(tmpdir(), 'hub-tags-'));
+  const origin = join(root, 'origin');
+  const repo = join(root, 'checkout');
+  mkdirSync(origin);
+  git(origin, ['init', '--quiet', '-b', 'main']);
+  git(origin, ['commit', '--allow-empty', '-qm', 'x']);
+  git(origin, ['tag', 'v1.1.99']);
+  git(origin, ['tag', 'v9.9.9']);
+  git(root, ['clone', '--quiet', origin, repo]);
   const tags = hubTags(t, 'v1.1.*', { kind: 'declared', dir: repo });
   assert.deepEqual(t.calls, [], 'a readable checkout is never a skip');
   assert.deepEqual([...tags.keys()], ['v1.1.99'], 'the pattern has to filter');
   assert.match(tags.get('v1.1.99'), /^\d{4}-\d{2}-\d{2}T/);
+});
+
+// ── Tags the hub never published (module-toolkit#258, measured 2026-09-11) ──────────────────────
+//
+// The third reading of the neighbouring hub, and the last one still taking a shared checkout at its
+// word. `hubPath` reads it at a canonical ref (#90) and `theHubItReallyIs` additionally contrasts
+// that ref against `git ls-remote` (#249); `hubTags` listed `refs/tags/` off the disk, and a ref on
+// disk cannot say who put it there — `git fetch --tags` and `git tag` write the same file.
+//
+// What that cost, measured on the shared checkout on 2026-09-11: `v1.1.22` existed locally hours
+// before anyone pushed it, and both «the newest hub tag is in HUB_OUTFITKIT» and «EVERY release tag
+// from the table floor up is in HUB_OUTFITKIT» went RED on every branch, asserting that «ERPlora/hub
+// published v1.1.22» about a tag no other machine had ever heard of. The CI of the same commit was
+// green, because the runner clones from origin. THREE branches in a row were handed over saying
+// "two pre-existing local failures, not mine" — and when the right answer to an alarm is to learn
+// to ignore it, the alarm has stopped working. `v1.1.22-local-10sep-backup` was sitting in that
+// same checkout while this was written; it is only harmless because `RELEASE_TAG` happens to reject
+// its shape, which is luck, not a guard.
+//
+// So a tag counts as a hub release when ORIGIN recognises it, and when origin cannot be asked this
+// skips and says why — never "red about something that is in nobody's repository".
+
+/**
+ * A hub that published `v1.1.97`, and a checkout of it where somebody also ran `git tag v1.1.99`
+ * and never pushed it — the state the shared checkout is in whenever anyone cuts a release locally.
+ */
+function hubWithAnUnpushedTag() {
+  const root = mkdtempSync(join(tmpdir(), 'hub-unpushed-tag-'));
+  const origin = join(root, 'origin');
+  const checkout = join(root, 'checkout');
+  mkdirSync(origin);
+  git(origin, ['init', '--quiet', '-b', 'main']);
+  git(origin, ['commit', '--allow-empty', '-qm', 'Develop — lote v1.1.97']);
+  // ANNOTATED, like the releases the hub actually cuts since `v1.1.22`: `git ls-remote --tags`
+  // answers those TWICE, as the tag and as its `^{}` peel, and both mean the same release.
+  git(origin, ['tag', '-a', 'v1.1.97', '-m', 'v1.1.97']);
+  git(root, ['clone', '--quiet', origin, checkout]);
+  git(checkout, ['tag', 'v1.1.99']);
+  return { root, origin, checkout };
+}
+
+test('a tag nobody pushed is not a hub release: hubTags leaves it out (#258)', () => {
+  const { checkout } = hubWithAnUnpushedTag();
+  assert.deepEqual(
+    git(checkout, ['tag', '-l']).split('\n').sort(),
+    ['v1.1.97', 'v1.1.99'],
+    'precondition: on disk the two are indistinguishable, which is the whole reason for #258',
+  );
+
+  const t = fakeT();
+  const tags = hubTags(t, 'v1.1.*', { kind: 'declared', dir: checkout });
+  assert.deepEqual(t.calls, [], 'a checkout WITH published tags answers; it does not skip');
+  assert.deepEqual(
+    [...tags.keys()],
+    ['v1.1.97'],
+    'a tag only this machine has is not a release of the hub — it is the residue of a `git tag` ' +
+      'somebody ran here, and every mirror built on it says «the hub published» about nothing',
+  );
+});
+
+test('when origin cannot be asked, hubTags SKIPS instead of judging the tags on disk (#258)', () => {
+  // The issue's own acceptance criterion: «or — if it really cannot know locally — it skips saying
+  // why». Offline, the honest answer to "what did the hub publish" is that this cannot be shown.
+  // Falling back to the refs on disk is the bug; going red on them is the bug with a red light.
+  const { checkout, root } = hubWithAnUnpushedTag();
+  git(checkout, ['remote', 'set-url', 'origin', join(root, 'no-such-remote')]);
+
+  const t = fakeT();
+  assert.equal(hubTags(t, 'v1.1.*', { kind: 'declared', dir: checkout }), null);
+  assert.equal(t.calls.length, 1, 'it skips');
+  assert.match(t.calls[0], /origin/, 'and the reason has to name what it could not ask');
+});
+
+test('a checkout where NOTHING was ever pushed skips, it does not answer an empty hub (#258)', () => {
+  // Filtering can empty the list, and an empty list is not an answer: `releaseTags` would hand
+  // `listed.at(-1)` to a caller that has every right to assume a hub with tags has a newest one.
+  const { checkout } = hubWithAnUnpushedTag();
+  git(checkout, ['tag', '-d', 'v1.1.97']);
+
+  const t = fakeT();
+  assert.equal(hubTags(t, 'v1.1.*', { kind: 'declared', dir: checkout }), null);
+  assert.equal(t.calls.length, 1, 'it skips');
+});
+
+test('asking origin once per checkout: the suite calls hubTags on every mirror (#258)', () => {
+  // `releaseTags` runs for each of the four table mirrors, and `ls-remote` is a network round trip
+  // against github.com on a developer's machine. Four of them per run is how a guard becomes the
+  // reason people stop running the suite.
+  const { checkout, origin } = hubWithAnUnpushedTag();
+  assert.deepEqual([...hubTags(fakeT(), 'v1.1.*', { kind: 'declared', dir: checkout }).keys()], ['v1.1.97']);
+
+  // Break the remote AFTER the first call: a second trip would now skip; a remembered answer will not.
+  git(checkout, ['remote', 'set-url', 'origin', join(origin, 'gone')]);
+  const t = fakeT();
+  assert.deepEqual(
+    [...(hubTags(t, 'v1.1.*', { kind: 'declared', dir: checkout }) ?? new Map()).keys()],
+    ['v1.1.97'],
+    'the published set is asked once per checkout and reused',
+  );
+  assert.deepEqual(t.calls, [], 'and the reused answer is not a skip');
 });
 
 // ── The tag the hub's own CI flattens under itself (module-toolkit#201, measured 2026-09-11) ────
