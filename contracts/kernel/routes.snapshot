@@ -15,9 +15,9 @@ POST    /api/auth/pin                                  auth:none
 POST    /api/auth/set-pin                              auth:session
 GET     /api/blueprints/:slug/download                 auth:session
 GET     /api/blueprints/catalog                        auth:session
-DELETE  /api/business/certificate                      auth:admin
-GET     /api/business/certificate                      auth:session
-PUT     /api/business/certificate                      auth:admin
+DELETE  /api/business/certificate                      auth:admin+capability
+GET     /api/business/certificate                      auth:capability+session
+PUT     /api/business/certificate                      auth:admin+capability
 POST    /api/business/fiscal-identity                  auth:admin+session
 DELETE  /api/business/gateway-identity                 auth:admin
 GET     /api/business/gateway-identity                 auth:session
