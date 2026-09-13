@@ -377,6 +377,29 @@ export declare class WhatsappTemplatesApi {
     register(template: WhatsappTemplateInput): Promise<WhatsappTemplate>;
     remove(name: string): Promise<void>;
 }
+export declare const CERTIFICATE_BASE_PATH = "/api/business/certificate";
+export interface CertificateSlot {
+    present: boolean;
+    uploaded_at?: string | null;
+    uploaded_by?: string | null;
+}
+export interface CertificateStatus extends CertificateSlot {
+    slots: Record<string, CertificateSlot>;
+    active: string | null;
+    transmission_route: string;
+    [field: string]: unknown;
+}
+export interface CertificateUpload {
+    pkcs12Base64: string;
+    password: string;
+}
+export declare class CertificateApi {
+    private readonly send;
+    constructor(send: (req: CoreRequest) => Promise<unknown>);
+    get(): Promise<CertificateStatus>;
+    put(upload: CertificateUpload): Promise<CertificateStatus>;
+    remove(): Promise<CertificateStatus>;
+}
 export declare const PRINT_JOBS_BASE_PATH = "/api/print/jobs";
 export interface PrintRetryResult {
     jobId: string;
@@ -403,6 +426,7 @@ export declare class ErploraClient {
     private eventsApi?;
     private printApi?;
     private whatsappTemplatesApi?;
+    private certificateApi?;
     constructor(transport: ErploraTransport, opts?: {
         permissions?: () => ReadonlySet<string>;
         notifier?: (n: Notification) => void;
@@ -419,6 +443,7 @@ export declare class ErploraClient {
     get flows(): FlowsApi;
     get events(): EventsApi;
     get whatsappTemplates(): WhatsappTemplatesApi;
+    get certificate(): CertificateApi;
     get printQueue(): PrintApi;
     query<T = unknown>(name: string, params?: Record<string, unknown>): Promise<T>;
     queryOptional<T = unknown>(name: string, params?: Record<string, unknown>): Promise<T | undefined>;
