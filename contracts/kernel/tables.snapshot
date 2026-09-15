@@ -196,6 +196,7 @@ _hub_certificate.password text NOT NULL
 _hub_certificate.pkcs12_b64 text NOT NULL
 _hub_certificate.uploaded_at text NULL
 _hub_certificate.uploaded_by text NOT NULL
+_hub_certificate.use_for_transmission integer NOT NULL
 
 _hub_fiscal_profile.activated_at text NOT NULL
 _hub_fiscal_profile.adopted_at text NOT NULL
