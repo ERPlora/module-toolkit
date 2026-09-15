@@ -17,6 +17,7 @@ GET     /api/blueprints/:slug/download                 auth:session
 GET     /api/blueprints/catalog                        auth:session
 DELETE  /api/business/certificate                      auth:admin+capability
 GET     /api/business/certificate                      auth:capability+session
+PATCH   /api/business/certificate                      auth:admin+capability
 PUT     /api/business/certificate                      auth:admin+capability
 POST    /api/business/fiscal-identity                  auth:admin+session
 DELETE  /api/business/gateway-identity                 auth:admin
