@@ -170,6 +170,17 @@ export const HUB_OUTFITKIT = [
   // `{"outfitkit":"0.1.67","hub":"1.1.19"}` when this was written, so the bench had not been moved
   // to this tag yet.
   { hub: '1.1.22', built_at: '2026-09-11T11:48:46Z', outfitkit: '0.1.72' },
+  // v1.1.23 («Develop — lote v1.1.23», tagged 2026-09-15T12:52:22Z): nothing newer than 0.1.72
+  // (2026-09-11T07:28:49Z) had been published when this tag was cut — 0.1.73 only shipped on
+  // 2026-09-16T08:18:45Z — so the floor does not move here.
+  { hub: '1.1.23', built_at: '2026-09-15T12:52:22Z', outfitkit: '0.1.72' },
+  // v1.1.24 («Develop → main — lote v1.1.24», tagged 2026-09-15T21:35:53Z): same window as the row
+  // above (after 0.1.72, before 0.1.73), so the derivation lands on 0.1.72 again. Confirmed against
+  // the hub itself this time: `GET https://banco-pre.a.erplora.com/outfitkit-version.json` answered
+  // `{"outfitkit":"0.1.72","hub":"1.1.24-dev.270+gfcf740401"}` on 2026-09-16 — a build of the same
+  // develop tip the tag was cut from, sealed by hub#1588 — so the date derivation and the hub's own
+  // reading agree.
+  { hub: '1.1.24', built_at: '2026-09-15T21:35:53Z', outfitkit: '0.1.72' },
 ];
 
 /**
