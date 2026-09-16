@@ -181,6 +181,15 @@ export const HUB_OUTFITKIT = [
   // develop tip the tag was cut from, sealed by hub#1588 — so the date derivation and the hub's own
   // reading agree.
   { hub: '1.1.24', built_at: '2026-09-15T21:35:53Z', outfitkit: '0.1.72' },
+  // v1.1.25 («v1.1.25», tagged 2026-09-16T18:56:44Z): the run of three releases on 0.1.72 ENDS
+  // here — `@erplora/outfitkit` shipped 0.1.73 on 2026-09-16T08:18:51Z, ten hours before this tag
+  // was cut, so the newest published before it is 0.1.73. Confirmed against the hub itself, and
+  // this one is the tightest confirmation the table has had: the tag points at `fb3b48ac` and
+  // `GET https://banco-pre.a.erplora.com/outfitkit-version.json` answered
+  // `{"outfitkit":"0.1.73","hub":"1.1.25-dev.274+gfb3b48ac"}` — the SAME commit, sealed by
+  // hub#1588 — so the derivation and the hub's own reading are not two guesses that agree, they
+  // are the same build read two ways.
+  { hub: '1.1.25', built_at: '2026-09-16T18:56:44Z', outfitkit: '0.1.73' },
 ];
 
 /**
