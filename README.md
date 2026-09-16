@@ -25,10 +25,11 @@ aporta las dependencias y la configuración de build.
 | `erplora g view\|command\|query <id> <n>` | ✅ | Añade piezas dentro de un módulo existente. |
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
 | `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe, con las rutas normalizadas para que salga igual desde cualquier cwd — module-toolkit#93), deja el sello `dist/<id>.build.json` **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
-| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un `dist/<id>.esm.js` con rutas de la máquina que lo compiló o desfasado respecto de `ui/` (§ *El bundle publicado*), un canal de `host.notify` sin transporte, una guarda de filas que no se puede armar (`min_affected_rows` sobre un lote, un ancla `expect_rows.statement` colgando — hub#1091) y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), y un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*). |
+| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un `dist/<id>.esm.js` con rutas de la máquina que lo compiló o desfasado respecto de `ui/` (§ *El bundle publicado*), un canal de `host.notify` sin transporte, una guarda de filas que no se puede armar (`min_affected_rows` sobre un lote, un ancla `expect_rows.statement` colgando — hub#1091) y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*), la **tenancy** que el SQL del módulo tiene que escribir con binds `:hub_id` (ADR-0423, `validate-hub-scope.mjs`), el catálogo `errors` del manifest (ADR-0398) y los filtros de lista muertos o con la caja equivocada (ADR-0125). |
 | `erplora test <id\|dir> [--list] [--against-hub [<imagen>]]` | ✅ | Corre **los tests que el módulo ya trae**: sus baterías `tests/**/*.test.py|.sh` (las que necesitan Postgres usan el contenedor de `ERPLORA_TEST_PG_CONTAINER`), **sus tests de TypeScript** `ui/**/*.test.ts` bajo vitest + happy-dom **y los tests Rust del handler** (`#[cfg(test)]` en `handler/**`, bajo `cargo test`; fuera del monorepo, con el checkout del hub de `ERPLORA_HUB_DIR`) (§ *Los tests que el módulo ya tenía*). Falla si queda un test que **nadie** va a ejecutar. `--list` los enumera sin correrlos — es lo que el gate lee para decidir qué instalar. Con `--against-hub` levanta el **kernel real** y corre contra él las baterías `*.hub.test.py|.sh` (§ *La batería contra el kernel REAL*). |
+| `erplora contracts <id\|dir>` | ✅ | (Re)genera `.erplora/contracts.json`: la superficie de OTROS módulos que este consume, extraída por AST de las llamadas al SDK (ADR-0127). |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
-| `erplora sign <id\|dir>` | ✅ | (re)calcula el SHA256 del zip (firma con clave: pendiente, §7.4). |
+| `erplora sign <id\|dir>` | ✅ | SHA256 del zip **y firma ed25519 al lado** (`<zip>.sig` con `key_id`, clave privada en `MODULE_SIGNING_KEY`; ADR-0193). Sin clave **falla**: decir «✓ sign» sin haber firmado nada era justo lo que hacía la versión anterior. El Hub la verifica contra su anillo (`HUB_MODULE_TRUSTED_KEYS`) antes de instalar. |
 | `erplora publish <id\|dir>` | 📋 guía | Imprime el flujo de publicación al marketplace (no automatizado: auth + confirmación). |
 
 > `build`/`dev`/`pack`/`validate` aceptan una **ruta** o un **id suelto** (resuelve a `modules/<id>`
@@ -303,7 +304,7 @@ apaga, no se obedece. Así que el pase es **por fichero Y por número** (`FILL_G
 controles que un fichero tiene hoy se toleran, **uno más no**, y un componente nuevo no hereda nada.
 La lista **solo puede encoger**; la vacía el barrido de ERPlora/pm#152, módulo a módulo.
 
-De 275 controles en 45 ficheros (22 módulos) va por **170 en 27 ficheros (14 módulos)**. `customers`,
+De 275 controles en 45 ficheros (22 módulos) va por **136 en 21 ficheros (12 módulos)**. `customers`,
 `inventory`, `kitchen`, `pricing`, `printing`, `staff`, `tasks` y `whatsapp_inbox` están limpios y
 **fuera de la lista**: lo que se toleraba ahora es error, así que una recaída se ve. Un módulo sale
 cuando **todo** su `ui/` declara `mode="md"` — nunca bajando el número para que encaje un arreglo a
@@ -340,10 +341,10 @@ mismo:
 
 Por qué el (2) no puede ser rojo en `validate`, **medido**: el sello no lo elige el autor.
 `stampOutfitkit()` lo resuelve desde `node_modules/@erplora/outfitkit`, que aquí es
-`file:../outfitkit` —el checkout de desarrollo compartido, hoy 0.1.59 con npm en 0.1.65, o sea por
-delante de la flota (0.1.58) *por la propia premisa*— y `validate` obliga a reconstruir en cuanto se
-toca `ui/**` (`checkBundleArtifact`). Sumado: **27 de 27** módulos se pondrían rojos en su siguiente
-PR de UI, por la cadencia de release del hub y no por nada que hicieran sus autores. Un gate que para
+`file:../outfitkit` —el checkout de desarrollo compartido, que cuando esto se midió iba por 0.1.59
+con npm en 0.1.65, o sea por delante de la flota (0.1.58) *por la propia premisa*— y `validate`
+obliga a reconstruir en cuanto se toca `ui/**` (`checkBundleArtifact`). Sumado: **27 de 27** módulos
+se pondrían rojos en su siguiente PR de UI, por la cadencia de release del hub y no por nada que hicieran sus autores. Un gate que para
 a todo el mundo se apaga, no se obedece — es el MISMO reparto que hace `bundle-freshness.mjs` al lado
 (con sello → error; sin sello → aviso).
 
@@ -426,8 +427,9 @@ deduce de **cuándo** se construyó. Cada fila es «el último `@erplora/outfitk
 de crearse el tag»; `built_at` es la fecha de creación del tag en `ERPlora/hub`.
 
 Desde module-toolkit#203 **ya no es la respuesta por defecto**: es lo que queda cuando no hay hub al
-que preguntar. Y sigue haciendo falta mientras haya hubs vivos sin el sello — hoy **todos**, porque
-hub#1588 está en `develop` del hub y aún no ha salido en un tag.
+que preguntar. Y sigue haciendo falta mientras quede algún hub vivo sin el sello, que son cada vez
+menos: hub#1588 salió en un tag con **v1.1.14** (06/09/2026) y todos los posteriores lo llevan, así
+que hoy el único hub que no contesta esa ruta es uno por debajo de esa versión.
 
 - **Se comprueba contra un positivo conocido:** la fila de `1.1.13` → `0.1.58` es la que sales#265
   midió a mano por otro camino, y `test/validate-outfitkit-floor.test.mjs` la clava para que deje de
@@ -493,11 +495,12 @@ alarma que salta por prosa se acaba silenciando, y entonces ya no avisa del `rou
 importa. Queda **enumerado** (`KERNEL_CONTRACT_NOT_MIRRORED`), no simplemente fuera: un fichero sin
 nombrar en el directorio del hub es un fichero sin vigilar.
 
-Se vendorizan por lo mismo que el esquema del manifest: el gate de los 26 repos de módulo corre en
-un runner **sin** checkout del hub, así que la superficie contra la que se construye un módulo tiene
-que poder leerse aquí. Y por lo mismo llevan espejo: uno por fichero (el `diff` dice **cuál** se
-movió) más uno sobre el **conjunto**, para que el día que el hub congele una sexta superficie no
-pase inadvertida por no estar en la lista.
+Se vendorizan por lo mismo que el esquema del manifest: el gate de los **27** repos de módulo no
+puede hacer checkout de `ERPlora/hub` —el `GITHUB_TOKEN` de un repo de módulo no alcanza otro repo
+privado—, así que la superficie contra la que se construye un módulo tiene que poder leerse aquí. Y
+por lo mismo llevan espejo: uno por fichero (el `diff` dice **cuál** se movió) más uno sobre el
+**conjunto**, para que el día que el hub congele una sexta superficie no pase inadvertida por no
+estar en la lista.
 
 **Refrescarlas es un solo comando**, nunca un `cp` a mano:
 
@@ -508,6 +511,17 @@ npm run sync-schema      # alias histórico del anterior
 
 Sin hub que copiar —o con un hub que no trae un fichero— el script **falla nombrándolo**: copiar
 cero ficheros y salir en verde dejaría las copias tan viejas como estaban.
+
+**Y una copia no se mergea sola.** Mover una superficie espejada son **dos** PRs —la del hub y la de
+aquí— y cada lado está rojo hasta que aterriza el otro: el `canonical-mirrors.yml` del hub lee
+`module-toolkit@main` y el CI de este repo lee `hub@develop`. El nudo se declara con una línea
+`Depends-On: ERPlora/<repo>#<N>` en el cuerpo de cada PR —la sintaxis es la de Zuul, no se inventa
+ninguna— y quien lo honra es `merge-pr.sh` (ERPlora/pm#181), con un orden que no es preferencia:
+**primero el canónico** (el hub), después la copia. La copia no lleva dispensa ninguna — su CI se
+relanza y tiene que salir verde por su cuenta, que es además la prueba de que la dispensa del
+canónico estaba justificada. Quien abre la puerta nombra la copia en `MERGE_PR_PAIR`, y tiene que
+casar con el `Depends-On:` de los dos lados. ⚠️ Esa línea se lee como **markdown**: escrita dentro
+de un bloque de código o entre acentos simples no declara nada (ERPlora/pm#317).
 
 ## Las automatizaciones de fábrica del módulo (`flows/`) — module-toolkit#209
 
@@ -568,8 +582,6 @@ no llega a ningún hub — el mismo modo de fallo que ya documentan las líneas 
 del único módulo que hoy trae plantillas, y una guarda que bloquea es una guarda que se apaga).
 Sin `release.yml` a la vista —el scaffold, un directorio temporal— se calla: avisar de algo sobre lo
 que el autor no puede actuar es el ruido que enseña a ignorar el aviso que sí importa.
-
-## El gate de CI de los repos de módulo (ERPlora/pm#107)
 
 ## Los tests que el módulo ya tenía
 
@@ -634,8 +646,8 @@ Tres reglas, y las tres son el motivo de que esto sea código y no tres líneas 
    salta a sí mismo — la alarma se instala con la casa limpia, para que salte con el primero.
 
 **La config de vitest la pone el toolkit**, no el módulo, porque el repo del módulo está limpio a
-propósito: 22 de los 25 no llevan `tsconfig.json` (sin él, `@state()` de Lit ni siquiera compila) y
-los 3 que lo llevan hacen `extends: '../../tsconfig.json'`, una ruta que solo existe dentro del
+propósito: 23 de los 27 no llevan `tsconfig.json` (sin él, `@state()` de Lit ni siquiera compila) y
+los 4 que lo llevan hacen `extends: '../../tsconfig.json'`, una ruta que solo existe dentro del
 workspace de desarrollo (con ella, el transform muere y el módulo recoge **cero** tests). Los dos
 casos están reproducidos sobre un checkout limpio en `test/run-vitest.test.mjs`.
 
@@ -758,6 +770,12 @@ por el mismo motivo medido en module-toolkit#55. Recibe por entorno:
 como verde.** Es la misma regla que las de Postgres sin contenedor: contarla por buena sería
 certificar el módulo contra un hub que nunca arrancó.
 
+⚠️ **Lo que hoy NO alcanza.** `withHubRuntime` monta UN directorio e instala UN módulo, así que un
+módulo con `depends_on` arranca sin su cadena y sus baterías mueren en `_require_installed` — es
+[module-toolkit#135](https://github.com/ERPlora/module-toolkit/issues/135), **abierta**. Medido
+desde el hub el 01/09 y recomprobado el 03/09: **8 de los 11** módulos que entonces tenían batería
+caían ahí. Por eso la CI del hub arranca su propio kernel en vez de llamar a esta orden (abajo).
+
 **Qué prueba esto que la emulación no puede.** El fixture de referencia
 (`test/fixtures/against-hub/kernel_fixture`) está hecho a propósito de cosas que solo el kernel
 enseña: `:new_id`/`:hub_id` los inyecta el runtime y no el payload; un `BIGINT` vuelve por HTTP como
@@ -765,13 +783,24 @@ enseña: `:new_id`/`:hub_id` los inyecta el runtime y no el payload; un `BIGINT`
 propio JSON Schema lo rechaza el runtime, no el test.
 
 **Todavía NO está enganchado al gate compartido**, y se dice en voz alta: `module-gate.yml` corre en
-los 26 repos de módulo, que son **privados**, y en el plan Free los secretos de organización no
-llegan ahí — no hay credencial con la que hacer `docker pull` de un paquete privado, que es la misma
-decisión de seguridad que ya deja fuera al `cargo test` del handler. Engancharlo es
-[module-toolkit#112](https://github.com/ERPlora/module-toolkit/issues/112).
+los 27 repos de módulo, que son **privados**, y en el plan Free los secretos de organización no
+llegan ahí — no hay credencial con la que hacer `docker pull` de un paquete privado. Engancharlo es
+[module-toolkit#112](https://github.com/ERPlora/module-toolkit/issues/112), **abierta**.
 
-El validador **es** el gate: los 24 repos de módulo lo llaman desde aquí. Dos piezas, las dos en
-este repo, para que arreglar un agujero no sean 24 PRs:
+Pero «no lo engancha el gate del módulo» no es «no lo corre nadie». Desde **ERPlora/hub#1381** estas
+baterías las ejecuta **el hub**, en su `test-hub-modules.yml`, contra un `erplora-server` compilado
+de su propio ref —no contra una imagen publicada— y levantando **un hub por módulo**, que es lo que
+resuelve la cadena `depends_on` que a `--against-hub` le falta. La lista revisada vive en
+`scripts/ci/module-hub-batteries.txt` del hub: hoy **26 baterías de 13 módulos**. Y para que esa
+lista no se quede atrás, la otra mitad del cierre está aquí: `src/check-hub-battery-pairing.mjs`
+(con su action `check-hub-battery-pairing`, module-toolkit#163 ← ERPlora/hub#1439) pone en rojo la
+PR de un módulo que **añade** una batería `*.hub.test.py|sh` sin declararla en el hub en esa misma
+pull request.
+
+## El gate de CI de los repos de módulo (ERPlora/pm#107)
+
+El validador **es** el gate: los **27** repos de módulo lo llaman desde aquí. Dos piezas, las dos en
+este repo, para que arreglar un agujero no sean 27 PRs:
 
 | Pieza | Qué es |
 |---|---|
@@ -787,27 +816,30 @@ que hace que el SaaS republique— **no ocurre si el gate está rojo**.
 módulo no puede hacer checkout de otro repo privado. Una composite action es la única forma que
 GitHub resuelve **sin credencial**, con el ajuste *Settings → Actions → Access → accessible from
 repositories in the organization* puesto en este repo. Así no hay un PAT del hub/toolkit repartido
-por 24 repos, y el gate corre siempre el validador de `main`, no el del día que se escribió el stub.
+por 27 repos, y el gate corre siempre el validador de `main`, no el del día que se escribió el stub.
 
-**Qué NO cubre el gate: compilar el handler a wasm32.** Los 21 módulos con `handler/` dependen del
-`guest-sdk` del hub **por ruta relativa** (`../../../../hub/crates/guest-sdk`) y en un runner no hay
-checkout de `ERPlora/hub`. Se decidió dejarlo fuera, no clonar el hub:
+**Qué NO cubre el gate: producir el artefacto wasm32.** El validador **sí** compila el crate del
+handler, pero para el **host** —que es lo que caza un fuente que no compila— y el `cargo test` de
+arriba corre también en el host. Lo único que no se hace en CI es el `cargo build --target
+wasm32-unknown-unknown`: ese binario lo produce `erplora build` en local, y lo que impide publicar
+uno viejo son los guardarraíles de frescura de #26.
 
-- clonarlo exige un **PAT con lectura de `ERPlora/hub` en los 24 repos** — 24 copias de una
-  credencial que abre el core entero, por una comprobación;
-- ata cada PR de módulo al `main` del hub: un cambio en el `guest-sdk` pone en rojo 21 repos que no
-  han tocado nada (el falso positivo `no 'tax' in the root` del barrido, otra vez pero al revés);
-- el coste en minutos es lo de menos y aun así se midió: `rustup target add wasm32` + `cargo build`
-  en frío ≈ **+2 min por run** sobre los ~2 min del gate.
+🪦 **El motivo que esto tuvo durante meses ya no aplica.** Se decía que los módulos con `handler/`
+alcanzan el `guest-sdk` del hub **por ruta relativa** (`../../../../hub/crates/guest-sdk`) y que «en
+un runner no hay checkout de `ERPlora/hub`». Lo segundo dejó de ser cierto: para poder resolver la
+composite action del `module-sdk`, el runner se trae el **hub entero** a disco (ERPlora/hub#1097), y
+eso es exactamente lo que usa module-toolkit#146 para correr los tests Rust. Lo que sigue en pie es
+que **un repo de módulo no puede clonar `ERPlora/hub` por su cuenta** —su `GITHUB_TOKEN` no alcanza
+otro repo privado— y que repartir un PAT del core por los 27 repos se ha rechazado tres veces.
 
-Lo que sí queda cubierto sin `cargo`: que `dist/handler.wasm` **no esté desfasado** respecto al
+Lo que queda cubierto sin producir el wasm: que `dist/handler.wasm` **no esté desfasado** respecto al
 source Rust del commit (hash de `handler/src` + `Cargo.lock`) y que exporte las funciones que el
 manifest enruta. Que el Rust compile se ve en local en cuanto se toca (`erplora build` lo recompila
 y se niega a publicar un binario viejo). El validador nunca miente sobre esto: la línea de resumen
 dice **`handler WASM SIN VERIFICAR`**.
 
-La salida sería consumir el `guest-sdk` **versionado** en vez de por ruta; mientras siga siendo una
-ruta relativa, esta puerta no puede cerrarse en CI sin pagar las otras dos facturas.
+La salida de fondo sigue siendo consumir el `guest-sdk` **versionado** en vez de por ruta — es la
+pieza 1 de [`DECISION-aislamiento-terceros.md`](DECISION-aislamiento-terceros.md).
 
 ### La release también vive aquí: `module-release.yml`
 
@@ -863,8 +895,11 @@ llega como **cadena vacía, no como error**, por eso el paso lo comprueba y **fa
 vez de saltarse el aviso. Ponerlo en los 27:
 
 ```bash
-for m in $(ls modules-workspace/modules); do
-  gh secret set HUB_DISPATCH_TOKEN --repo "ERPlora/$m" --body "$TOKEN"
+# ⚠️ `ls` ya no sirve para recorrerlos: la flota crea sus worktrees DENTRO de `modules/`.
+# Un módulo de verdad tiene `.git` como DIRECTORIO; un worktree lo tiene como fichero.
+for d in modules-workspace/modules/*/; do
+  [ -d "$d.git" ] || continue
+  gh secret set HUB_DISPATCH_TOKEN --repo "ERPlora/$(basename "$d")" --body "$TOKEN"
 done
 ```
 
@@ -879,9 +914,18 @@ printf '{"event_type":"module-published","client_payload":{"module":"<id>","vers
 
 ## Workspace local (lo que existe hoy)
 
-Los **24** módulos viven en **`ERPlora/modules-workspace/`** (creado con `startproject`, cada
-módulo su propio repo git en `modules/<id>/`; recuento vivo: `ls modules-workspace/modules/` —
-los retirados están en `_retirados/`). Para trabajar:
+Los **27** módulos viven en **`ERPlora/modules-workspace/`** (creado con `startproject`, cada
+módulo su propio repo git en `modules/<id>/`).
+
+⚠️ **`ls modules-workspace/modules/` ya NO los cuenta**: la flota crea ahí dentro sus worktrees
+(`appointments-wt-159`, `customers-wt-70`…), y un worktree tiene `.git` como **fichero**, no como
+directorio. El recuento vivo es:
+
+```sh
+ls -d modules-workspace/modules/*/ | while read d; do [ -d "$d.git" ] && echo "$d"; done | wc -l
+```
+
+Para trabajar:
 
 ```sh
 cd modules-workspace
@@ -891,18 +935,27 @@ npx erplora build inventory # → modules/inventory/dist/inventory.esm.js
 npx erplora pack inventory  # module.zip + sha256 en modules/inventory/build/
 ```
 
-El Hub consume los `dist/` de aquí: `hub/apps/web/sync-modules.mjs` apunta a
-`../../../modules-workspace/modules` y `pnpm -F @erplora/web verify` queda VERDE.
+El Hub consume los `dist/` de aquí: `hub/apps/web/sync-modules.mjs` **resuelve**
+`modules-workspace/modules` subiendo desde su propia ruta —y antes mira `ERPLORA_MODULES_DIR` y
+`HUB_MODULES_DIR`—, así que también funciona desde un worktree (ERPlora/hub#787); `pnpm -F
+@erplora/web verify` queda VERDE.
 
 ## Pendiente / deuda conocida
 
-- **Firma criptográfica** (`sign`): hoy solo SHA256; la firma con clave del marketplace está
-  pendiente (decisión humano, §7.4). El Hub re-verifica SHA256 al instalar (`architecture/hub/module-system.md` §5).
 - **`publish`**: deliberadamente NO automatizado (acción autenticada contra Cloud + S3 inmutable).
   Imprime el flujo; subir+registrar requiere confirmación y credenciales.
-- **`hub/packages/module-cli`** queda **deprecado** (ver su `DEPRECATED.md`). Borrarlo (y limpiar
-  los scripts `build:*` del `package.json` raíz de `hub/`) es **decisión del humano**.
-- **Distribución a devs externos**: `@erplora/outfitkit` **ya está publicado en npm** (v0.1.31,
-  MIT); en el workspace local se enlaza por `file:../outfitkit`. `@erplora/module-sdk` +
-  `@erplora/module-types` siguen enlazados por `file:../hub/packages/*` (uso interno): para
-  terceros del marketplace queda **publicar/vendorizar** solo esos dos. Fase aparte.
+- **`erplora test --against-hub` no está en el gate compartido**
+  ([module-toolkit#112](https://github.com/ERPlora/module-toolkit/issues/112)) y hoy no sabe
+  instalar un módulo con `depends_on`
+  ([module-toolkit#135](https://github.com/ERPlora/module-toolkit/issues/135)). Las dos abiertas;
+  mientras tanto quien corre esas baterías es la CI del hub (§ *La batería contra el kernel REAL*).
+- **Distribución a devs externos**: `@erplora/outfitkit` **ya está publicado en npm** (MIT); en el
+  workspace local se enlaza por `file:../outfitkit`. `@erplora/module-sdk` y
+  `@erplora/module-types` siguen enlazados por `file:../hub/packages/*` y **sin publicar** (uso
+  interno): para terceros del marketplace queda **publicar/vendorizar** esos dos. Fase aparte —
+  [`DECISION-aislamiento-terceros.md`](DECISION-aislamiento-terceros.md).
+
+> 🪦 Dos entradas que vivieron aquí y ya no son deuda: la **firma criptográfica** (`erplora sign`
+> firma ed25519 desde ADR-0193; el anillo del hub es `HUB_MODULE_TRUSTED_KEYS`) y
+> **`hub/packages/module-cli`**, que dejó de estar «deprecado pendiente de borrar» — se **borró**
+> del hub, con una guardia que caza el paquete muerto (ERPlora/hub#1244/#1248).
