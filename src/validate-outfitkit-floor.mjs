@@ -190,6 +190,27 @@ export const HUB_OUTFITKIT = [
   // hub#1588 — so the derivation and the hub's own reading are not two guesses that agree, they
   // are the same build read two ways.
   { hub: '1.1.25', built_at: '2026-09-16T18:56:44Z', outfitkit: '0.1.73' },
+  // v1.1.26 («v1.1.26», created 2026-09-16T22:18:56Z): still 0.1.73 — `@erplora/outfitkit` has
+  // published nothing since 0.1.73 (2026-09-16T08:18:51Z; it is still the `latest` dist-tag), so
+  // the newest published before this tag is the same one the row above carries.
+  //
+  // Two caveats, because this row is NOT confirmed the way v1.1.25 was, and saying so is the point
+  // of the table:
+  //
+  //   - This tag is LIGHTWEIGHT, not annotated. There is no tagger, so `creatordate` falls back to
+  //     the date of the commit it points at (`e8128198`, the `origin/develop` tip) and the
+  //     tagger-vs-commit gap the block above warns about cannot be measured here: the instant the
+  //     image was actually built may be LATER than this `built_at`. It changes nothing in this row
+  //     — nothing has been published after 0.1.73 at all, so every instant from 08:18:51Z onwards
+  //     derives the same answer — but a future lightweight tag cut while a release is in flight
+  //     would need the real build time, not this one.
+  //   - No live hub serves this build yet, so the `/outfitkit-version.json` cross-check of
+  //     hub#1588 cannot close on it: `banco-pre` still answers
+  //     `{"outfitkit":"0.1.73","hub":"1.1.25-dev.274+gfb3b48ac"}` (the PREVIOUS tag's commit) and
+  //     the deployed hubs are still on `1.1.23`/`0.1.72`. What the banco-pre reading does confirm
+  //     is the rule: the image installs `@erplora/outfitkit@latest` at build time, and a build made
+  //     after 0.1.73 shipped got 0.1.73.
+  { hub: '1.1.26', built_at: '2026-09-16T22:18:56Z', outfitkit: '0.1.73' },
 ];
 
 /**
