@@ -211,6 +211,18 @@ export const HUB_OUTFITKIT = [
   //     is the rule: the image installs `@erplora/outfitkit@latest` at build time, and a build made
   //     after 0.1.73 shipped got 0.1.73.
   { hub: '1.1.26', built_at: '2026-09-16T22:18:56Z', outfitkit: '0.1.73' },
+  // v1.1.27 («v1.1.27», tagged 2026-09-18T22:01:18Z): still 0.1.73 — `@erplora/outfitkit` has
+  // published nothing since 0.1.73 (2026-09-16T08:18:51Z; it is still the `latest` dist-tag), so
+  // the newest published before this tag is the same one the two rows above carry.
+  //
+  // Unlike v1.1.26 this tag is ANNOTATED, so `creatordate` is the tagger's date, not the date of
+  // the commit it points at (`d440e3f8`, the `origin/develop` tip, committed 2026-09-18T21:56:11Z
+  // — five minutes earlier). The cross-check of hub#1588 lands one commit short:
+  // `GET https://banco-pre.a.erplora.com/outfitkit-version.json` answered
+  // `{"outfitkit":"0.1.73","hub":"1.1.27-dev.4+gae4ebaaa"}` on 2026-09-19, and `ae4ebaaa` is the
+  // parent of the tagged commit — a build of the same develop line, made after 0.1.73 shipped,
+  // that got 0.1.73.
+  { hub: '1.1.27', built_at: '2026-09-18T22:01:18Z', outfitkit: '0.1.73' },
 ];
 
 /**
