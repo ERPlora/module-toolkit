@@ -228,6 +228,10 @@ export const HUB_OUTFITKIT = [
   // (2026-09-16T08:18:51Z; still the `latest` dist-tag when the tag was cut), so the newest
   // published before this tag is the same one the rows above carry.
   { hub: '1.1.28', built_at: '2026-09-19T08:38:07Z', outfitkit: '0.1.73' },
+  // v1.1.29 («v1.1.29», tagged 2026-09-19T20:46:51Z, annotated, pointing at the `origin/develop`
+  // tip `c0fbc3fc`): still 0.1.73 — `@erplora/outfitkit` has published nothing since 0.1.73
+  // (2026-09-16T08:18:51Z; the `latest` dist-tag on the npm registry when the tag was cut).
+  { hub: '1.1.29', built_at: '2026-09-19T20:46:51Z', outfitkit: '0.1.73' },
 ];
 
 /**
