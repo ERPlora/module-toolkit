@@ -223,6 +223,11 @@ export const HUB_OUTFITKIT = [
   // parent of the tagged commit — a build of the same develop line, made after 0.1.73 shipped,
   // that got 0.1.73.
   { hub: '1.1.27', built_at: '2026-09-18T22:01:18Z', outfitkit: '0.1.73' },
+  // v1.1.28 («v1.1.28», tagged 2026-09-19T08:38:07Z, annotated, pointing at the `origin/develop`
+  // tip `f3809123`): still 0.1.73 — `@erplora/outfitkit` has published nothing since 0.1.73
+  // (2026-09-16T08:18:51Z; still the `latest` dist-tag when the tag was cut), so the newest
+  // published before this tag is the same one the rows above carry.
+  { hub: '1.1.28', built_at: '2026-09-19T08:38:07Z', outfitkit: '0.1.73' },
 ];
 
 /**
