@@ -18,6 +18,8 @@ _event_delivery.delivered_at text NOT NULL
 _event_delivery.event_id text NOT NULL
 _event_delivery.hub_id text NOT NULL
 _event_delivery.listener_command text NOT NULL
+_event_delivery.provider_message_id text NOT NULL
+_event_delivery.step_id text NOT NULL
 
 _event_outbox.attempts bigint NOT NULL
 _event_outbox.claim_expires_at text NULL
@@ -184,6 +186,12 @@ _hub_activity.last_activity_at text NOT NULL
 _hub_activity.last_reported_at text NULL
 _hub_activity.updated_at text NOT NULL
 
+_hub_activity_log.activity_type text NOT NULL
+_hub_activity_log.actor text NOT NULL
+_hub_activity_log.hub_id text NOT NULL
+_hub_activity_log.id text NOT NULL
+_hub_activity_log.occurred_at text NOT NULL
+
 _hub_badge_key.created_at text NOT NULL
 _hub_badge_key.hub_id text NOT NULL
 _hub_badge_key.key_hex text NOT NULL
@@ -192,6 +200,7 @@ _hub_certificate.cert_version bigint NULL
 _hub_certificate.certificate_type text NOT NULL
 _hub_certificate.hub_id text NOT NULL
 _hub_certificate.kind text NOT NULL
+_hub_certificate.not_after text NOT NULL
 _hub_certificate.password text NOT NULL
 _hub_certificate.pkcs12_b64 text NOT NULL
 _hub_certificate.uploaded_at text NULL
