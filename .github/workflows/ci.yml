@@ -237,6 +237,7 @@ jobs:
           test/manifest-schema.test.mjs
           test/canonical-mirrors.test.mjs
           test/hub-outfitkit-source.test.mjs
+          test/hub-outfitkit-rows.test.mjs
           test/hub-mirror.test.mjs
           test/sync-hub-mirrors.test.mjs
           test/run-batteries.test.mjs
