@@ -53,7 +53,6 @@ export const COLOR_GRANDFATHERED = [
   ['sales', 'ui/lib/document-modal.ts', 1],
   ['schedules', 'ui/components/erp-schedules-hours/erp-schedules-hours.ts', 1],
   ['staff', 'ui/components/erp-staff-members/erp-staff-members.ts', 1],
-  ['tickets', 'ui/components/erp-tickets-list/erp-tickets-list.ts', 3],
   ['verifactu', 'ui/components/erp-verifactu-config/erp-verifactu-config.ts', 1],
   ['verifactu', 'ui/components/erp-verifactu-records/erp-verifactu-records.ts', 3],
   ['verifactu', 'ui/components/erp-verifactu-recovery/erp-verifactu-recovery.ts', 2],
