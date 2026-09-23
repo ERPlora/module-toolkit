@@ -228,7 +228,7 @@ test('the grandfathered list may only SHRINK, and every entry is well-formed', (
   // The two ceilings ARE the ratchet: they come down with every file the sweep finishes, never up.
   const total = COLOR_GRANDFATHERED.reduce((n, [, , c]) => n + c, 0);
   assert.ok(
-    COLOR_GRANDFATHERED.length <= 30 && total <= 79,
+    COLOR_GRANDFATHERED.length <= 27 && total <= 70,
     `the list GREW (${COLOR_GRANDFATHERED.length} files / ${total} uses). Nothing gets added: the sweep empties it.`,
   );
   const seen = new Set();
