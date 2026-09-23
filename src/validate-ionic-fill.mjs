@@ -134,7 +134,7 @@ function grandfatheredFor(moduleId) {
  * Returns `-1` when the tag never closes — a runaway on markup this does not understand. Reporting
  * nothing is the right way to be wrong: a missed control ships a bug, a false one blocks a module.
  */
-function endOfTag(source, from) {
+export function endOfTag(source, from) {
   let depth = 0; // `${ … }` / `{ … }` nesting
   let quote = null; // ", ' or ` while inside a literal
   for (let i = from; i < source.length; i += 1) {
