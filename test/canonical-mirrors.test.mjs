@@ -60,6 +60,7 @@ import {
 } from '../src/kernel-contract.mjs';
 import { hubPath, hubTags } from './hub-mirror.mjs';
 import { HUB_OUTFITKIT } from '../src/validate-outfitkit-floor.mjs';
+import { latestPublishedBefore, rowLagIsWarning, ROW_LAG_ENV } from '../src/hub-outfitkit-rows.mjs';
 
 
 /** `pub const BRIDGE_FUNCTIONS: &[&str] = &["erp_now", …];` → the names, in order. */
@@ -452,6 +453,22 @@ function releaseTags(t) {
     .sort((a, b) => Date.parse(a[1]) - Date.parse(b[1]));
 }
 
+/**
+ * A release with no row yet, on a caller that declared it is not the one who owes it (#271). The
+ * mirrors action sets `ERPLORA_HUB_ROW_LAG=warn` on the hub's pull requests: the row falls due when
+ * the tag is cut, not in whichever PR happens to run next. It SKIPS out loud with the command that
+ * writes the row; everywhere else the caller fails as before.
+ */
+function missingRowIsLag(t, missing) {
+  if (!missing.length || !rowLagIsWarning()) return false;
+  t.skip(
+    `${ROW_LAG_ENV}=warn: HUB_OUTFITKIT has no row for ${missing.join(', ')} yet. That is the copy ` +
+      'lagging behind a hub release, not this change — write it in module-toolkit with ' +
+      '`npm run hub-outfitkit-rows -- --write` (module-toolkit#271)',
+  );
+  return true;
+}
+
 test('every row of HUB_OUTFITKIT names a REAL hub tag, dated as the tag is (#201)', (t) => {
   const listed = releaseTags(t);
   if (!listed) return;
@@ -498,13 +515,15 @@ test('the NEWEST hub tag is in HUB_OUTFITKIT: publishing the hub adds its row (#
   const newestTag = listed.at(-1)[0];
   // A tag older than the table's own floor is outside it on purpose, not a gap.
   if (!atLeast(tagParts(newestTag), TABLE_STARTS_AT)) return;
+  if (!HUB_OUTFITKIT.some((row) => `v${row.hub}` === newestTag) && missingRowIsLag(t, [newestTag])) return;
   assert.ok(
     HUB_OUTFITKIT.some((row) => `v${row.hub}` === newestTag),
     `ERPlora/hub published ${newestTag} and HUB_OUTFITKIT does not know it. Until the row is ` +
       'added, `erplora validate` measures modules against a fleet that no longer exists — it will ' +
       'warn that «no hub ships OutfitKit X» about screens the fleet paints perfectly. Add the row ' +
       "(the last `@erplora/outfitkit` published before that tag's creation date), or close " +
-      'hub#1588 so the build publishes the version and the table stops being derived',
+      'hub#1588 so the build publishes the version and the table stops being derived. ' +
+      '`npm run hub-outfitkit-rows -- --write` writes it (module-toolkit#271)',
   );
 });
 
@@ -525,13 +544,15 @@ test('EVERY release tag from the table floor up is in HUB_OUTFITKIT, not just th
     .map(([tag]) => tag)
     .filter((tag) => atLeast(tagParts(tag), TABLE_STARTS_AT))
     .filter((tag) => !known.has(tag));
+  if (missingRowIsLag(t, missing)) return;
   assert.deepEqual(
     missing,
     [],
     'ERPlora/hub published these releases and HUB_OUTFITKIT has no row for them. Being older than ' +
       'the newest tag does not make a gap harmless: the table is what `checkOutfitkitFloor` reads, ' +
       'so a module that declares one of these as its floor is measured against a hub nobody wrote ' +
-      'down. Add the row (the last `@erplora/outfitkit` published before that tag was created)',
+      'down. Add the row (the last `@erplora/outfitkit` published before that tag was created): ' +
+      '`npm run hub-outfitkit-rows -- --write` does it (module-toolkit#271)',
   );
 });
 
@@ -560,25 +581,24 @@ test('the OutfitKit column is DERIVED, and the derivation is re-run against npm 
         'real tags by the mirrors above; what is NOT checked in this run is the OutfitKit column',
     );
   }
-  const published = Object.entries(JSON.parse(npm.stdout))
-    .filter(([v]) => v !== 'created' && v !== 'modified')
-    .map(([version, when]) => [version, Date.parse(when)])
-    .sort((a, b) => a[1] - b[1]);
+  // The SAME function `scripts/hub-outfitkit-rows.mjs` writes the rows with (#271): one rule, so
+  // the machine that writes a row and the mirror that approves it cannot drift apart.
+  const npmTime = JSON.parse(npm.stdout);
 
   const tagDate = new Map(listed);
   const wrong = [];
   for (const row of HUB_OUTFITKIT) {
     const built = Date.parse(tagDate.get(`v${row.hub}`));
     if (Number.isNaN(built)) continue; // the mirror above is the one that reports a missing tag
-    const latestBefore = published.filter(([, when]) => when <= built).at(-1);
+    const latestBefore = latestPublishedBefore(npmTime, built);
     if (!latestBefore) {
       wrong.push(`${row.hub}: no @erplora/outfitkit had been published when the tag was created`);
       continue;
     }
-    if (latestBefore[0] !== row.outfitkit) {
+    if (latestBefore !== row.outfitkit) {
       wrong.push(
         `${row.hub}: the table says ${row.outfitkit}, but the last OutfitKit published before ` +
-          `${row.built_at} was ${latestBefore[0]}`,
+          `${row.built_at} was ${latestBefore}`,
       );
     }
   }

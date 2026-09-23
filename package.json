@@ -17,6 +17,7 @@
     "test": "node --test",
     "sync-mirrors": "node scripts/sync-hub-mirrors.mjs",
     "sync-schema": "npm run --silent sync-mirrors",
+    "hub-outfitkit-rows": "node scripts/hub-outfitkit-rows.mjs",
     "smoke": "node bin/erplora.mjs build ../modules-workspace/modules/inventory && node bin/erplora.mjs build ../modules-workspace/modules/sales"
   },
   "dependencies": {

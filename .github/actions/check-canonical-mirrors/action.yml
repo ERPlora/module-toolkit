@@ -89,6 +89,20 @@ runs:
         set -euo pipefail
         "$ERPLORA_TOOLKIT/scripts/restore-hub-tags.sh" "$ERPLORA_HUB_DIR"
 
+    # The rows the hub released and the table lacks, derived and PRINTED before anything judges
+    # them (module-toolkit#271): the same rule the mirror re-runs, so the warning carries the exact
+    # row to paste — `npm run hub-outfitkit-rows -- --write` in the toolkit writes it. Never a
+    # failure by itself: npm unreachable is an honest «could not derive», and the mirrors below are
+    # the verdict.
+    - name: The HUB_OUTFITKIT rows this hub's releases need
+      shell: bash
+      env:
+        ERPLORA_HUB_DIR: ${{ inputs.hub-dir }}
+      run: |
+        set -uo pipefail
+        node "$ERPLORA_TOOLKIT/scripts/hub-outfitkit-rows.mjs" --hub "$ERPLORA_HUB_DIR" \
+          || echo "::warning::could not derive the HUB_OUTFITKIT rows of this hub (see above); the mirrors below still judge the table"
+
     # `ERPLORA_HUB_DIR` is DECLARED here on purpose. That is what makes a missing or misspelled hub
     # an error instead of a skip (`test/hub-mirror.mjs`): if this step could not read the hub it
     # would otherwise switch every comparison off and still report green — the precise failure
@@ -97,6 +111,12 @@ runs:
       shell: bash
       env:
         ERPLORA_HUB_DIR: ${{ inputs.hub-dir }}
+        # A release the table has no row for yet is the COPY lagging behind the hub, and on a hub
+        # pull request that is not the PR's fault: five releases in a row (1.1.15 → 1.1.29) turned
+        # every hub PR red until somebody wrote the row by hand (module-toolkit#271). There it is a
+        # warning — the step above printed the row. Anywhere else (the tag job of `build-hub.yml`,
+        # which is where the row falls due) it stays a failure. A WRONG row fails everywhere.
+        ERPLORA_HUB_ROW_LAG: ${{ github.event_name == 'pull_request' && 'warn' || 'fail' }}
       run: |
         set -euo pipefail
         echo "→ comparing the toolkit's vendored copies against $ERPLORA_HUB_DIR"

@@ -443,6 +443,16 @@ que hoy el único hub que no contesta esa ruta es uno por debajo de esa versión
   (si no, el día que salga `v1.2.0` la alarma seguiría verde apuntando a `v1.1.13`). Así, «mantenerla es parte
   de publicar el hub» deja de ser memoria y pasa a ser mecanismo: sin la fila, el control mediría los
   módulos contra una flota que ya no existe. Skip honesto si no hay hub al lado, como los otros seis.
+- **La fila la escribe una máquina, no una persona (module-toolkit#271).** La regla es mecánica, así
+  que `npm run hub-outfitkit-rows -- --write` (con el hub al lado o `--hub <checkout>`, tags reales
+  con `git fetch --tags`) deriva las filas de los tags que faltan con **la misma función** que el
+  espejo re-ejecuta (`src/hub-outfitkit-rows.mjs`) y las escribe en su sitio; sin `--write` solo
+  informa. Y una fila que falta **ya no bloquea las PRs del hub**: en un `pull_request` la action
+  `check-canonical-mirrors` pone `ERPLORA_HUB_ROW_LAG=warn`, imprime la fila derivada como aviso y
+  los dos espejos de «falta la fila» se saltan diciéndolo. La copia va por detrás de una release, y
+  eso no es culpa de esa PR (el mismo reparto que hub#1296). En el job del tag
+  (`build-hub.yml`), que es donde la fila vence, y en local sigue en rojo. Una fila **mal** puesta
+  falla en todas partes.
 - **No es la fuente de verdad.** Quien SABE la versión es el hub, y desde hub#1588 la publica: ver
   la sección anterior. Cuando el hub contesta, su fila gana.
 
