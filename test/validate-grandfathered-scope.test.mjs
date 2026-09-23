@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { checkFilterOps, FILTER_OPS_GRANDFATHERED } from '../src/validate-filter-ops.mjs';
 import { checkDeadFilters, DEAD_FILTERS_GRANDFATHERED } from '../src/validate-dead-filters.mjs';
 import { checkIonicFill, FILL_GRANDFATHERED } from '../src/validate-ionic-fill.mjs';
+import { checkIonicColor, COLOR_GRANDFATHERED } from '../src/validate-ionic-color.mjs';
 import { checkMigrationGuard, GRANDFATHERED as MIGRATION_GRANDFATHERED } from '../src/validate-migration-guard.mjs';
 import { checkGateConstraints, GRANDFATHERED as GATE_GRANDFATHERED } from '../src/validate-gate-constraints.mjs';
 
@@ -37,6 +38,7 @@ const DOORS = {
   'validate-filter-ops.mjs:FILTER_OPS_GRANDFATHERED': { check: checkFilterOps, list: FILTER_OPS_GRANDFATHERED },
   'validate-dead-filters.mjs:DEAD_FILTERS_GRANDFATHERED': { check: checkDeadFilters, list: DEAD_FILTERS_GRANDFATHERED },
   'validate-ionic-fill.mjs:FILL_GRANDFATHERED': { check: checkIonicFill, list: FILL_GRANDFATHERED },
+  'validate-ionic-color.mjs:COLOR_GRANDFATHERED': { check: checkIonicColor, list: COLOR_GRANDFATHERED },
   'validate-migration-guard.mjs:GRANDFATHERED': { check: checkMigrationGuard, list: MIGRATION_GRANDFATHERED },
   'validate-gate-constraints.mjs:GRANDFATHERED': { check: checkGateConstraints, list: GATE_GRANDFATHERED },
 };
@@ -149,6 +151,7 @@ test('a stale line is never SILENT for the stranger either — it is warned, not
   for (const [name, { check, list }] of [
     ['filter-ops', { check: checkFilterOps, list: FILTER_OPS_GRANDFATHERED }],
     ['ionic-fill', { check: checkIonicFill, list: FILL_GRANDFATHERED }],
+    ['ionic-color', { check: checkIonicColor, list: COLOR_GRANDFATHERED }],
   ]) {
     const id = list[0][0];
     const owed = list.filter(([m]) => m === id).length;

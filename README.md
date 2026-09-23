@@ -25,7 +25,7 @@ aporta las dependencias y la configuración de build.
 | `erplora g view\|command\|query <id> <n>` | ✅ | Añade piezas dentro de un módulo existente. |
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
 | `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe, con las rutas normalizadas para que salga igual desde cualquier cwd — module-toolkit#93), deja el sello `dist/<id>.build.json` **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). |
-| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un `dist/<id>.esm.js` con rutas de la máquina que lo compiló o desfasado respecto de `ui/` (§ *El bundle publicado*), un canal de `host.notify` sin transporte, una guarda de filas que no se puede armar (`min_affected_rows` sobre un lote, un ancla `expect_rows.statement` colgando — hub#1091) y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*), la **tenancy** que el SQL del módulo tiene que escribir con binds `:hub_id` (ADR-0423, `validate-hub-scope.mjs`), el catálogo `errors` del manifest (ADR-0398) y los filtros de lista muertos o con la caja equivocada (ADR-0125). |
+| `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un `dist/<id>.esm.js` con rutas de la máquina que lo compiló o desfasado respecto de `ui/` (§ *El bundle publicado*), un canal de `host.notify` sin transporte, una guarda de filas que no se puede armar (`min_affected_rows` sobre un lote, un ancla `expect_rows.statement` colgando — hub#1091) y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*), un `color=` en un `ion-*` que sale invisible dentro del componente (§ *El `color=` que no cruza el shadow root*), la **tenancy** que el SQL del módulo tiene que escribir con binds `:hub_id` (ADR-0423, `validate-hub-scope.mjs`), el catálogo `errors` del manifest (ADR-0398) y los filtros de lista muertos o con la caja equivocada (ADR-0125). |
 | `erplora test <id\|dir> [--list] [--against-hub [<imagen>]]` | ✅ | Corre **los tests que el módulo ya trae**: sus baterías `tests/**/*.test.py|.sh` (las que necesitan Postgres usan el contenedor de `ERPLORA_TEST_PG_CONTAINER`), **sus tests de TypeScript** `ui/**/*.test.ts` bajo vitest + happy-dom **y los tests Rust del handler** (`#[cfg(test)]` en `handler/**`, bajo `cargo test`; fuera del monorepo, con el checkout del hub de `ERPLORA_HUB_DIR`) (§ *Los tests que el módulo ya tenía*). Falla si queda un test que **nadie** va a ejecutar. `--list` los enumera sin correrlos — es lo que el gate lee para decidir qué instalar. Con `--against-hub` levanta el **kernel real** y corre contra él las baterías `*.hub.test.py|.sh` (§ *La batería contra el kernel REAL*). |
 | `erplora contracts <id\|dir>` | ✅ | (Re)genera `.erplora/contracts.json`: la superficie de OTROS módulos que este consume, extraída por AST de las llamadas al SDK (ADR-0127). |
 | `erplora pack <id\|dir>` | ✅ | `module.zip` + `manifest.lock.json` + SHA256 (en `<módulo>/build/`). |
@@ -316,6 +316,31 @@ comprobación **sobra**. `test/canonical-mirrors.test.mjs` hace lo propio con el
 shell, y además corre este escáner sobre las vistas `.vue` del hub —limpias por su propio guard— para
 que las dos puertas no digan cosas distintas del mismo marcado. Un chequeo que sobrevive a su causa
 es peor que no tenerlo: enseña que el gate pide cosas que dan igual.
+
+## El `color=` que no cruza el shadow root (module-toolkit#273)
+
+`src/validate-ionic-color.mjs`. Ionic da color en dos mitades: el componente pone
+`.ion-color .ion-color-<x>` en su host y pinta desde `--ion-color-base`, pero **quien da valor** a
+`--ion-color-base` es la regla **global** `.ion-color-<x>` de `@ionic/core/css/core.css`, que no casa
+con elementos dentro de un shadow tree. Cada pantalla de un módulo es un Web Component Lit con su
+shadow root, así que un `ion-button`/`ion-badge`/`ion-chip` relleno sale **invisible** (texto blanco
+sobre fondo transparente) y un botón `outline`, un `ion-icon` o un `ion-note` pierde el color que
+prometía. Pasó en «Listo» de cocina (kitchen#42) y en «Cerrar caja» (cash_register#90), y cada vez se
+arregló ese botón solo.
+
+La puerta rechaza `color="…"`, `color=${…}` y `.color=${…}` en cualquier `ion-*` de `ui/` (no mira
+`dist/`, `node_modules/` ni los `*.test.ts`, que pueden citar el caso). Lee la etiqueta Lit entera
+—multilínea y con `>` dentro de `${…}`— con el mismo lector que la del `fill`. El arreglo por uso:
+quitar `color=` y declarar en el CSS del componente `--background`/`--background-activated`/
+`--background-hover`/`--color` desde el token (`var(--ion-color-danger, #c5000f)`): las custom
+properties sí heredan a través del límite.
+
+**Trinquete, igual que el del `fill`** (`COLOR_GRANDFATHERED`, por fichero y número): medido sobre
+`origin/main` de los 27 repos el 2026-09-23, **89 usos en 35 ficheros (17 módulos)** se toleran; uno
+más no, un componente nuevo no hereda nada, la lista solo encoge (la vacía el barrido de ERPlora/pm#392) y una entrada que ya no cubre nada
+**falla** el gate del propio módulo (ese PR de dos líneas va primero). `cash_register` está limpio y
+fuera. La premisa está anclada a la dependencia en `test/validate-ionic-color.test.mjs`: el día que
+Ionic deje de depender de `--ion-color-base`, falla y dice que la comprobación sobra.
 
 ## El suelo de core que el módulo pide (module-toolkit#201)
 

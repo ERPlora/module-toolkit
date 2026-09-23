@@ -22,6 +22,7 @@ import { validateSql } from './validate-sql.mjs';
 import { checkMigrations } from './validate-migrations.mjs';
 import { checkMigrationGuard } from './validate-migration-guard.mjs';
 import { checkIonicFill } from './validate-ionic-fill.mjs';
+import { checkIonicColor } from './validate-ionic-color.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 import { checkContracts } from './contracts.mjs';
 import { checkPgCompat } from './validate-pg.mjs';
@@ -410,6 +411,20 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
     throw new Error(
       'controles Ionic con un `fill` que el hub NUNCA pinta (hub#760):\n  - ' +
         ionicFill.errors.join('\n  - '),
+    );
+  }
+
+  // module-toolkit#273: `color=` en un `ion-*` dentro del shadow root de un WC de módulo no pinta.
+  // Ionic lee `--ion-color-base`, que solo da la clase GLOBAL `.ion-color-*` de core.css, y esa regla
+  // no casa dentro de un shadow tree: un botón relleno sale INVISIBLE (texto blanco sobre fondo
+  // transparente). Pasó en «Listo» de cocina (kitchen#42) y en «Cerrar caja» (cash_register#90).
+  // Trinquete como el de `fill`: lo publicado vive en `COLOR_GRANDFATHERED` y solo encoge.
+  const ionicColor = checkIonicColor(dir, manifest);
+  for (const w of ionicColor.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (ionicColor.errors.length) {
+    throw new Error(
+      'elementos Ionic con un `color=` que el hub NUNCA pinta dentro del componente (module-toolkit#273):\n  - ' +
+        ionicColor.errors.join('\n  - '),
     );
   }
 
