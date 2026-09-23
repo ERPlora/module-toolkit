@@ -57,8 +57,6 @@ export const COLOR_GRANDFATHERED = [
   ['verifactu', 'ui/components/erp-verifactu-config/erp-verifactu-config.ts', 1],
   ['verifactu', 'ui/components/erp-verifactu-records/erp-verifactu-records.ts', 3],
   ['verifactu', 'ui/components/erp-verifactu-recovery/erp-verifactu-recovery.ts', 2],
-  ['whatsapp_inbox', 'ui/components/erp-whatsapp-inbox-requests/erp-whatsapp-inbox-requests.ts', 2],
-  ['whatsapp_inbox', 'ui/components/erp-whatsapp-inbox-templates/erp-whatsapp-inbox-templates.ts', 1],
 ];
 
 function allowanceFor(moduleId, file) {
