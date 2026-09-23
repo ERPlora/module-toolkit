@@ -42,11 +42,6 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  */
 export const COLOR_GRANDFATHERED = [
   ['appointments', 'ui/components/erp-appointments-request-booking/erp-appointments-request-booking.ts', 1],
-  ['customers', 'ui/components/erp-customers-fields/erp-customers-fields.ts', 1],
-  ['customers', 'ui/components/erp-customers-groups/erp-customers-groups.ts', 1],
-  ['customers', 'ui/components/erp-customers-list/erp-customers-list.ts', 6],
-  ['customers', 'ui/components/erp-customers-pos-search/erp-customers-pos-search.ts', 1],
-  ['customers', 'ui/components/erp-customers-tags/erp-customers-tags.ts', 1],
   ['inventory', 'ui/components/erp-inventory-categories/erp-inventory-categories.ts', 1],
   ['inventory', 'ui/components/erp-inventory-dashboard/erp-inventory-dashboard.ts', 1],
   ['inventory', 'ui/components/erp-inventory-products/erp-inventory-products.ts', 7],
