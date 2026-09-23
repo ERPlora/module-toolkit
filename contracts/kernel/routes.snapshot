@@ -164,6 +164,7 @@ POST    /csp-report/                                   auth:none
 GET     /healthz                                       auth:none
 GET     /modules/:id/*path                             auth:none
 GET     /modules/:id/v/:version/*path                  auth:none
+GET     /p/-/country-names.js                          auth:none
 GET     /p/:locator                                    auth:none
 POST    /p/:locator                                    auth:none
 GET     /readyz                                        auth:none
