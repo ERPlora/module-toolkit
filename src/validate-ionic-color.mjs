@@ -41,7 +41,6 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * it is ERPlora/pm#392.
  */
 export const COLOR_GRANDFATHERED = [
-  ['appointments', 'ui/components/erp-appointments-request-booking/erp-appointments-request-booking.ts', 1],
   ['invoice', 'ui/components/erp-invoice-list/erp-invoice-list.ts', 10],
   ['invoice', 'ui/components/erp-invoice-settings/erp-invoice-settings.ts', 3],
   ['kitchen', 'ui/components/erp-kitchen-pos-fire/erp-kitchen-pos-fire.ts', 1],
