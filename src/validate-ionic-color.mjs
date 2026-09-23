@@ -45,7 +45,6 @@ export const COLOR_GRANDFATHERED = [
   ['invoice', 'ui/components/erp-invoice-settings/erp-invoice-settings.ts', 3],
   ['kitchen', 'ui/components/erp-kitchen-pos-fire/erp-kitchen-pos-fire.ts', 1],
   ['printing', 'ui/components/erp-printing-settings/erp-printing-settings.ts', 1],
-  ['reservations', 'ui/components/erp-reservations-availability/erp-reservations-availability.ts', 1],
   ['sales', 'ui/components/erp-pos-departments/erp-pos-departments.ts', 1],
   ['sales', 'ui/components/erp-pos-quick-notes/erp-pos-quick-notes.ts', 1],
   ['sales', 'ui/components/erp-pos-touch/erp-pos-touch.ts', 13],
