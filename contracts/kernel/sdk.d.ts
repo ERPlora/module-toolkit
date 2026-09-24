@@ -259,6 +259,7 @@ export interface ModuleFlowTemplate {
         kind: string;
         value: string;
         payload?: Record<string, unknown>;
+        reason?: Record<string, string>;
     }>;
     requires: Record<string, string>;
     installed?: {
