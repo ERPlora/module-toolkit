@@ -343,8 +343,11 @@ export async function withHubRuntime(
     created.net = true;
 
     log(`  · postgres efímero (${pgImage})`);
+    // The hub joins THIS container's network namespace (below), so the hub's port is published
+    // here: Docker refuses `-p` on a `--network container:…` run.
     const runPg = await exec('docker', [
       'run', '-d', '--name', pg, '--network', net,
+      '-p', `127.0.0.1:0:${HUB_PORT}`,
       '-e', 'POSTGRES_PASSWORD=postgres',
       pgImage,
     ]);
@@ -366,13 +369,15 @@ export async function withHubRuntime(
 
     log(`  · hub ${image}`);
     const runHub = await exec('docker', [
-      'run', '-d', '--name', hub, '--network', net,
-      '-p', `127.0.0.1:0:${HUB_PORT}`,
+      // Loopback, not the pg container's name: the runtime forces `sslmode=require` on every
+      // non-local Postgres host (hub#1398) and the scratch Postgres has no TLS, so a URL by name
+      // kills the hub at boot with `server does not support TLS` (module-toolkit#279).
+      'run', '-d', '--name', hub, '--network', `container:${pg}`,
       // Dev mode is what opens `POST /api/modules/install` at all (hub#239); dev auth is what lets
       // a battery talk to `/api/query` without a session. Both are the point of a scratch hub.
       '-e', 'HUB_AUTH=dev',
       '-e', 'HUB_DEV_MODE=1',
-      '-e', `HUB_DATABASE_URL=postgres://postgres:postgres@${pg}:5432/postgres`,
+      '-e', 'HUB_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres',
       // The staging root the installer confines `dir` to. `HUB_MODULES_DIR` is deliberately NOT
       // set: with it, the boot scan would install the module by itself and the explicit call
       // through the real door — the thing being tested — would never happen.
@@ -385,7 +390,7 @@ export async function withHubRuntime(
     }
     created.hub = true;
 
-    const port = await exec('docker', ['port', hub, `${HUB_PORT}/tcp`]);
+    const port = await exec('docker', ['port', pg, `${HUB_PORT}/tcp`]);
     const mapped = port.code === 0 ? hostPort(port.stdout) : null;
     if (!mapped) {
       // Seen for real: the container died at boot and `docker port` answered «no public port».
