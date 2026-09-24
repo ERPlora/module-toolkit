@@ -510,7 +510,8 @@ function headline(error) {
 }
 
 test('a stray unhandled error FAILS the gate but names no passing file red (#305)', () => {
-  const v = fakeVitest(exiting(UNHANDLED_ONLY));
+  // Two stray errors, so the count read from `Errors  N errors` cannot pass for the exit code.
+  const v = fakeVitest(exiting(UNHANDLED_ONLY.replace('Errors  1 error', 'Errors  2 errors')));
   const m = mod(THREE);
   stub(m.dir, 'happy-dom');
   const { errors, results } = runTsTests(m.dir, { vitest: v.bin });
@@ -520,11 +521,13 @@ test('a stray unhandled error FAILS the gate but names no passing file red (#305
   assert.doesNotMatch(headline(errors[0]), /b\.test\.ts|d\.test\.ts/);
   // …the file the error came from IS named there, and the count of stray errors with it…
   assert.match(headline(errors[0]), /ui\/lib\/a\.test\.ts/);
-  assert.match(headline(errors[0]), /\b1\b/);
-  // …and vitest's own block, with the error itself, sits right under it — not after the dots.
+  assert.match(headline(errors[0]), /\b2\b/);
+  // …and vitest's own block, with the error itself, sits right under it — not after the dots —
+  // and ends where the block ends: the passing summary below it is not part of what is red.
   const body = errors[0].split('\n').slice(1).join('\n');
   assert.match(body.split('\n').slice(0, 3).join('\n'), /Unhandled Errors/);
   assert.match(body, /late boom/);
+  assert.doesNotMatch(body, /Test Files|Duration/);
   v.clean();
   m.clean();
 });
@@ -539,7 +542,11 @@ test('a real failure plus a stray error: only the FAILED file is counted red (#3
   assert.match(head, /ui\/lib\/c\.test\.ts/);
   assert.doesNotMatch(head, /b\.test\.ts|d\.test\.ts/);
   assert.match(head, /\b1 de 4\b/);
-  // The stray error is not lost behind the failure: it is reported too, with its origin.
+  // The stray error is not lost behind the failure: it is reported too, on its own line, with its
+  // origin — not merely somewhere inside the reporter output that follows.
+  const second = errors[0].split('\n')[1];
+  assert.match(second, /Unhandled Errors/);
+  assert.match(second, /ui\/lib\/a\.test\.ts/);
   assert.match(errors[0], /Unhandled Errors/);
   assert.match(errors[0], /late boom/);
   v.clean();
