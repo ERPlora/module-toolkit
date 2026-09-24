@@ -65,14 +65,28 @@ const SPANISH_STEPS = [
   { id: 'propose_appointment', kind: 'ai', prompt: 'Ofrece un hueco', tools: [] },
 ];
 
-const GRANTS = { grants: [{ kind: 'notify', value: 'whatsapp' }] };
+
+const GRANTS = {
+  grants: [
+    {
+      kind: 'notify',
+      value: 'whatsapp',
+      reason: { en: 'Answer on WhatsApp.', es: 'Contestar por WhatsApp.' },
+    },
+  ],
+};
 const REQUIRES = { modules: { appointments: '1.1.69' } };
 
-/** The whole family, well formed: the case every other test breaks exactly one thing of. */
+/**
+ * The whole family, well formed: the case every other test breaks exactly one thing of.
+ *
+ * The Spanish steps are a COPY: a test that pushes a step onto its family would otherwise grow the
+ * shared list, and every family built after it would carry a Spanish step the English one lacks.
+ */
 function wellFormed(extra = {}) {
   return {
     'appointment-from-whatsapp.en.flow.json': doc(),
-    'appointment-from-whatsapp.es.flow.json': doc({ name: 'Cita desde WhatsApp', steps: SPANISH_STEPS }),
+    'appointment-from-whatsapp.es.flow.json': doc({ name: 'Cita desde WhatsApp', steps: structuredClone(SPANISH_STEPS) }),
     'appointment-from-whatsapp.grants.json': GRANTS,
     'appointment-from-whatsapp.requires.json': REQUIRES,
     ...extra,
@@ -900,3 +914,35 @@ test('every language of a family is judged, not only Spanish', () => {
   assertNames(errors, 'appointment-from-whatsapp.fr.flow.json');
   assertNames(errors, '`prompt`');
 });
+
+// flows#114 — each grant explains itself to the owner in a sentence: `reason: { en, es }`. Without
+// it the gallery can only print the internal name (`staff.schedules.list_for_member`), and the
+// owner is asked to authorise identifiers.
+const reasoned = (reason) => ({
+  grants: [{ kind: 'notify', value: 'whatsapp', ...(reason === undefined ? {} : { reason }) }],
+});
+
+test('a grant with no reason publishes, with a warning that names it', () => {
+  const { errors, warnings } = check(
+    wellFormed({ 'appointment-from-whatsapp.grants.json': reasoned(undefined) }),
+  );
+  assert.deepEqual(errors, []);
+  assertNames(warnings, 'appointment-from-whatsapp.grants.json');
+  assertNames(warnings, 'whatsapp');
+});
+
+for (const [label, reason] of [
+  ['not an object', 'Answer on WhatsApp.'],
+  ['a list', ['Answer on WhatsApp.']],
+  ['English only', { en: 'Answer on WhatsApp.' }],
+  ['Spanish only', { es: 'Contestar por WhatsApp.' }],
+  ['a blank sentence', { en: 'Answer on WhatsApp.', es: '  ' }],
+  ['a sentence that is not text', { en: 'Answer on WhatsApp.', es: 7 }],
+  ['a language the recipe does not ship', { en: 'Answer.', es: 'Contestar.', fr: 'Répondre.' }],
+]) {
+  test(`a reason that is ${label} is refused`, () => {
+    const { errors } = check(wellFormed({ 'appointment-from-whatsapp.grants.json': reasoned(reason) }));
+    assertNames(errors, 'appointment-from-whatsapp.grants.json');
+    assertNames(errors, 'reason');
+  });
+}

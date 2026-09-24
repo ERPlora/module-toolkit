@@ -474,7 +474,7 @@ function checkDocument(name, document, schema, errors) {
 }
 
 /** `<family>.grants.json`: what the automation will ask the owner to grant before it can run. */
-function checkGrants(name, sidecar, errors) {
+function checkGrants(name, sidecar, errors, warnings = [], languages = REQUIRED_LANGUAGES) {
   const where = `flows/${name}`;
   if (sidecar === null || typeof sidecar !== 'object' || Array.isArray(sidecar)) {
     errors.push(`${where}: the grants of a template are a JSON object with a \`grants\` list.`);
@@ -499,7 +499,48 @@ function checkGrants(name, sidecar, errors) {
       }
     }
     checkGrantPin(where, grant, index, errors);
+    checkGrantReason(where, grant, index, errors, warnings, languages);
   });
+}
+
+/**
+ * The sentence that explains a grant to the owner (flows#114): `reason: { en, es }`.
+ *
+ * The gallery shows every grant of a recipe BEFORE it is installed, and without a sentence all it
+ * can print is the internal name — fourteen `staff.schedules.list_for_member` the owner is asked
+ * to authorise. Absent is a warning (the card still names the permission, once); present but
+ * wrong is an error, because a reason in one language only shows a Spanish owner an English
+ * sentence, or none, with nothing on the way saying so. The languages are exactly the ones the
+ * family's documents ship: the reason is part of the same recipe, translated the same way.
+ */
+function checkGrantReason(where, grant, index, errors, warnings, languages) {
+  if (!grant || typeof grant !== 'object') return;
+  const label = `grant ${index + 1} (\`${grant.value}\`)`;
+  if (grant.reason === undefined) {
+    warnings.push(
+      `${where}: ${label} has no \`reason\` — the owner will read its internal name instead of ` +
+        'a sentence saying what it lets the automation do. Add `reason: { en, es }`.',
+    );
+    return;
+  }
+  const reason = grant.reason;
+  if (reason === null || typeof reason !== 'object' || Array.isArray(reason)) {
+    errors.push(`${where}: ${label}: \`reason\` is \`{ ${languages.join(', ')} }\`, one sentence per language.`);
+    return;
+  }
+  const wanted = [...languages].sort();
+  const given = Object.keys(reason).sort();
+  if (wanted.join(',') !== given.join(',')) {
+    errors.push(
+      `${where}: ${label}: \`reason\` is written in \`${given.join(', ') || 'nothing'}\` and the ` +
+        `recipe ships \`${wanted.join(', ')}\` — the sentence travels in exactly the recipe's languages.`,
+    );
+  }
+  for (const [lang, sentence] of Object.entries(reason)) {
+    if (typeof sentence !== 'string' || !sentence.trim()) {
+      errors.push(`${where}: ${label}: \`reason.${lang}\` is not a sentence.`);
+    }
+  }
 }
 
 /**
@@ -787,7 +828,9 @@ export function checkFlows(dir, schema = loadFlowSchema()) {
 
     if (family.grants) {
       const sidecar = parse(dir, family.grants, errors);
-      if (sidecar !== undefined) checkGrants(family.grants, sidecar, errors);
+      if (sidecar !== undefined) {
+        checkGrants(family.grants, sidecar, errors, warnings, [...family.documents.keys()]);
+      }
     }
     if (family.requires) {
       const sidecar = parse(dir, family.requires, errors);
