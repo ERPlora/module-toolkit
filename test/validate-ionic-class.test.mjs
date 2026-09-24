@@ -207,7 +207,7 @@ test('the grandfathered list may only SHRINK, and every entry is well-formed', (
   // The two ceilings ARE the ratchet: they come down with every file fixed, never up.
   const total = CLASS_GRANDFATHERED.reduce((n, [, , c]) => n + c, 0);
   assert.ok(
-    CLASS_GRANDFATHERED.length <= 4 && total <= 4,
+    CLASS_GRANDFATHERED.length <= 3 && total <= 3,
     `the list GREW (${CLASS_GRANDFATHERED.length} files / ${total} uses). Nothing gets added: each module fixes its own.`,
   );
   const seen = new Set();

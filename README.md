@@ -358,7 +358,8 @@ La puerta rechaza esas formas en cualquier `ion-*` de `ui/` (mismo lector de eti
 
 **Trinquete, igual que el de `color`** (`CLASS_GRANDFATHERED`): medido sobre `origin/main` de los 27
 repos el 2026-09-24, **4 usos en 4 ficheros** (`customers`, `kitchen`, `pricing` —un `ion-input`
-multilínea que un grep de una línea no veía— y `sales`) se toleran; cada módulo lo arregla en su repo
+multilínea que un grep de una línea no veía— y `sales`) se toleraban; `kitchen` salió con kitchen#89
+(techo 3/3); cada módulo lo arregla en su repo
 y borra antes su línea. La premisa está anclada a `@ionic/core` en `test/validate-ionic-class.test.mjs`.
 
 ## El suelo de core que el módulo pide (module-toolkit#201)

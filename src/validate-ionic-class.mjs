@@ -33,7 +33,6 @@ const ION_TAG_START = /<ion-[a-z-]+(?=[\s/>])/g;
  */
 export const CLASS_GRANDFATHERED = [
   ['customers', 'ui/components/erp-customers-pos-search/erp-customers-pos-search.ts', 1], // customers#77
-  ['kitchen', 'ui/components/erp-kitchen-pos-fire/erp-kitchen-pos-fire.ts', 1], // kitchen#88 (fix in PR kitchen#89)
   ['pricing', 'ui/components/erp-pricing-lists/erp-pricing-lists.ts', 1], // pricing#43
   ['sales', 'ui/components/erp-pos-touch/erp-pos-touch.ts', 1], // sales#359
 ];
