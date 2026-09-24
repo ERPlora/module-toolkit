@@ -27,7 +27,10 @@
 //     each step the SAME machinery (`kind`, `command`, `tools`, `when`, `channel`… — everything but
 //     its prose, `PROSE_STEP_KEYS`), and carry the SAME triggers — whole, down to the `filter` and
 //     the `input`. A translation is words, never automation. When the halves drift, a Spanish hub
-//     runs something different from an English one and nothing says so.
+//     runs something different from an English one and nothing says so;
+//   · and the other sign of the same check: the WORDS of a translation are not the English ones.
+//     A prose leaf copied word for word (two words or more, `isWords`) is a sentence nobody
+//     translated, and it reaches a Spanish customer in English (module-toolkit#227).
 //
 // WHAT IT DOES NOT. Whether the grants cover what the steps actually use, and whether the prompt
 // orders a tool the module really has, is the SEMANTICS of the automation: that lives in the
@@ -136,6 +139,75 @@ function maskProse(value, paths) {
     masked[key] = inside.length ? maskProse(inner, inside) : inner;
   }
   return masked;
+}
+
+/**
+ * Whether a string is WORDS a person or the model reads, and so something a translation must
+ * change: with its `{{…}}` placeholders taken out, it still carries two words or more.
+ *
+ * The cut of module-toolkit#227. The prose keys also carry what is not prose — a mapping path
+ * (`input.appointment_id`, one token with no space), a placeholder (`+{{input.from}}`), an empty
+ * template — and one word may legitimately be the same in both languages (`WhatsApp`, `OK`).
+ * Two words that match word for word are a copied sentence: `See slots`, `Tap whichever slot suits
+ * you`. What it lets through is an untranslated ONE-word label; a door that also refused `WhatsApp`
+ * would be noise, and noise is the door authors learn to route around.
+ */
+function isWords(text) {
+  const words = text
+    .replace(/\{\{[^}]*\}\}/g, ' ')
+    .split(/\s+/)
+    .filter((token) => /\p{L}/u.test(token));
+  return words.length >= 2;
+}
+
+/**
+ * The prose leaves of `value` as `[path, text]`: every string under it when `paths` holds the empty
+ * path (a whole prose key), else only the strings the `paths` of a mixed key reach. The path is
+ * concrete — `interactive.action.sections[0].title` — so the finding tells the author which string.
+ */
+function proseLeaves(value, paths, at, out = []) {
+  if (paths.some((path) => path.length === 0)) {
+    if (typeof value === 'string') out.push([at, value]);
+    else if (Array.isArray(value)) value.forEach((item, i) => proseLeaves(item, [[]], `${at}[${i}]`, out));
+    else if (value !== null && typeof value === 'object') {
+      for (const [key, inner] of Object.entries(value)) proseLeaves(inner, [[]], `${at}.${key}`, out);
+    }
+    return out;
+  }
+  if (Array.isArray(value)) {
+    const inside = paths.filter((path) => path[0] === '[]').map((path) => path.slice(1));
+    if (inside.length) value.forEach((item, i) => proseLeaves(item, inside, `${at}[${i}]`, out));
+    return out;
+  }
+  if (value === null || typeof value !== 'object') return out;
+  for (const [key, inner] of Object.entries(value)) {
+    const inside = paths.filter((path) => path[0] === key || path[0] === '*').map((path) => path.slice(1));
+    if (inside.length) proseLeaves(inner, inside, `${at}.${key}`, out);
+  }
+  return out;
+}
+
+/** Every prose leaf of a step — its prose keys whole, the prose paths of its mixed keys. */
+function stepProse(step) {
+  if (!step || typeof step !== 'object' || Array.isArray(step)) return [];
+  const leaves = [];
+  for (const [key, value] of Object.entries(step)) {
+    if (PROSE_STEP_KEYS.includes(key)) proseLeaves(value, [[]], key, leaves);
+    else if (PROSE_PATHS_BY_KEY.has(key)) proseLeaves(value, PROSE_PATHS_BY_KEY.get(key), key, leaves);
+  }
+  return leaves;
+}
+
+/**
+ * The prose paths of a translated step that are the English words, word for word — a sentence
+ * nobody translated. The parity check masks prose on both sides, so to it a copied sentence and
+ * a translated one look the same; this is the half that tells them apart (module-toolkit#227).
+ */
+function untranslated(here, there) {
+  const english = new Map(stepProse(there));
+  return stepProse(here)
+    .filter(([path, text]) => english.get(path) === text && isWords(text))
+    .map(([path]) => path);
 }
 
 const MODULE_ID = /^[a-z][a-z0-9_]*$/;
@@ -402,7 +474,7 @@ function checkDocument(name, document, schema, errors) {
 }
 
 /** `<family>.grants.json`: what the automation will ask the owner to grant before it can run. */
-function checkGrants(name, sidecar, errors) {
+function checkGrants(name, sidecar, errors, warnings = [], languages = REQUIRED_LANGUAGES) {
   const where = `flows/${name}`;
   if (sidecar === null || typeof sidecar !== 'object' || Array.isArray(sidecar)) {
     errors.push(`${where}: the grants of a template are a JSON object with a \`grants\` list.`);
@@ -427,7 +499,48 @@ function checkGrants(name, sidecar, errors) {
       }
     }
     checkGrantPin(where, grant, index, errors);
+    checkGrantReason(where, grant, index, errors, warnings, languages);
   });
+}
+
+/**
+ * The sentence that explains a grant to the owner (flows#114): `reason: { en, es }`.
+ *
+ * The gallery shows every grant of a recipe BEFORE it is installed, and without a sentence all it
+ * can print is the internal name — fourteen `staff.schedules.list_for_member` the owner is asked
+ * to authorise. Absent is a warning (the card still names the permission, once); present but
+ * wrong is an error, because a reason in one language only shows a Spanish owner an English
+ * sentence, or none, with nothing on the way saying so. The languages are exactly the ones the
+ * family's documents ship: the reason is part of the same recipe, translated the same way.
+ */
+function checkGrantReason(where, grant, index, errors, warnings, languages) {
+  if (!grant || typeof grant !== 'object') return;
+  const label = `grant ${index + 1} (\`${grant.value}\`)`;
+  if (grant.reason === undefined) {
+    warnings.push(
+      `${where}: ${label} has no \`reason\` — the owner will read its internal name instead of ` +
+        'a sentence saying what it lets the automation do. Add `reason: { en, es }`.',
+    );
+    return;
+  }
+  const reason = grant.reason;
+  if (reason === null || typeof reason !== 'object' || Array.isArray(reason)) {
+    errors.push(`${where}: ${label}: \`reason\` is \`{ ${languages.join(', ')} }\`, one sentence per language.`);
+    return;
+  }
+  const wanted = [...languages].sort();
+  const given = Object.keys(reason).sort();
+  if (wanted.join(',') !== given.join(',')) {
+    errors.push(
+      `${where}: ${label}: \`reason\` is written in \`${given.join(', ') || 'nothing'}\` and the ` +
+        `recipe ships \`${wanted.join(', ')}\` — the sentence travels in exactly the recipe's languages.`,
+    );
+  }
+  for (const [lang, sentence] of Object.entries(reason)) {
+    if (typeof sentence !== 'string' || !sentence.trim()) {
+      errors.push(`${where}: ${label}: \`reason.${lang}\` is not a sentence.`);
+    }
+  }
 }
 
 /**
@@ -675,6 +788,15 @@ export function checkFlows(dir, schema = loadFlowSchema()) {
         } else if (Array.isArray(document.steps) && Array.isArray(source.steps)) {
           // Same ids in the same order: now each step must be the same MACHINERY, other words.
           document.steps.forEach((step, index) => {
+            const copied = untranslated(step, source.steps[index]);
+            if (copied.length) {
+              errors.push(
+                `flows/${family.documents.get(lang)}: step \`${here[index]}\` is not translated — ` +
+                  `\`${copied.join('`, `')}\` is the English text word for word. These words ` +
+                  'live only in the template, outside the i18n catalogue of the module, so a ' +
+                  `\`${lang}\` business sends them to its customers in English. Translate them.`,
+              );
+            }
             const drift = stepDrift(step, source.steps[index]);
             if (!drift.length) return;
             errors.push(
@@ -685,6 +807,12 @@ export function checkFlows(dir, schema = loadFlowSchema()) {
                 'otherwise a Spanish hub runs a different automation under the same name.',
             );
           });
+        }
+        if (typeof document.name === 'string' && document.name === source.name && isWords(document.name)) {
+          errors.push(
+            `flows/${family.documents.get(lang)}: its \`name\` is the English one word for word — ` +
+              `it is the card a \`${lang}\` owner reads in the gallery. Translate it.`,
+          );
         }
         const drift = triggerDrift(document, source);
         if (drift.length) {
@@ -706,7 +834,9 @@ export function checkFlows(dir, schema = loadFlowSchema()) {
 
     if (family.grants) {
       const sidecar = parse(dir, family.grants, errors);
-      if (sidecar !== undefined) checkGrants(family.grants, sidecar, errors);
+      if (sidecar !== undefined) {
+        checkGrants(family.grants, sidecar, errors, warnings, [...family.documents.keys()]);
+      }
     }
     if (family.requires) {
       const sidecar = parse(dir, family.requires, errors);

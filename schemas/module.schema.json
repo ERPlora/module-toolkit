@@ -583,6 +583,45 @@
         "$ref": "#/$defs/widget"
       }
     },
+    "bell": {
+      "type": "object",
+      "description": "Counters the module puts on the shell's notification bell (hub#1678). Key = the FULL namespaced id of the counter (e.g. `appointments.to_confirm`). The shell runs `query` for each entry the session may see, reads `count` from the FIRST row and, when it is above zero, shows a row on the bell that leads to the module's `nav` tab. It is derived state, not a message: it clears itself when the cause is dealt with (ADR-0067), so there is no read/dismiss. The Hub only TRANSPORTS this block (the shell reads the raw `module.json`, like `widgets`); the runtime runs nothing per entry.",
+      "default": {},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["label", "query"],
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What is waiting, canonical English (e.g. `Appointments to confirm`). Translated from the module's `locales/<lang>.json` at `bell.<id>.label`."
+          },
+          "icon": {
+            "type": "string",
+            "description": "Icon of the bell row (e.g. `calendar-outline`)."
+          },
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A query of THIS module whose first row carries a numeric `count` column. It is revalidated server-side with the caller's permissions."
+          },
+          "params": {
+            "type": "object",
+            "description": "Params passed to `query`."
+          },
+          "nav": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Id of the module's `navigation` tab the row leads to (`/m/<module>/<nav>`). Absent = the module's first tab. A tab and never a free path: the bell cannot send anyone outside the module that raised it."
+          },
+          "permission": {
+            "type": "string",
+            "description": "Permission to SEE the counter (filtered in the client; the `query` revalidates it server-side)."
+          }
+        }
+      }
+    },
     "setup": {
       "type": "object",
       "description": "Chequeo de CONFIGURACIÓN del módulo (ADR-0063, extendido por hub#369). El RUNTIME evalúa, para cada módulo instalado y activo, si está configurado: corre `query` (lectura del propio módulo, con los permisos de quien llama), toma la 1ª fila y comprueba `configured_when`. El resultado sale como un ítem de la query core `hub.setup.status`, que el widget de la checklist y el asistente leen (una fuente, dos superficies). Genérico: el Hub no conoce módulos concretos; cada uno se autodeclara. ⚠️ Ya NO es un bloque que el Hub solo transporta: lo parsea el runtime (`crates/runtime/src/manifest.rs`, `SetupDef`). Lo que el módulo NO declara es su importancia: `required` mapea a 🔴 funcional / 🟡 recomendado y el nivel ⛔ bloqueante lo mantiene el core, para que un módulo de terceros no pueda autoproclamarse bloqueante de la venta. Contrato completo en `architecture/hub/setup-status.md`.",
