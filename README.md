@@ -342,6 +342,29 @@ más no, un componente nuevo no hereda nada, la lista solo encoge (la vacía el 
 fuera. La premisa está anclada a la dependencia en `test/validate-ionic-color.test.mjs`: el día que
 Ionic deje de depender de `--ion-color-base`, falla y dice que la comprobación sobra.
 
+## El `class=${…}` que borra las clases de Ionic (module-toolkit#303)
+
+`src/validate-ionic-class.mjs`. Un binding de atributo Lit sobre `class` —`class=${expr}` o una
+interpolación dentro del valor (`class="a ${expr}"`)— se escribe con `setAttribute('class', …)`: el
+atributo **entero**, en cada cambio (igual `.className=${…}`). Stencil solo vuelve a poner las clases
+de host que cambia su propio render, así que las que estampó una vez —`ion-activatable` (la que busca
+el tap-click para poner `ion-activated`), `ion-focusable`, `hydrated`, `ios`— se pierden: el botón se
+sigue viendo, pero deja de iluminarse al pulsarlo y pierde el anillo de foco. Pasó en el URGENTE de
+cocina (kitchen#88) y en el descuento de sales (sales#358).
+
+La puerta rechaza esas formas en cualquier `ion-*` de `ui/` (mismo lector de etiqueta multilínea que
+`fill`/`color`, mismas exclusiones). Lo único que pasa es `class="fija ${classMap({…})}"` o
+`class=${classMap({…})}`: `classMap` solo toca las claves que declara. También pasa la llamada a un
+helper **del mismo fichero** cuyo cuerpo entero es `return classMap({…})` (o una flecha
+`=> classMap({…})`), como el `toneOf` de sales: es la misma directiva detrás de un nombre. Un helper
+que devuelva otra cosa, o que venga de otro fichero, cuenta como enlace entero.
+
+**Trinquete, igual que el de `color`** (`CLASS_GRANDFATHERED`): medido sobre `origin/main` de los 27
+repos el 2026-09-24, **4 usos en 4 ficheros** (`customers`, `kitchen`, `pricing` —un `ion-input`
+multilínea que un grep de una línea no veía— y `sales`) se toleraban; `kitchen` salió con kitchen#89
+(techo 3/3); cada módulo lo arregla en su repo
+y borra antes su línea. La premisa está anclada a `@ionic/core` en `test/validate-ionic-class.test.mjs`.
+
 ## El suelo de core que el módulo pide (module-toolkit#201)
 
 Los `ok-*` con los que se pinta un módulo son **los del shell**, no los que lleva su bundle: el shell

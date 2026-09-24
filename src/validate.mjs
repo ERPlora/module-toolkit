@@ -23,6 +23,7 @@ import { checkMigrations } from './validate-migrations.mjs';
 import { checkMigrationGuard } from './validate-migration-guard.mjs';
 import { checkIonicFill } from './validate-ionic-fill.mjs';
 import { checkIonicColor } from './validate-ionic-color.mjs';
+import { checkIonicClass } from './validate-ionic-class.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 import { checkContracts } from './contracts.mjs';
 import { checkPgCompat } from './validate-pg.mjs';
@@ -425,6 +426,20 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
     throw new Error(
       'elementos Ionic con un `color=` que el hub NUNCA pinta dentro del componente (module-toolkit#273):\n  - ' +
         ionicColor.errors.join('\n  - '),
+    );
+  }
+
+  // module-toolkit#303: `class=${…}` (o `class="a ${…}"`, o `.className=`) sobre un `ion-*` reescribe el
+  // atributo entero en cada cambio y borra las clases que Ionic estampó en el host — `ion-activatable`
+  // entre ellas —: el botón deja de iluminarse al pulsarlo y pierde el foco. Pasó en el URGENTE de
+  // cocina (kitchen#88) y en el descuento de sales (sales#358). Arreglo: `classMap`. Trinquete como el
+  // de `color`: lo publicado vive en `CLASS_GRANDFATHERED` y solo encoge.
+  const ionicClass = checkIonicClass(dir, manifest);
+  for (const w of ionicClass.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (ionicClass.errors.length) {
+    throw new Error(
+      'elementos Ionic con el atributo `class` enlazado entero, que borra las clases de Ionic (module-toolkit#303):\n  - ' +
+        ionicClass.errors.join('\n  - '),
     );
   }
 
