@@ -27,7 +27,10 @@
 //     each step the SAME machinery (`kind`, `command`, `tools`, `when`, `channel`… — everything but
 //     its prose, `PROSE_STEP_KEYS`), and carry the SAME triggers — whole, down to the `filter` and
 //     the `input`. A translation is words, never automation. When the halves drift, a Spanish hub
-//     runs something different from an English one and nothing says so.
+//     runs something different from an English one and nothing says so;
+//   · and the other sign of the same check: the WORDS of a translation are not the English ones.
+//     A prose leaf copied word for word (two words or more, `isWords`) is a sentence nobody
+//     translated, and it reaches a Spanish customer in English (module-toolkit#227).
 //
 // WHAT IT DOES NOT. Whether the grants cover what the steps actually use, and whether the prompt
 // orders a tool the module really has, is the SEMANTICS of the automation: that lives in the
