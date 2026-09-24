@@ -59,6 +59,13 @@ function doc(overrides = {}) {
   };
 }
 
+/** The steps of `doc()`, translated: a Spanish half that is really Spanish (module-toolkit#227). */
+const SPANISH_STEPS = [
+  { id: 'acknowledge', kind: 'notify', channel: 'whatsapp', vars: { text: '¡Gracias!' } },
+  { id: 'propose_appointment', kind: 'ai', prompt: 'Ofrece un hueco', tools: [] },
+];
+
+
 const GRANTS = {
   grants: [
     {
@@ -70,11 +77,16 @@ const GRANTS = {
 };
 const REQUIRES = { modules: { appointments: '1.1.69' } };
 
-/** The whole family, well formed: the case every other test breaks exactly one thing of. */
+/**
+ * The whole family, well formed: the case every other test breaks exactly one thing of.
+ *
+ * The Spanish steps are a COPY: a test that pushes a step onto its family would otherwise grow the
+ * shared list, and every family built after it would carry a Spanish step the English one lacks.
+ */
 function wellFormed(extra = {}) {
   return {
     'appointment-from-whatsapp.en.flow.json': doc(),
-    'appointment-from-whatsapp.es.flow.json': doc({ name: 'Cita desde WhatsApp' }),
+    'appointment-from-whatsapp.es.flow.json': doc({ name: 'Cita desde WhatsApp', steps: structuredClone(SPANISH_STEPS) }),
     'appointment-from-whatsapp.grants.json': GRANTS,
     'appointment-from-whatsapp.requires.json': REQUIRES,
     ...extra,
@@ -695,11 +707,16 @@ function interactiveDoc(overrides = {}) {
   });
 }
 
-/** The same family, its Spanish half built by patching the English steps. */
+/** The same family, its Spanish half translated and then patched by the test. */
 function interactiveFamily(patch) {
   const files = wellFormed();
   files['appointment-from-whatsapp.en.flow.json'] = interactiveDoc();
   const es = interactiveDoc({ name: 'Cita desde WhatsApp' });
+  es.steps[0].prompt = 'Busca sus huecos';
+  es.steps[0].output.slots.describe = 'Los huecos libres que puede tocar';
+  es.steps[1].interactive.body.text = 'Toca el hueco que te venga bien.';
+  es.steps[1].interactive.action.button = 'Ver huecos';
+  es.steps[1].interactive.action.sections[0].title = 'Huecos libres';
   patch(es.steps[0], es.steps[1]);
   files['appointment-from-whatsapp.es.flow.json'] = es;
   return files;
@@ -810,6 +827,92 @@ test('every prose PATH of a step hangs from a key of the step contract', async (
   // here too: `describe` renamed in the hub must not leave `output.*.describe` masking nothing.
   const field = step.output?.additionalProperties?.properties ?? {};
   assert.deepEqual(Object.keys(field).sort(), ['describe', 'type'], 'the output field contract moved on in the hub');
+});
+
+// The other SIGN of the door above (module-toolkit#227). Masking the prose on both sides tells a
+// good translation from drifted machinery — and, by construction, reads a Spanish document that
+// COPIED the English words as a perfect translation. `Tap whichever slot suits you` reached a
+// Spanish salon's customer that way: these strings live only in the `.flow.json`, outside the
+// module's i18n catalogue, so no other net sits under them. A prose leaf of a translation that is
+// the English one word for word is untranslated, and the finding names it by its path.
+//
+// The cut: a leaf is PROSE only when, with its `{{…}}` placeholders taken out, it still carries two
+// words or more. A mapping path (`steps.pick.slots`), a placeholder (`+{{input.from}}`), an empty
+// template, or one word that is the same in both languages (`WhatsApp`, `OK`) go through.
+
+test('an untranslated prose leaf inside `interactive` is refused, named by its path', () => {
+  const files = interactiveFamily((_ai, notify) => {
+    notify.interactive.body.text = 'Tap whichever slot suits you.';
+    notify.interactive.action.button = 'See slots';
+  });
+  const errors = check(files).errors;
+  assertNames(errors, 'appointment-from-whatsapp.es.flow.json');
+  assertNames(errors, 'offer_slots');
+  assertNames(errors, 'interactive.body.text');
+  assertNames(errors, 'interactive.action.button');
+});
+
+test('an untranslated section title is refused by its path, index included', () => {
+  const files = interactiveFamily((_ai, notify) => {
+    notify.interactive.action.sections[0].title = 'Free slots';
+  });
+  assertNames(check(files).errors, 'interactive.action.sections[0].title');
+});
+
+test('an untranslated prompt is refused: the model is briefed in English on a Spanish chat', () => {
+  const files = interactiveFamily((ai) => {
+    ai.prompt = 'Find her slots';
+  });
+  const errors = check(files).errors;
+  assertNames(errors, 'find_slots');
+  assertNames(errors, '`prompt`');
+});
+
+test('an untranslated `describe` of an output field is refused', () => {
+  const files = interactiveFamily((ai) => {
+    ai.output.slots.describe = 'The free slots she may tap';
+  });
+  assertNames(check(files).errors, 'output.slots.describe');
+});
+
+test('an untranslated text of a prose key is refused — `vars.text` is what the customer reads', () => {
+  const files = wellFormed();
+  files['appointment-from-whatsapp.es.flow.json'].steps[0].vars.text = 'Thanks for writing to us!';
+  files['appointment-from-whatsapp.en.flow.json'].steps[0].vars.text = 'Thanks for writing to us!';
+  assertNames(check(files).errors, 'vars.text');
+});
+
+test('an untranslated NAME is refused: it is the card the owner reads in the gallery', () => {
+  const files = wellFormed();
+  files['appointment-from-whatsapp.es.flow.json'].name = 'Appointment from WhatsApp';
+  const errors = check(files).errors;
+  assertNames(errors, 'appointment-from-whatsapp.es.flow.json');
+  assertNames(errors, '`name`');
+});
+
+test('what is the same in both languages and is not words publishes green', () => {
+  const same = {
+    id: 'confirm',
+    kind: 'notify',
+    channel: 'whatsapp',
+    template: '',
+    vars: { text: '{{steps.book.text}}', brand: 'WhatsApp', to: '+{{input.from}}' },
+    params: { f_phone: '+{{input.from}}', appointment_id: 'input.appointment_id' },
+    headers: { Authorization: 'Bearer {{secret.token}}' },
+  };
+  const files = wellFormed();
+  files['appointment-from-whatsapp.en.flow.json'].steps.push({ ...same });
+  files['appointment-from-whatsapp.es.flow.json'].steps.push({ ...same });
+  assert.deepEqual(check(files).errors, []);
+});
+
+test('every language of a family is judged, not only Spanish', () => {
+  const files = wellFormed({
+    'appointment-from-whatsapp.fr.flow.json': doc({ name: 'Rendez-vous depuis WhatsApp' }),
+  });
+  const errors = check(files).errors;
+  assertNames(errors, 'appointment-from-whatsapp.fr.flow.json');
+  assertNames(errors, '`prompt`');
 });
 
 // flows#114 — each grant explains itself to the owner in a sentence: `reason: { en, es }`. Without

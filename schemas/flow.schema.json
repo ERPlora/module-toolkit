@@ -192,6 +192,10 @@
           "$ref": "#/$defs/condition",
           "description": "Solo `kind: condition` — guarda. Si no pasa, el run TERMINA (`done`, no `failed`): una guarda que no pasa es el flujo funcionando."
         },
+        "run_if": {
+          "$ref": "#/$defs/condition",
+          "description": "Every kind except `condition` (hub#2066) — whether THIS step applies. When it does not match, the step does not run and the run carries on with the next one; later steps read `steps.<id>.skipped == true`. The opposite of a `condition`, which ENDS the run: the spine stays linear, a step just may not be its turn (GitHub Actions `if:`, Power Automate «run after: has failed»). Typical use, with `on_error: \"continue\"` on the step before: `{\"steps.book.status\": {\"eq\": \"failed\"}}` sends the fallback message only when that step failed. A skipped step writes no history row. It may not read a flow secret, on any kind."
+        },
         "seconds": {
           "type": "integer",
           "minimum": 0,
