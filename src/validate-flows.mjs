@@ -553,6 +553,10 @@ function checkGrantReason(where, grant, index, errors, warnings, languages) {
  * file exists: without them the module publishes green and the owner meets the refusal at
  * `PUT …/grants`, three steps away from anyone who can fix it.
  *
+ * The three lists below are the hub's, and `test/contracts.test.mjs` holds each one EXACTLY equal
+ * to its section of the vendored `contracts/kernel/engine.snapshot` (`[flow_pin_kinds]`,
+ * `[flow_pin_roots]`, `[flow_path_roots]`), so a resync that moves the hub turns red here (mt#234).
+ *
  * 🔴 And that mirror cuts BOTH ways: while this door refused what the hub had started allowing,
  * the module could not publish at all. Measured in whatsapp_inbox#119 — the pin the kernel landed
  * for it (hub#1662) was rejected here, so the security fix could not ship.
@@ -562,7 +566,7 @@ function checkGrantReason(where, grant, index, errors, warnings, languages) {
  * values to judge — a `command`'s payload (hub#1623) and a `query`'s parameters (hub#1662). A pin
  * on any other kind would put a restriction on the owner's screen that nothing applies.
  */
-const CAN_PIN = new Set(['command', 'query']);
+export const CAN_PIN = new Set(['command', 'query']);
 
 /**
  * The roots a pin may REFERENCE, mirroring `PIN_ROOTS` in the hub. The run scope the executor
@@ -574,11 +578,13 @@ const CAN_PIN = new Set(['command', 'query']);
  * - `event.…` names something the run scope does not carry, so the pin could only ever deny — a
  *   permission that authorises nothing, which is the one thing a permission must not be.
  */
-const PIN_ROOTS = ['input', 'steps'];
+export const PIN_ROOTS = ['input', 'steps'];
 
 /**
- * Every root the mapping language addresses, mirroring `def::is_path` — which in the hub reads its
- * OWN four constants and knows nothing of `PIN_ROOTS`. Two things ride on that:
+ * Every root the mapping language addresses, mirroring `def::PATH_ROOTS` — which in the hub is its
+ * OWN list and knows nothing of `PIN_ROOTS`. `now` joined it with the run clock (hub#1694) and this
+ * copy stayed at four, so a pin on `now.iso` published green and the hub refused it (mt#234).
+ * Two things ride on that:
  *
  * - It is the FULL list and not `PIN_ROOTS`: a dotted string whose root is none of these —
  *   `appointments.list`, `customer.vip` — is an ordinary LITERAL the hub stores without complaint,
@@ -588,7 +594,7 @@ const PIN_ROOTS = ['input', 'steps'];
  *   all and the door would go quiet on exactly the value the hub still refuses. Measured — with the
  *   derived version, dropping `input` from `PIN_ROOTS` left the whole suite green.
  */
-const PATH_ROOTS = ['input', 'steps', 'event', 'secret'];
+export const PATH_ROOTS = ['input', 'steps', 'event', 'secret', 'now'];
 
 /** Is `text` a reference into the run rather than a literal? Mirrors `def::is_path` in the hub. */
 function isRunPath(text) {
