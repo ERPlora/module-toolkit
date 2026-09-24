@@ -67,19 +67,19 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * allowance (module-toolkit#189; `test/validate-grandfathered-scope.test.mjs` holds that line for
  * every grandfathered list in `src/`).
  *
- * WHERE THE SWEEP IS — 141 dead controls left, in 22 files across 12 modules. It started at 275 in
+ * WHERE THE SWEEP IS — 133 dead controls left, in 20 files across 12 modules. It started at 275 in
  * 45 files across 22 the day the check landed.
  *
  *   done, and out of the list  customers · inventory · kitchen · pricing · printing · staff ·
  *                              tables · tasks · tickets · whatsapp_inbox  (134 controls, 23 files)
- *   still owing, worst first   taxes 18 · invoice 16 · online_booking 16 · reservations 16 ·
- *                              services 16 · cash_register 14 · schedules 14 · appointments 9 ·
+ *   still owing, worst first   taxes 18 · invoice 16 · online_booking 16 · services 16 ·
+ *                              schedules 14 · reservations 11 · cash_register 11 · appointments 9 ·
  *                              payment_gateways 8 · invoice_series 6 · payments 5 ·
  *                              cart_checkout 3
  *
  * ⚠️ Four of those modules are RETIRED and nobody is going to pay their debt: `invoice_series`
  * (ADR-0369) and `cart_checkout` / `payments` / `online_booking` (saas migration 0058) — 30 of the
- * 141. Their entries stay while their `ui/` still ships the dead controls, because the rule above is
+ * 133. Their entries stay while their `ui/` still ships the dead controls, because the rule above is
  * measured, not declared; they leave with the repos when those are archived.
  *
  * `sales`, `verifactu` and `flows` were never here: their `fill` sits on `ion-button`, where it paints.
@@ -90,7 +90,6 @@ export const FILL_GRANDFATHERED = [
   ['appointments', 'ui/components/erp-appointments-list/erp-appointments-list.ts', 9],
   ['cart_checkout', 'ui/components/erp-cart-checkout-carts/erp-cart-checkout-carts.ts', 3],
   ['cash_register', 'ui/components/erp-cashregister-dashboard/erp-cashregister-dashboard.ts', 11],
-  ['cash_register', 'ui/components/erp-cashregister-open/erp-cashregister-open.ts', 3],
   ['invoice', 'ui/components/erp-invoice-list/erp-invoice-list.ts', 10],
   ['invoice', 'ui/components/erp-invoice-settings/erp-invoice-settings.ts', 6],
   ['invoice_series', 'ui/components/erp-invoice-series-list/erp-invoice-series-list.ts', 6],
