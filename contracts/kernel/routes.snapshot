@@ -36,6 +36,9 @@ GET     /api/entitlement                               auth:session
 POST    /api/error-report                              auth:none
 GET     /api/events                                    auth:api-key
 POST    /api/events/ticket                             auth:session
+DELETE  /api/fiscal/go-live                            auth:admin+capability
+GET     /api/fiscal/go-live                            auth:capability+session
+POST    /api/fiscal/go-live                            auth:admin+capability
 GET     /api/fiscal/representation-grant               auth:session
 POST    /api/fiscal/representation-grant               auth:admin
 POST    /api/fiscal/representation-grant/model         auth:admin
