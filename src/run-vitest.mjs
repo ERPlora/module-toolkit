@@ -302,10 +302,7 @@ export function runTsTests(dir, { vitest = undefined, env = process.env } = {}) 
   });
   const output = `${r.stdout ?? ''}${r.stderr ?? ''}`;
   if (r.status !== 0) {
-    errors.push(
-      `${files.length} test(s) de TypeScript en ROJO (exit ${r.status}) — ` +
-        `${files.join(', ')}\n${indent(output)}`,
-    );
+    errors.push(redRunReport(output, files, r.status));
     return { results, errors, notRun };
   }
 
@@ -368,6 +365,67 @@ export function collectedSummary(output) {
   if (!line) return null;
   const skipped = /(\d+)\s+skipped/.exec(line[1]);
   return { total: Number(line[2]), skipped: skipped ? Number(skipped[1]) : 0 };
+}
+
+/**
+ * What a non-zero vitest run is reported as — naming only what is actually red (module-toolkit#305).
+ *
+ * vitest exits 1 both for a failed test and for an «unhandled error» (a timer or promise that
+ * threw outside any test, often after it ended). Naming every file red for either one sent the
+ * reader hunting a failure across 136 sales files where none had failed, with the file that left
+ * the stray error buried at the end. So the verdict is read back from the output:
+ *
+ *   - `FAIL  <file> > …` lines are the files that failed — those, and only those, are named red;
+ *   - an `Unhandled Errors` block is named as such, with the files it originated in, and the block
+ *     itself goes right under the verdict line instead of after the reporter's dots;
+ *   - neither readable (vitest died before reporting) → every file, because unknown is not green.
+ *
+ * The gate fails in all three: an unhandled error can hide a false positive, vitest says so itself.
+ */
+function redRunReport(output, files, status) {
+  const plain = output.replace(ANSI_ESCAPE, '');
+  const failed = [
+    ...new Set([...plain.matchAll(/^\s*FAIL\s+(\S+)/gm)].map((m) => m[1]).filter((f) => files.includes(f))),
+  ];
+  const stray = unhandledErrors(plain);
+  // The summary's own `N failed` is the cross-check: fewer names than that means the gate could not
+  // tell which files failed, and «only a stray error» would turn a real failure into a footnote.
+  const failedFiles = /^\s*Test Files\s+(\d+)\s+failed/m.exec(plain);
+  const unaccounted = failedFiles && Number(failedFiles[1]) > failed.length;
+
+  if (unaccounted || (!failed.length && !stray)) {
+    return `${files.length} test(s) de TypeScript en ROJO (exit ${status}) — ${files.join(', ')}\n${indent(output)}`;
+  }
+
+  const strayLine = stray
+    ? `vitest cazó ${stray.count} error(es) suelto(s) FUERA de las pruebas (Unhandled Errors), ` +
+      `originado(s) en ${stray.origins.length ? stray.origins.join(', ') : 'un fichero que vitest no nombra'}: ` +
+      'puede esconder un falso verde y el gate no lo deja pasar'
+    : '';
+
+  if (!failed.length) {
+    return `${strayLine} (exit ${status}; todas las pruebas pasan)\n${indent(stray.block)}`;
+  }
+  return (
+    `${failed.length} de ${files.length} fichero(s) de TypeScript en ROJO (exit ${status}) — ${failed.join(', ')}\n` +
+    (stray ? `${strayLine}\n` : '') +
+    indent(output)
+  );
+}
+
+/**
+ * vitest's `⎯ Unhandled Errors ⎯ … ⎯⎯⎯` block, the count from its `Errors  N error(s)` summary line
+ * and the files named in `This error originated in "<file>"`. `null` when the run had none.
+ */
+function unhandledErrors(plain) {
+  const start = plain.search(/^⎯+ Unhandled Errors? ⎯+$/m);
+  if (start < 0) return null;
+  const rest = plain.slice(start);
+  const end = /^⎯+$/m.exec(rest);
+  const block = end ? rest.slice(0, end.index + end[0].length) : rest;
+  const counted = /^\s*Errors\s+(\d+)\s+errors?\b/m.exec(plain);
+  const origins = [...new Set([...block.matchAll(/originated in "([^"]+)"/g)].map((m) => m[1]))];
+  return { count: counted ? Number(counted[1]) : 1, origins, block };
 }
 
 function indent(text) {
