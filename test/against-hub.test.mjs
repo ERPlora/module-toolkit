@@ -316,6 +316,45 @@ test('withHubRuntime: instala por la PUERTA REAL del runtime y entrega la url al
   assert.match(runHub, /HUB_MODULE_CACHE=\/erplora-staging/);
 });
 
+// module-toolkit#279: since hub#1398 the runtime forces `sslmode=require` on every Postgres host
+// that is not `localhost`/`127.0.0.1`/`::1`/a socket, and the scratch Postgres has no TLS — so a
+// `HUB_DATABASE_URL` pointing at the pg container BY NAME killed the hub at boot with
+// `Sqlx(Tls("server does not support TLS"))`. The hub has to share the pg container's network
+// namespace and reach it through loopback; its port is then published on the pg container,
+// because Docker refuses `-p` on a `--network container:…` run.
+test('withHubRuntime: el hub llega a su Postgres por LOOPBACK (el runtime exige TLS a cualquier otro host)', async () => {
+  const clock = fakeClock();
+  const { exec, calls } = fakeDocker({ ...OK_DOCKER });
+  await withHubRuntime(
+    {
+      dir: '/tmp/demo',
+      manifest: MODULE,
+      image: `${HUB_IMAGE_REPO}:stable`,
+      exec,
+      probe: async () => ({ ok: true, detail: 'UP' }),
+      install: async () => {},
+      ...clock,
+    },
+    async () => {},
+  );
+  const runPg = calls.find((c) => c.startsWith('docker run') && c.includes('--name erplora-ah-pg-'));
+  const pg = runPg.match(/--name (erplora-ah-pg-\S+)/)[1];
+  const runHub = calls.find((c) => c.startsWith('docker run') && c.includes(HUB_IMAGE_REPO));
+
+  const dbUrl = runHub.match(/HUB_DATABASE_URL=(\S+)/)[1];
+  assert.ok(
+    ['localhost', '127.0.0.1'].includes(new URL(dbUrl).hostname),
+    `el hub no llega a Postgres por loopback y el runtime le exigirá TLS: ${dbUrl}`,
+  );
+  assert.ok(runHub.includes(`--network container:${pg}`), `el hub no comparte la red del Postgres: ${runHub}`);
+  assert.doesNotMatch(runHub, / -p /, 'Docker rechaza publicar puertos en un `--network container:`');
+  assert.ok(runPg.includes(`-p 127.0.0.1:0:${8787}`), `el puerto del hub no se publica en el Postgres: ${runPg}`);
+  assert.ok(
+    calls.some((c) => c === `docker port ${pg} 8787/tcp`),
+    `el puerto publicado se busca en el contenedor equivocado: ${JSON.stringify(calls)}`,
+  );
+});
+
 // ── the new battery family ───────────────────────────────────────────────────────────
 
 /** A throwaway module: `{ relative path → contents }`. */
