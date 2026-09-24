@@ -118,6 +118,34 @@ test('sin `@erplora/module-sdk` el comando SE CAE nombrando el paquete', () => {
   m.clean();
 });
 
+test('the red report reaches a slow reader WHOLE: the unhandled error vitest prints last is not cut off (sales#362)', () => {
+  // On the gate the CLI writes its report into a pipe the runner drains at its own pace. Around 80 KB
+  // of vitest output (one «Lit is in dev mode» per file) went into it and `process.exit(1)` followed
+  // at once: the kernel took the first 64 KB and the rest — the «Unhandled Errors» block vitest
+  // prints LAST, the only line that names the culprit — died with the process. sales showed
+  // «Errors 1 error» with every test green and nothing else, three runs in a row.
+  const v = fakeVitest(
+    [
+      "process.stdout.write(' Test Files  1 passed (1)\\n      Errors  1 error\\n');",
+      "process.stderr.write('Lit is in dev mode. Not recommended for production!\\n'.repeat(4000));",
+      "process.stderr.write('TypeError: w.print is not a function\\n');",
+      'process.exitCode = 1;',
+    ].join('\n'),
+  );
+  const m = mod({ 'ui/lib/quantity.test.ts': '' });
+  stub(m.dir, 'happy-dom');
+  // A reader that takes its time, like the runner: `spawnSync` drains as fast as it can and hides it.
+  const r = spawnSync('sh', ['-c', `"${process.execPath}" "${BIN}" test "${m.dir}" 2>&1 | (sleep 1; cat)`], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+    env: { ...process.env, ERPLORA_VITEST: v.bin },
+  });
+  assert.ok(r.stdout.length > 64 * 1024, `the report is bigger than a pipe buffer (${r.stdout.length} bytes): ${r.stdout.slice(0, 2000)}`);
+  assert.match(r.stdout, /TypeError: w\.print is not a function/);
+  v.clean();
+  m.clean();
+});
+
 test('un test de TypeScript en ROJO tumba el comando', () => {
   const v = fakeVitest("console.log('FAIL ui/lib/quantity.test.ts > suma');\nprocess.exit(1);\n");
   const m = mod({ 'ui/lib/quantity.test.ts': '' });

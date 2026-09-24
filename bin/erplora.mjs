@@ -228,6 +228,10 @@ try {
       usage();
   }
 } catch (err) {
-  console.error('✗ ' + err.message);
-  process.exit(1);
+  // 🔴 Exit only once the report is out (sales#362). Into a pipe, `process.exit` right after a big
+  // write keeps the first 64 KB and drops the rest — and the tail is where vitest names the test
+  // behind an «Errors 1 error». Each stream's empty-write callback runs after what came before it.
+  process.stderr.write('✗ ' + err.message + '\n', () =>
+    process.stdout.write('', () => process.exit(1)),
+  );
 }
