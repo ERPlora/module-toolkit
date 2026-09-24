@@ -524,9 +524,13 @@ export interface BridgeTransport {
     testPrint(printerId: string, data?: Record<string, unknown>): Promise<void>;
     openDrawer(printerId: string, pin?: number): Promise<void>;
     setDeviceRole(keyOrMac: string, role: string): Promise<BridgeDevice[]>;
+    addNetworkPrinter?(host: string, port?: number): Promise<BridgePrinter>;
     notify(title: string, body: string): Promise<void>;
 }
 export declare const HARDWARE_UNAVAILABLE = "hardware_unavailable";
+export declare const INVALID_PRINTER_ADDRESS = "invalid_printer_address";
+export declare const PRINTER_UNREACHABLE = "printer_unreachable";
+export declare const PRINTER_ADD_FAILED = "printer_add_failed";
 export declare class UnavailableBridgeTransport implements BridgeTransport {
     private readonly message;
     constructor(message?: string);
@@ -538,6 +542,7 @@ export declare class UnavailableBridgeTransport implements BridgeTransport {
     testPrint(): Promise<void>;
     openDrawer(): Promise<void>;
     setDeviceRole(): Promise<BridgeDevice[]>;
+    addNetworkPrinter(): Promise<BridgePrinter>;
     notify(): Promise<void>;
 }
 export declare const ANDROID_LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK";
@@ -554,6 +559,7 @@ export declare class IpcBridgeTransport implements BridgeTransport {
     testPrint(printerId: string, data?: Record<string, unknown>): Promise<void>;
     openDrawer(printerId: string, pin?: number): Promise<void>;
     setDeviceRole(keyOrMac: string, role: string): Promise<BridgeDevice[]>;
+    addNetworkPrinter(host: string, port?: number): Promise<BridgePrinter>;
     notify(title: string, body: string): Promise<void>;
 }
 export declare function majorToMinor(amount: string | number | undefined, decimals: number): number;
