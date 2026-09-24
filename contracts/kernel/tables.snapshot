@@ -16,6 +16,7 @@ _elevation_audit.permission text NOT NULL
 
 _event_delivery.delivered_at text NOT NULL
 _event_delivery.event_id text NOT NULL
+_event_delivery.flow_id text NOT NULL
 _event_delivery.hub_id text NOT NULL
 _event_delivery.listener_command text NOT NULL
 _event_delivery.provider_message_id text NOT NULL
@@ -23,6 +24,7 @@ _event_delivery.step_id text NOT NULL
 
 _event_outbox.attempts bigint NOT NULL
 _event_outbox.claim_expires_at text NULL
+_event_outbox.client_instance text NOT NULL
 _event_outbox.created_at text NOT NULL
 _event_outbox.delivered_at text NULL
 _event_outbox.depth bigint NOT NULL
