@@ -443,3 +443,159 @@ test('un `import()` dinámico cuenta igual', () => {
   assert.ok(bareImports(m.dir).includes('@erplora/module-sdk'));
   m.clean();
 });
+
+// ── what a red run NAMES (module-toolkit#305) ──────────────────────────────────────────────────
+//
+// A non-zero exit used to be reported as «N test(s) de TypeScript en ROJO — <every file>». On sales
+// that is 136 files named red when none had failed: vitest had caught ONE unhandled error (a timer
+// that threw after its test ended) and exits 1 for it. The reader hunts a failure in 136 places
+// while the file that left the stray error is buried at the end of the output. The gate must still
+// fail — an unhandled error can hide a false green — but it has to say WHICH thing is red.
+
+/** Real vitest 4.1 `--reporter=dot` output, trimmed: every test passes, one error escapes. */
+const UNHANDLED_ONLY = [
+  ' RUN  v4.1.10 /tmp/m',
+  '',
+  '···',
+  '⎯⎯⎯⎯⎯⎯ Unhandled Errors ⎯⎯⎯⎯⎯⎯',
+  '',
+  'Vitest caught 1 unhandled error during the test run.',
+  'This might cause false positive tests. Resolve unhandled errors to make sure your tests are not affected.',
+  '',
+  '⎯⎯⎯⎯⎯ Uncaught Exception ⎯⎯⎯⎯⎯',
+  'Error: late boom',
+  ' ❯ Timeout._onTimeout ui/lib/a.test.ts:2:45',
+  '',
+  'This error originated in "ui/lib/a.test.ts" test file. It doesn\'t mean the error was thrown inside the file itself, but while it was running.',
+  '⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯',
+  '',
+  '',
+  ' Test Files  3 passed (3)',
+  '      Tests  4 passed (4)',
+  '     Errors  1 error',
+  '   Duration  167ms',
+].join('\n');
+
+/** Same run with one real assertion failure in `ui/lib/c.test.ts` on top of the stray error. */
+const FAILED_AND_UNHANDLED = [
+  ' RUN  v4.1.10 /tmp/m',
+  '',
+  '·x··',
+  '',
+  '⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯',
+  '',
+  ' FAIL  ui/lib/c.test.ts > bad',
+  'AssertionError: expected 1 to be 2 // Object.is equality',
+  ' ❯ ui/lib/c.test.ts:2:29',
+  '',
+  '⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯',
+  '',
+  UNHANDLED_ONLY.split('\n').slice(3, 14).join('\n'),
+  '',
+  '',
+  ' Test Files  1 failed | 3 passed (4)',
+  '      Tests  1 failed | 4 passed (5)',
+  '     Errors  1 error',
+].join('\n');
+
+function exiting(output, code = 1) {
+  return `process.stdout.write(${JSON.stringify(output)});\nprocess.exit(${code});\n`;
+}
+
+const FOUR = { 'ui/lib/a.test.ts': '', 'ui/lib/b.test.ts': '', 'ui/lib/c.test.ts': '', 'ui/lib/d.test.ts': '' };
+const THREE = { 'ui/lib/a.test.ts': '', 'ui/lib/b.test.ts': '', 'ui/lib/d.test.ts': '' };
+
+function headline(error) {
+  return error.split('\n')[0];
+}
+
+test('a stray unhandled error FAILS the gate but names no passing file red (#305)', () => {
+  // Two stray errors, so the count read from `Errors  N errors` cannot pass for the exit code.
+  const v = fakeVitest(exiting(UNHANDLED_ONLY.replace('Errors  1 error', 'Errors  2 errors')));
+  const m = mod(THREE);
+  stub(m.dir, 'happy-dom');
+  const { errors, results } = runTsTests(m.dir, { vitest: v.bin });
+  assert.equal(errors.length, 1, `the gate must still fail, got ${JSON.stringify(errors)}`);
+  assert.deepEqual(results, []);
+  // The two files that did nothing wrong are not accused anywhere in the verdict line…
+  assert.doesNotMatch(headline(errors[0]), /b\.test\.ts|d\.test\.ts/);
+  // …the file the error came from IS named there, and the count of stray errors with it…
+  assert.match(headline(errors[0]), /ui\/lib\/a\.test\.ts/);
+  assert.match(headline(errors[0]), /\b2\b/);
+  // …and vitest's own block, with the error itself, sits right under it — not after the dots —
+  // and ends where the block ends: the passing summary below it is not part of what is red.
+  const body = errors[0].split('\n').slice(1).join('\n');
+  assert.match(body.split('\n').slice(0, 3).join('\n'), /Unhandled Errors/);
+  assert.match(body, /late boom/);
+  assert.doesNotMatch(body, /Test Files|Duration/);
+  v.clean();
+  m.clean();
+});
+
+test('a real failure plus a stray error: only the FAILED file is counted red (#305)', () => {
+  const v = fakeVitest(exiting(FAILED_AND_UNHANDLED));
+  const m = mod(FOUR);
+  stub(m.dir, 'happy-dom');
+  const { errors } = runTsTests(m.dir, { vitest: v.bin });
+  assert.equal(errors.length, 1, `expected one error, got ${JSON.stringify(errors)}`);
+  const head = headline(errors[0]);
+  assert.match(head, /ui\/lib\/c\.test\.ts/);
+  assert.doesNotMatch(head, /b\.test\.ts|d\.test\.ts/);
+  assert.match(head, /\b1 de 4\b/);
+  // The stray error is not lost behind the failure: it is reported too, on its own line, with its
+  // origin — not merely somewhere inside the reporter output that follows.
+  const second = errors[0].split('\n')[1];
+  assert.match(second, /Unhandled Errors/);
+  assert.match(second, /ui\/lib\/a\.test\.ts/);
+  assert.match(errors[0], /Unhandled Errors/);
+  assert.match(errors[0], /late boom/);
+  v.clean();
+  m.clean();
+});
+
+test('a COLORIZED failed run still names only the failed file (#305)', () => {
+  // CI paints the reporter (see the colorized summary tests above): the FAIL badge is escaped too.
+  const colored = FAILED_AND_UNHANDLED.replace(
+    ' FAIL  ui/lib/c.test.ts',
+    '\u001b[41m\u001b[1m FAIL \u001b[22m\u001b[49m \u001b[2mui/lib/\u001b[22mc.test.ts',
+  ).replace(/(\d+) failed/g, '\u001b[31m\u001b[1m$1 failed\u001b[22m\u001b[39m');
+  const v = fakeVitest(exiting(colored));
+  const m = mod(FOUR);
+  stub(m.dir, 'happy-dom');
+  const { errors } = runTsTests(m.dir, { vitest: v.bin });
+  assert.equal(errors.length, 1);
+  const head = headline(errors[0]);
+  assert.match(head, /ui\/lib\/c\.test\.ts/);
+  assert.doesNotMatch(head, /b\.test\.ts|d\.test\.ts/);
+  v.clean();
+  m.clean();
+});
+
+test('a red run whose output names nothing still accuses every file — unknown is not green', () => {
+  // vitest crashing before its reporter (OOM, a broken config) leaves no FAIL line and no summary.
+  // Then the gate cannot tell which files are fine, and it must not pretend it can.
+  const v = fakeVitest(exiting('Segmentation fault\n', 139));
+  const m = mod(THREE);
+  stub(m.dir, 'happy-dom');
+  const { errors } = runTsTests(m.dir, { vitest: v.bin });
+  assert.equal(errors.length, 1);
+  for (const f of Object.keys(THREE)) assert.match(headline(errors[0]), new RegExp(f.replace(/\./g, '\\.')));
+  assert.match(errors[0], /Segmentation fault/);
+  v.clean();
+  m.clean();
+});
+
+test('a failed count the gate cannot match to files never reads as «all tests pass» (#305)', () => {
+  // The summary says a file failed but no `FAIL` line names one the gate knows (a reporter that
+  // prints them differently, a path outside `--list`). Saying «only a stray error» there would turn
+  // a real failure into a footnote: when the names do not add up, every file stays accused.
+  const output = FAILED_AND_UNHANDLED.replace(' FAIL  ui/lib/c.test.ts > bad', ' FAIL  somewhere/else.ts > bad');
+  const v = fakeVitest(exiting(output));
+  const m = mod(FOUR);
+  stub(m.dir, 'happy-dom');
+  const { errors } = runTsTests(m.dir, { vitest: v.bin });
+  assert.equal(errors.length, 1);
+  for (const f of Object.keys(FOUR)) assert.match(headline(errors[0]), new RegExp(f.replace(/\./g, '\\.')));
+  v.clean();
+  m.clean();
+});
