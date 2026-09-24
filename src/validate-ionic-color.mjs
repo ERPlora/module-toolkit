@@ -41,10 +41,6 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * it is ERPlora/pm#392.
  */
 export const COLOR_GRANDFATHERED = [
-  ['sales', 'ui/components/erp-pos-departments/erp-pos-departments.ts', 1],
-  ['sales', 'ui/components/erp-pos-quick-notes/erp-pos-quick-notes.ts', 1],
-  ['sales', 'ui/components/erp-pos-touch/erp-pos-touch.ts', 13],
-  ['sales', 'ui/lib/document-modal.ts', 1],
   ['verifactu', 'ui/components/erp-verifactu-config/erp-verifactu-config.ts', 1],
   ['verifactu', 'ui/components/erp-verifactu-records/erp-verifactu-records.ts', 3],
   ['verifactu', 'ui/components/erp-verifactu-recovery/erp-verifactu-recovery.ts', 2],
