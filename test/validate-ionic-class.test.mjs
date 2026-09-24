@@ -101,6 +101,43 @@ test('PASSES: classMap, static classes, other attributes, non-Ionic tags', () =>
   assert.deepEqual(ionTagsWithClobberingClass(src), []);
 });
 
+test('PASSES: a call to a same-file helper whose whole body is `return classMap(…)` (sales `toneOf`)', () => {
+  // Verbatim shape from `sales/ui/components/erp-pos-touch` after sales#358: the directive is the
+  // same `classMap`, just behind a method. A static reader that only knows the literal spelling
+  // would paint the sales gate red over four icons that lose nothing.
+  const src = [
+    'class ErpPosTouch extends LitElement {',
+    "  private toneOf(on: boolean, tone: 'primary' | 'warning' | 'success') {",
+    "    return classMap({ [`tone-${tone}`]: on, 'tone-medium': !on });",
+    '  }',
+    '  private renderLine(l: CartLine) {',
+    '    return html`<ion-icon slot="start" name="x" class="selmark ${this.toneOf(this.splitSel.has(l.line_id), \'primary\')}"></ion-icon>',
+    "      <ion-icon name=${l.discount ? 'pricetag' : 'pricetag-outline'} slot=\"icon-only\" class=${this.toneOf(!!l.discount, 'warning')}></ion-icon>",
+    '      <ion-icon class=${tone(true)}></ion-icon>`;',
+    '  }',
+    '}',
+    'const tone = (on: boolean) => classMap({ on });',
+    "function toneFn(on: boolean): string { return on ? 'a' : 'b'; }",
+  ].join('\n');
+  assert.deepEqual(ionTagsWithClobberingClass(src), []);
+});
+
+test('FAILS: a helper that returns a string, adds to classMap, or lives in another file', () => {
+  const src = [
+    "function toneStr(on: boolean) { return on ? 'a' : 'b'; }",
+    "function toneMore(on: boolean) { return classMap({ on }) + ' x'; }",
+    'function toneTwo(on: boolean) { const m = classMap({ on }); return m; }',
+    'const toneArrow = (on: boolean) => `t-${on}`;',
+    '<ion-button class=${toneStr(this.on)}></ion-button>',
+    '<ion-button class=${toneMore(this.on)}></ion-button>',
+    '<ion-button class=${toneTwo(this.on)}></ion-button>',
+    '<ion-button class=${toneArrow(this.on)}></ion-button>',
+    '<ion-button class=${this.importedHelper(this.on)}></ion-button>',
+    '<ion-button class=${this.toneStr}></ion-button>',
+  ].join('\n');
+  assert.equal(ionTagsWithClobberingClass(src).length, 6, JSON.stringify(ionTagsWithClobberingClass(src)));
+});
+
 // ── The whole door: a module directory ───────────────────────────────────────────────
 
 test('checkIonicClass: reports the offenders of `ui/`, with file, line and the fix', () => {

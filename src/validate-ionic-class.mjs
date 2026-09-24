@@ -111,10 +111,66 @@ function isClassMapAlone(expression) {
   return closing(e, 'classMap'.length) === e.length;
 }
 
-function clobbers({ name, expressions }) {
+const CALL = /^(?:this\.)?([A-Za-z_$][\w$]*)\(/;
+
+/**
+ * The bodies of every function, method or arrow named `name` declared in `source` — only the
+ * expression each one returns, as text. A method `toneOf(on) { return classMap({…}); }` yields
+ * `classMap({…})`; an arrow `const tone = (on) => classMap({…});` yields the same. A body that does
+ * anything else (two statements, a block arrow) yields '' so it can never pass.
+ */
+function returnedExpressions(source, name) {
+  const out = [];
+  const id = name.replace(/\$/g, '\\$');
+  const decl = new RegExp(`\\b${id}\\s*(?:<[^>]*>)?\\(`, 'g');
+  for (const m of source.matchAll(decl)) {
+    const params = closing(source, m.index + m[0].length - 1);
+    if (params === -1) continue;
+    const rest = source.slice(params);
+    const method = rest.match(/^\s*(?::\s*[^{=]+?)?\s*\{\s*return\s+/);
+    if (!method) continue; // a call site, not a declaration
+    const bodyAt = params + method[0].length;
+    const open = source.slice(bodyAt).search(/[({]/);
+    if (open < 1) { out.push(''); continue; } // no call at all, or `return (…)` / `return {…}`
+    const end = closing(source, bodyAt + open);
+    const tail = end === -1 ? null : source.slice(end).match(/^\s*;?\s*\}/);
+    out.push(tail ? source.slice(bodyAt, end) : '');
+  }
+  const arrow = new RegExp(`\\b${id}\\s*=\\s*(?:async\\s*)?\\(`, 'g');
+  for (const m of source.matchAll(arrow)) {
+    const params = closing(source, m.index + m[0].length - 1);
+    if (params === -1) continue;
+    const rest = source.slice(params);
+    const head = rest.match(/^\s*(?::\s*[^=]+?)?\s*=>\s*/);
+    if (!head) continue;
+    const bodyAt = params + head[0].length;
+    const open = source.slice(bodyAt).search(/[({]/);
+    if (open < 1) { out.push(''); continue; } // block body `=> { … }`, or no call at all
+    const end = closing(source, bodyAt + open);
+    const tail = end === -1 ? null : source.slice(end).match(/^\s*[;,)\n]/);
+    out.push(tail ? source.slice(bodyAt, end) : '');
+  }
+  return out;
+}
+
+/**
+ * `classMap(…)` alone, or a call to a helper of the SAME file whose whole body is `return
+ * classMap(…)` (sales `toneOf`, after sales#358): the directive is the same, just behind a name. A
+ * helper that returns anything else, or that this file does not declare, clobbers.
+ */
+function leavesIonicClassesAlone(expression, source) {
+  if (isClassMapAlone(expression)) return true;
+  const e = expression.trim();
+  const call = e.match(CALL);
+  if (!call || closing(e, call[0].length - 1) !== e.length) return false;
+  const bodies = returnedExpressions(source, call[1]);
+  return bodies.length > 0 && bodies.every(isClassMapAlone);
+}
+
+function clobbers({ name, expressions }, source) {
   if (name === '.className') return true;
   if (name !== 'class') return false;
-  return expressions.some((e) => !isClassMapAlone(e));
+  return expressions.some((e) => !leavesIonicClassesAlone(e, source));
 }
 
 /**
@@ -127,7 +183,7 @@ export function ionTagsWithClobberingClass(source) {
     const end = endOfTag(source, m.index);
     if (end === -1) continue;
     const tag = source.slice(m.index, end);
-    if (!attributes(tag).some(clobbers)) continue;
+    if (!attributes(tag).some((a) => clobbers(a, source))) continue;
     found.push({
       tag: tag.replace(/\s+/g, ' ').slice(0, 120),
       index: m.index,

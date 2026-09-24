@@ -354,7 +354,10 @@ cocina (kitchen#88) y en el descuento de sales (sales#358).
 
 La puerta rechaza esas formas en cualquier `ion-*` de `ui/` (mismo lector de etiqueta multilínea que
 `fill`/`color`, mismas exclusiones). Lo único que pasa es `class="fija ${classMap({…})}"` o
-`class=${classMap({…})}`: `classMap` solo toca las claves que declara.
+`class=${classMap({…})}`: `classMap` solo toca las claves que declara. También pasa la llamada a un
+helper **del mismo fichero** cuyo cuerpo entero es `return classMap({…})` (o una flecha
+`=> classMap({…})`), como el `toneOf` de sales: es la misma directiva detrás de un nombre. Un helper
+que devuelva otra cosa, o que venga de otro fichero, cuenta como enlace entero.
 
 **Trinquete, igual que el de `color`** (`CLASS_GRANDFATHERED`): medido sobre `origin/main` de los 27
 repos el 2026-09-24, **4 usos en 4 ficheros** (`customers`, `kitchen`, `pricing` —un `ion-input`
