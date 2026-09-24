@@ -111,7 +111,7 @@ function attributesOnly(tag) {
 }
 
 /** Every shipped `.ts`/`.js` under `dir`: no build output, no vendored code, no tests. */
-function sourceFiles(dir) {
+export function sourceFiles(dir) {
   const out = [];
   if (!existsSync(dir)) return out;
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
