@@ -59,7 +59,15 @@ function doc(overrides = {}) {
   };
 }
 
-const GRANTS = { grants: [{ kind: 'notify', value: 'whatsapp' }] };
+const GRANTS = {
+  grants: [
+    {
+      kind: 'notify',
+      value: 'whatsapp',
+      reason: { en: 'Answer on WhatsApp.', es: 'Contestar por WhatsApp.' },
+    },
+  ],
+};
 const REQUIRES = { modules: { appointments: '1.1.69' } };
 
 /** The whole family, well formed: the case every other test breaks exactly one thing of. */
@@ -803,3 +811,35 @@ test('every prose PATH of a step hangs from a key of the step contract', async (
   const field = step.output?.additionalProperties?.properties ?? {};
   assert.deepEqual(Object.keys(field).sort(), ['describe', 'type'], 'the output field contract moved on in the hub');
 });
+
+// flows#114 — each grant explains itself to the owner in a sentence: `reason: { en, es }`. Without
+// it the gallery can only print the internal name (`staff.schedules.list_for_member`), and the
+// owner is asked to authorise identifiers.
+const reasoned = (reason) => ({
+  grants: [{ kind: 'notify', value: 'whatsapp', ...(reason === undefined ? {} : { reason }) }],
+});
+
+test('a grant with no reason publishes, with a warning that names it', () => {
+  const { errors, warnings } = check(
+    wellFormed({ 'appointment-from-whatsapp.grants.json': reasoned(undefined) }),
+  );
+  assert.deepEqual(errors, []);
+  assertNames(warnings, 'appointment-from-whatsapp.grants.json');
+  assertNames(warnings, 'whatsapp');
+});
+
+for (const [label, reason] of [
+  ['not an object', 'Answer on WhatsApp.'],
+  ['a list', ['Answer on WhatsApp.']],
+  ['English only', { en: 'Answer on WhatsApp.' }],
+  ['Spanish only', { es: 'Contestar por WhatsApp.' }],
+  ['a blank sentence', { en: 'Answer on WhatsApp.', es: '  ' }],
+  ['a sentence that is not text', { en: 'Answer on WhatsApp.', es: 7 }],
+  ['a language the recipe does not ship', { en: 'Answer.', es: 'Contestar.', fr: 'Répondre.' }],
+]) {
+  test(`a reason that is ${label} is refused`, () => {
+    const { errors } = check(wellFormed({ 'appointment-from-whatsapp.grants.json': reasoned(reason) }));
+    assertNames(errors, 'appointment-from-whatsapp.grants.json');
+    assertNames(errors, 'reason');
+  });
+}
