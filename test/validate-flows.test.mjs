@@ -411,6 +411,15 @@ test('a pin on a root this run does not carry is refused: `event.…` could only
   }
 });
 
+// `now.…` became a path root in the hub with the run clock (hub#1694) and is not a pin root, so
+// the hub refuses it. The hand-copied list here still had four roots and read it as a LITERAL:
+// the template published green and the owner met the refusal at install (module-toolkit#234).
+test('a pin on `now.…` is refused: the clock is a path the run reads, never a value to pin', () => {
+  for (const kind of ['command', 'query']) {
+    assertNames(check(withPin(kind, { since: 'now.iso' })).errors, 'now.iso');
+  }
+});
+
 test('a pin on `secret.…` is refused: a gate that matched a secret would be an ORACLE', () => {
   for (const kind of ['command', 'query']) {
     assertNames(check(withPin(kind, { token: 'secret.whatsapp_token' })).errors, 'secret.whatsapp_token');

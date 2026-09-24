@@ -69,3 +69,18 @@ commands.*.expect_rows.op = min
 commands.*.emit[] = string
 commands.*.emit[].event
 commands.*.emit[].dedup_key
+
+[flow_pin_kinds]
+command
+query
+
+[flow_pin_roots]
+input
+steps
+
+[flow_path_roots]
+input
+steps
+event
+secret
+now

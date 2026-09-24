@@ -697,6 +697,33 @@ test('the core queries the gate accepts are EXACTLY the vendored kernel contract
   );
 });
 
+// ═══ The pin lists of a flow's permissions, against the same VENDORED contract (mt#234) ════════
+//
+// `src/validate-flows.mjs` decides which pinned permissions a template may publish with three lists
+// that belong to the hub: the grant kinds that can carry a pin, the roots a pinned value may name,
+// and every root the mapping language reads as a reference. The drift cut both ways and both
+// happened: too short published a pin the hub refuses at install (mt#233); too strict blocked a
+// security fix the hub already accepted (mt#231/#232). The hub now writes the three into
+// `engine.snapshot`, so a resync that moves one and not the list turns this red on the resync PR.
+// Each list is compared EXACTLY and on its own: `PATH_ROOTS` is not derived from `PIN_ROOTS`
+// (mt#233 measured that a derived one cancels its own mutation).
+import { CAN_PIN, PIN_ROOTS, PATH_ROOTS } from '../src/validate-flows.mjs';
+
+for (const [name, list, section] of [
+  ['CAN_PIN', () => [...CAN_PIN], 'flow_pin_kinds'],
+  ['PIN_ROOTS', () => PIN_ROOTS, 'flow_pin_roots'],
+  ['PATH_ROOTS', () => PATH_ROOTS, 'flow_path_roots'],
+]) {
+  test(`${name} (src/validate-flows.mjs) is EXACTLY \`[${section}]\` of the vendored kernel contract (mt#234)`, () => {
+    assert.deepEqual(
+      [...list()].sort(),
+      kernelSnapshotSection('engine.snapshot', section).sort(),
+      `contracts/kernel/engine.snapshot was resynced and ${name} (src/validate-flows.mjs) was not: ` +
+        'a template would publish a pin the hub refuses, or be refused one the hub accepts',
+    );
+  });
+}
+
 test('every core query on the list really passes the gate as a consumption (pm#232)', () => {
   // The list is the DOOR, not decoration: `crossValidateFull` is what a module walks through.
   // What this catches, verified by mutation: a door that stops consulting `CORE_OPERATIONS` and
