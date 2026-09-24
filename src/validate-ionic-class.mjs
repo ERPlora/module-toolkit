@@ -30,11 +30,10 @@ const ION_TAG_START = /<ion-[a-z-]+(?=[\s/>])/g;
  * file: once a file is clean, its line FAILS the module's own gate until it is deleted — so the
  * two-line PR that deletes it goes first and the module's fix merges behind it. A module with no
  * `ui/` that reuses a listed id is warned, never blocked (module-toolkit#189).
+ *
+ * EMPTY since pricing#43 (after sales#359 and customers#77): a test pins it at zero.
  */
-export const CLASS_GRANDFATHERED = [
-  ['customers', 'ui/components/erp-customers-pos-search/erp-customers-pos-search.ts', 1], // customers#77
-  ['pricing', 'ui/components/erp-pricing-lists/erp-pricing-lists.ts', 1], // pricing#43
-];
+export const CLASS_GRANDFATHERED = [];
 
 /**
  * Index just past the `}` that closes the `${` / `{` / `(` opened at `open`, skipping quoted and

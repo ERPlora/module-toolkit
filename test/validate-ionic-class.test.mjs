@@ -169,52 +169,60 @@ test('checkIonicClass: a clean module, one with no `ui/`, build output and tests
 
 // ── Gradualness: the ratchet ─────────────────────────────────────────────────────────
 
-function asPublished(id) {
+// The published list is EMPTY since pricing#43 (the last module fixed its own), so the mechanism is
+// exercised on a stand-in list: it stays because a future door may need the same ratchet, and a
+// ratchet nobody tests is one that silently stops holding.
+const STAND_IN = [
+  ['legacy', 'ui/components/erp-old/erp-old.ts', 1],
+  ['legacy', 'ui/components/erp-older/erp-older.ts', 2],
+];
+
+function asPublished(id, list = STAND_IN) {
   return Object.fromEntries(
-    CLASS_GRANDFATHERED.filter(([m]) => m === id).map(([, f, n]) => [f, Array(n).fill(CLOBBER).join('\n')]),
+    list.filter(([m]) => m === id).map(([, f, n]) => [f, Array(n).fill(CLOBBER).join('\n')]),
   );
 }
 
 test('a grandfathered file keeps passing with what it had — and NOT with one more', () => {
-  const [id, file, allowed] = CLASS_GRANDFATHERED[0];
+  const [id, file, allowed] = STAND_IN[0];
   const asIs = mod(asPublished(id), id);
-  assert.deepEqual(checkIonicClass(asIs.dir, asIs.manifest), { errors: [], warnings: [] });
+  assert.deepEqual(checkIonicClass(asIs.dir, asIs.manifest, STAND_IN), { errors: [], warnings: [] });
   asIs.clean();
 
   const worse = mod({ ...asPublished(id), [file]: Array(allowed + 1).fill(CLOBBER).join('\n') }, id);
-  const { errors } = checkIonicClass(worse.dir, worse.manifest);
+  const { errors } = checkIonicClass(worse.dir, worse.manifest, STAND_IN);
   assert.equal(errors.length, 1, 'one more in a grandfathered file is a NEW offence');
   assert.match(errors[0], new RegExp(`${allowed} venían de antes`));
   worse.clean();
 });
 
 test('the pass is per FILE: a new component of a grandfathered module inherits nothing', () => {
-  const [id] = CLASS_GRANDFATHERED[0];
+  const [id] = STAND_IN[0];
   const m = mod({ ...asPublished(id), 'ui/components/erp-brand-new/erp-brand-new.ts': CLOBBER }, id);
-  const { errors } = checkIonicClass(m.dir, m.manifest);
+  const { errors } = checkIonicClass(m.dir, m.manifest, STAND_IN);
   assert.equal(errors.length, 1, JSON.stringify(errors));
   assert.match(errors[0], /erp-brand-new/);
   m.clean();
 });
 
 test('FAILS: an entry that outlived its file — clean, or gone — is an open door', () => {
-  const [id, file] = CLASS_GRANDFATHERED[0];
+  const [id, file] = STAND_IN[0];
   const cleaned = mod({ ...asPublished(id), [file]: FIXED }, id);
-  const stale = checkIonicClass(cleaned.dir, cleaned.manifest).errors.filter((e) => e.startsWith(file));
+  const stale = checkIonicClass(cleaned.dir, cleaned.manifest, STAND_IN).errors.filter((e) => e.startsWith(file));
   assert.equal(stale.length, 1, JSON.stringify(stale));
   assert.match(stale[0], /CLASS_GRANDFATHERED/);
   assert.match(stale[0], /module-toolkit#303/);
   cleaned.clean();
 
   const gone = mod({ 'ui/components/erp-other/erp-other.ts': FIXED }, id);
-  assert.ok(checkIonicClass(gone.dir, gone.manifest).errors.some((e) => e.startsWith(file)), 'a deleted file keeps no allowance');
+  assert.ok(checkIonicClass(gone.dir, gone.manifest, STAND_IN).errors.some((e) => e.startsWith(file)), 'a deleted file keeps no allowance');
   gone.clean();
 });
 
 test('WARNS (does not fail): a file cleaner than its allowance but not clean yet', () => {
-  // No entry has room to shrink today (all are 1), so the rule is exercised on a stand-in list.
-  const m = mod({ 'ui/a.ts': CLOBBER }, 'x');
-  const { errors, warnings } = checkIonicClass(m.dir, m.manifest, [['x', 'ui/a.ts', 2]]);
+  const [id, file] = STAND_IN[1];
+  const m = mod({ ...asPublished(id), [file]: CLOBBER }, id);
+  const { errors, warnings } = checkIonicClass(m.dir, m.manifest, STAND_IN);
   assert.deepEqual(errors, []);
   assert.equal(warnings.length, 1, JSON.stringify(warnings));
   assert.match(warnings[0], /1 de los 2/);
@@ -223,38 +231,26 @@ test('WARNS (does not fail): a file cleaner than its allowance but not clean yet
 
 test('a module that ships no `ui/` is warned, never blocked, for somebody else\'s allowance', () => {
   // module-toolkit#189: reusing a published id must not inherit a red gate.
-  const [id] = CLASS_GRANDFATHERED[0];
-  const owed = CLASS_GRANDFATHERED.filter(([m]) => m === id).length;
+  const [id] = STAND_IN[0];
+  const owed = STAND_IN.filter(([m]) => m === id).length;
   const m = mod({ 'module.json': '{}' }, id);
-  const { errors, warnings } = checkIonicClass(m.dir, m.manifest);
+  const { errors, warnings } = checkIonicClass(m.dir, m.manifest, STAND_IN);
   assert.deepEqual(errors, []);
   assert.equal(warnings.length, owed);
   m.clean();
 });
 
-test('an exact allowance is silent for EVERY module still owing', () => {
-  for (const id of new Set(CLASS_GRANDFATHERED.map(([m]) => m))) {
-    const m = mod(asPublished(id), id);
-    assert.deepEqual(checkIonicClass(m.dir, m.manifest), { errors: [], warnings: [] }, `${id} is at its allowance`);
-    m.clean();
-  }
+test('an exact allowance is silent', () => {
+  const m = mod(asPublished('legacy'), 'legacy');
+  assert.deepEqual(checkIonicClass(m.dir, m.manifest, STAND_IN), { errors: [], warnings: [] });
+  m.clean();
 });
 
-test('the grandfathered list may only SHRINK, and every entry is well-formed', () => {
-  // The two ceilings ARE the ratchet: they come down with every file fixed, never up.
-  const total = CLASS_GRANDFATHERED.reduce((n, [, , c]) => n + c, 0);
-  assert.ok(
-    CLASS_GRANDFATHERED.length <= 2 && total <= 2,
-    `the list GREW (${CLASS_GRANDFATHERED.length} files / ${total} uses). Nothing gets added: each module fixes its own.`,
-  );
-  const seen = new Set();
-  for (const entry of CLASS_GRANDFATHERED) {
-    assert.equal(entry.length, 3, `bad entry: ${JSON.stringify(entry)}`);
-    assert.ok(entry[2] > 0, `a zero allowance is a leftover: ${entry[1]}`);
-    assert.match(entry[1], /^ui\/.*\.(ts|js)$/, `a path outside ui/: ${entry[1]}`);
-    assert.ok(!seen.has(`${entry[0]}:${entry[1]}`), `duplicated entry: ${entry[1]}`);
-    seen.add(`${entry[0]}:${entry[1]}`);
-  }
+test('the grandfathered list is EMPTY and stays empty: every module fixed its own', () => {
+  // The ratchet reached 0 files / 0 uses with pricing#43 (customers#77 and sales#359 before it). It
+  // can only go back up by excusing a NEW clobbering `class=${…}`, and that is exactly what #303
+  // forbids: a module fixes it with `classMap`, it does not get a line here.
+  assert.deepEqual(CLASS_GRANDFATHERED, [], 'the list GREW. Nothing gets added: each module fixes its own.');
 });
 
 // ── Through the REAL door: the function proves nothing if `erplora validate` does not run it ──
