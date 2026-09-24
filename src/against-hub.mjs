@@ -190,6 +190,11 @@ const realSleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * Polls `probe()` until it answers `{ ok: true }` or the budget runs out. Returns the last
  * `detail`; on timeout THROWS naming the url, the elapsed budget and the last answer — a runtime
  * that never came up must never be reported as «the batteries did not run».
+ *
+ * `stopped()` (optional) is asked after every failed probe: it answers `null` while the process
+ * can still come up, or a description of why it never will. A process that already died is not
+ * polled for the rest of the budget — measured in module-toolkit#299: a hub dead in 1 s kept the
+ * run waiting the full 180 s.
  */
 export async function waitForReady({
   url,
@@ -198,6 +203,7 @@ export async function waitForReady({
   intervalMs = 1000,
   now = Date.now,
   sleep = realSleep,
+  stopped = null,
 }) {
   const start = now();
   let last = 'sin respuesta';
@@ -205,6 +211,13 @@ export async function waitForReady({
     const r = await probe();
     if (r.ok) return r.detail;
     last = r.detail;
+    const why = stopped ? await stopped() : null;
+    if (why) {
+      throw new Error(
+        `el runtime del hub se paró antes de responder UP en ${url} ` +
+          `(estado del contenedor: ${why}; última respuesta: ${last})`,
+      );
+    }
     if (now() - start >= timeoutMs) break;
     await sleep(intervalMs);
   }
@@ -395,10 +408,12 @@ export async function withHubRuntime(
     if (!mapped) {
       // Seen for real: the container died at boot and `docker port` answered «no public port».
       // Without its state and its own log tail the cause is invisible — same rule as readiness.
+      // The port lives on the POSTGRES container (the hub shares its netns), so that is the one
+      // named here; a dead hub is caught by the readiness wait below (module-toolkit#299).
       throw new Error(
-        `Docker no publicó el puerto ${HUB_PORT} del contenedor \`${hub}\` ` +
+        `Docker no publicó el puerto ${HUB_PORT} del contenedor \`${pg}\` ` +
           `(\`docker port\` → ${(port.stdout || port.stderr).trim() || `exit ${port.code}`}; ` +
-          `estado del contenedor: ${await containerState(exec, hub)})\n${await logsTail(exec, hub)}`,
+          `estado del contenedor: ${await containerState(exec, pg)})\n${await logsTail(exec, pg)}`,
       );
     }
     const baseUrl = `http://127.0.0.1:${mapped}`;
@@ -412,6 +427,10 @@ export async function withHubRuntime(
         intervalMs: readyIntervalMs,
         now,
         sleep,
+        stopped: async () => {
+          const state = await containerState(exec, hub);
+          return STOPPED_RE.test(state) ? state : null;
+        },
       });
     } catch (err) {
       throw new Error(`${err.message}\n${await logsTail(exec, hub)}`);
@@ -436,6 +455,13 @@ export async function withHubRuntime(
     }
   }
 }
+
+/**
+ * States from which a container never answers again without somebody restarting it. Anything else
+ * (`created`, `running`, `restarting`, or an `inspect` that could not tell) keeps the wait going:
+ * the budget, not a guess, decides those.
+ */
+const STOPPED_RE = /^(exited|dead)\b/;
 
 /** `running exit=0` / `exited exit=101`: whether the container is still there to answer at all. */
 async function containerState(exec, container) {
