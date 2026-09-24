@@ -173,6 +173,44 @@ test('waitForReady: agotado el presupuesto FALLA nombrando la url y la última r
   );
 });
 
+// module-toolkit#299: a hub that died at boot must not be polled for the whole budget.
+test('waitForReady: si el proceso ya se PARÓ, falla al momento sin agotar el presupuesto', async () => {
+  const clock = fakeClock();
+  let calls = 0;
+  await assert.rejects(
+    waitForReady({
+      url: 'http://127.0.0.1:1/readyz',
+      probe: async () => { calls++; return { ok: false, detail: 'connection refused' }; },
+      stopped: async () => 'exited exit=1',
+      intervalMs: 1000,
+      timeoutMs: 180_000,
+      ...clock,
+    }),
+    (err) => {
+      assert.match(err.message, /exited exit=1/);
+      assert.match(err.message, /http:\/\/127\.0\.0\.1:1\/readyz/);
+      return true;
+    },
+  );
+  assert.equal(calls, 1);
+  assert.equal(clock.now(), 0);
+});
+
+test('waitForReady: mientras el proceso sigue vivo, espera como siempre', async () => {
+  const clock = fakeClock();
+  let calls = 0;
+  const body = await waitForReady({
+    url: 'http://127.0.0.1:1/readyz',
+    probe: async () => (++calls < 3 ? { ok: false, detail: 'connection refused' } : { ok: true, detail: 'UP' }),
+    stopped: async () => null,
+    intervalMs: 500,
+    timeoutMs: 10_000,
+    ...clock,
+  });
+  assert.equal(body, 'UP');
+  assert.equal(calls, 3);
+});
+
 // ── the orchestration: what happens when it goes wrong ───────────────────────────────
 
 /** Records every `docker …` invocation and answers from a table of prefixes. */
@@ -449,15 +487,19 @@ test('runBatteries: con un hub vivo, la batería recibe la url por el entorno', 
 });
 
 // 🔴 Seen for real while reviewing module-toolkit#110 (three runs in parallel on one machine): the
-// hub container dies at boot, `docker port` answers «no public port», and the error said ONLY that
-// — no state, no logs — so the cause was invisible. A container that is not running must be
-// reported with its state and its own log tail, exactly like a readiness timeout is.
-test('withHubRuntime: si el puerto no se publica, el error trae el ESTADO y la COLA DE LOGS del contenedor', async () => {
+// container that owned the port died at boot, `docker port` answered «no public port», and the error
+// said ONLY that — no state, no logs — so the cause was invisible. A container that is not running
+// must be reported with its state and its own log tail, exactly like a readiness timeout is.
+// Since #279 the port is published on the POSTGRES container (the hub joins its network namespace),
+// so that is the container the error has to name — naming the hub sent people to the wrong log.
+test('withHubRuntime: si el puerto no se publica, el error nombra el contenedor que lo publica, con su ESTADO y su LOG', async () => {
   const clock = fakeClock();
   const { exec, calls } = fakeDocker({
-    'docker port': { code: 1, stdout: '', stderr: "no public port '8787/tcp' published for erplora-ah-hub-demo-x\n" },
-    'docker inspect': { code: 0, stdout: 'exited exit=101\n', stderr: '' },
-    'docker logs': { code: 0, stdout: 'thread main panicked: cannot bind 0.0.0.0:8787\n', stderr: '' },
+    'docker port': { code: 1, stdout: '', stderr: "no public port '8787/tcp' published for erplora-ah-pg-demo-x\n" },
+    'docker inspect -f {{.State.Status}} exit={{.State.ExitCode}} erplora-ah-pg-': { code: 0, stdout: 'exited exit=101\n', stderr: '' },
+    'docker inspect -f {{.State.Status}} exit={{.State.ExitCode}} erplora-ah-hub-': { code: 0, stdout: 'running exit=0\n', stderr: '' },
+    'docker logs --tail 40 erplora-ah-pg-': { code: 0, stdout: 'cannot bind 0.0.0.0:8787\n', stderr: '' },
+    'docker logs --tail 40 erplora-ah-hub-': { code: 0, stdout: 'hub log that does not explain the port\n', stderr: '' },
   });
   await assert.rejects(
     withHubRuntime(
@@ -468,14 +510,85 @@ test('withHubRuntime: si el puerto no se publica, el error trae el ESTADO y la C
     ),
     (err) => {
       assert.match(err.message, /8787/);
+      assert.match(err.message, /contenedor `erplora-ah-pg-demo-[0-9a-f]+`/);
+      assert.doesNotMatch(err.message, /contenedor `erplora-ah-hub-/);
       assert.match(err.message, /exited exit=101/);
       assert.match(err.message, /cannot bind 0\.0\.0\.0:8787/);
+      assert.doesNotMatch(err.message, /hub log that does not explain the port/);
       return true;
     },
   );
   // Teardown still happens: the hub and the postgres were created, and the network too.
   assert.equal(calls.filter((c) => c.startsWith('docker rm -f')).length, 2);
   assert.ok(calls.some((c) => c.startsWith('docker network rm')));
+});
+
+// 🔴 module-toolkit#299, measured on 24/09 with `hub:stable`: the hub died in ~1 s with
+// `Sqlx(Tls("server does not support TLS"))` and the run still waited the full 180 s (`time`: 3:08).
+// The hub container is watched while waiting, and the error carries the HUB's state and log tail —
+// not the Postgres one, which is alive and innocent.
+test('withHubRuntime: si el hub MUERE al arrancar, falla al momento con el estado y el log del HUB', async () => {
+  const clock = fakeClock();
+  const { exec, calls } = fakeDocker({
+    ...OK_DOCKER,
+    'docker inspect -f {{.State.Status}} exit={{.State.ExitCode}} erplora-ah-hub-': { code: 0, stdout: 'exited exit=1\n', stderr: '' },
+    'docker logs --tail 40 erplora-ah-hub-': { code: 0, stdout: 'Error: Sqlx(Tls("server does not support TLS"))\n', stderr: '' },
+    'docker logs --tail 40 erplora-ah-pg-': { code: 0, stdout: 'database system is ready to accept connections\n', stderr: '' },
+  });
+  await assert.rejects(
+    withHubRuntime(
+      {
+        dir: '/tmp/demo',
+        manifest: MODULE,
+        image: `${HUB_IMAGE_REPO}:stable`,
+        exec,
+        probe: async () => ({ ok: false, detail: 'connection refused' }),
+        readyTimeoutMs: 180_000,
+        readyIntervalMs: 1000,
+        ...clock,
+      },
+      async () => {
+        throw new Error('el cuerpo NO debería ejecutarse con el hub muerto');
+      },
+    ),
+    (err) => {
+      assert.match(err.message, /exited exit=1/);
+      assert.match(err.message, /server does not support TLS/);
+      assert.match(err.message, /docker logs erplora-ah-hub-demo-/);
+      assert.doesNotMatch(err.message, /ready to accept connections/);
+      return true;
+    },
+  );
+  // Immediately: the fake clock only advances on `sleep`, and none of the 180 s budget was spent.
+  assert.ok(clock.now() < 5000, `esperó ${clock.now()} ms con el hub ya muerto`);
+  assert.equal(calls.filter((c) => c.startsWith('docker rm -f')).length, 2);
+});
+
+// The other half of #299: a hub that is merely SLOW (still `running`, `/readyz` not UP yet) is
+// waited for, never mistaken for a dead one.
+test('withHubRuntime: un hub LENTO pero vivo se espera hasta que responde UP', async () => {
+  const clock = fakeClock();
+  const { exec } = fakeDocker({
+    ...OK_DOCKER,
+    'docker inspect -f {{.State.Status}} exit={{.State.ExitCode}} erplora-ah-hub-': { code: 0, stdout: 'running exit=0\n', stderr: '' },
+  });
+  let probes = 0;
+  const out = await withHubRuntime(
+    {
+      dir: '/tmp/demo',
+      manifest: MODULE,
+      image: `${HUB_IMAGE_REPO}:stable`,
+      exec,
+      probe: async () => (++probes < 4 ? { ok: false, detail: 'connection refused' } : { ok: true, detail: 'UP' }),
+      install: async () => {},
+      readyTimeoutMs: 180_000,
+      readyIntervalMs: 1000,
+      ...clock,
+    },
+    async (live) => live.baseUrl,
+  );
+  assert.equal(out, 'http://127.0.0.1:54321');
+  assert.equal(probes, 4);
 });
 
 // 🔴 Measured while reviewing module-toolkit#110: `kill -INT <node>` with the battery running left
