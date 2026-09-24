@@ -4,10 +4,14 @@
 
 // ── index.d.ts ────────────────────────────────────────────────────────────
 export { QUANTITY_SCALE, toMicro, fromMicro, parseQuantity, formatQuantity, onGrid, } from './quantity.ts';
+export interface EventMeta {
+    clientInstance?: string;
+}
 export interface ErploraTransport {
     query(name: string, params?: Record<string, unknown>): Promise<unknown>;
     command(name: string, payload?: Record<string, unknown>): Promise<unknown>;
     subscribe(event: string, cb: (payload: unknown) => void): () => void;
+    subscribeWithMeta?(event: string, cb: (payload: unknown, meta: EventMeta) => void): () => void;
     fetchMediaBlob?(ref: string, opts?: MediaFetchOptions): Promise<Blob | null>;
 }
 export interface MediaFetchOptions {
@@ -167,6 +171,7 @@ export declare class HttpWsTransport implements ErploraTransport {
     private elevate;
     private approveElevation;
     subscribe(event: string, cb: (payload: unknown) => void): () => void;
+    subscribeWithMeta(event: string, cb: (payload: unknown, meta: EventMeta) => void): () => void;
     private handleFrame;
     private ensurePush;
     private ensureWs;
@@ -453,6 +458,7 @@ export declare class ErploraClient {
     command<T = unknown>(name: string, payload?: Record<string, unknown>): Promise<T>;
     commandOptional<T = unknown>(name: string, payload?: Record<string, unknown>): Promise<T | undefined>;
     on(event: string, cb: (payload: unknown) => void): () => void;
+    onEvent(event: string, cb: (payload: unknown, meta: EventMeta) => void): () => void;
     hasPermission(perm: string): boolean;
     notify(n: Notification): void;
     get locale(): string;
