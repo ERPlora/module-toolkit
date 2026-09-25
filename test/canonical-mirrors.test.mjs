@@ -52,6 +52,7 @@ import { REFUSED_PATHS, RETIRED_FIELDS } from '../src/validate-manifest-keys.mjs
 import { CORE_OPERATIONS } from '../src/contracts.mjs';
 import { GRANDFATHERED } from '../src/validate-migration-guard.mjs';
 import { controlsWithDeadFill } from '../src/validate-ionic-fill.mjs';
+import { SHELL_OUTFITKIT_COMPONENTS } from '../src/validate-outfitkit-api.mjs';
 import {
   KERNEL_CONTRACT_FILES,
   KERNEL_CONTRACT_HUB_PATH,
@@ -229,6 +230,35 @@ test('the guard reads the Hub\'s OWN screens the same way the Hub does (hub#760)
   walk(views);
   assert.ok(controls > 30, `only ${controls} controls found in the Hub views: the scan is not reaching them`);
   assert.deepEqual(offenders, [], 'this port disagrees with the Hub\'s own guard about the Hub\'s own markup');
+});
+
+test('every ok-* the Hub shell imports is in SHELL_OUTFITKIT_COMPONENTS (#346)', (t) => {
+  // The OutfitKit floor only judges the module's API on the components the SHELL defines — the hub
+  // paints those with its own copy. A shell import missing from the list would let a module ship API
+  // the hub cannot paint on it, unjudged. A bare VALUE import of the package would define every
+  // component at once and break the premise itself, so it is refused too.
+  const src = hubPath(t, 'apps', 'web', 'src');
+  if (!src) return;
+  const imported = new Set();
+  const bareValueImports = [];
+  const walk = (dir) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (/\.(ts|vue)$/.test(e.name) && !/\.(test|spec|d)\.ts$/.test(e.name)) {
+        const code = readFileSync(full, 'utf8');
+        for (const m of code.matchAll(/['"]@erplora\/outfitkit\/(ok-[a-z0-9-]+)(?:\.js)?['"]/g)) imported.add(m[1]);
+        for (const m of code.matchAll(/^\s*import\s+(?!type\b)[^;]*?from\s+['"]@erplora\/outfitkit['"]/gm)) {
+          bareValueImports.push(`${full}: ${m[0].trim()}`);
+        }
+      }
+    }
+  };
+  walk(src);
+  assert.ok(imported.size > 10, `only ${imported.size} ok-* imports found in the shell: the scan is not reaching them`);
+  const missing = [...imported].filter((tag) => !SHELL_OUTFITKIT_COMPONENTS.includes(tag)).sort();
+  assert.deepEqual(missing, [], 'the Hub shell defines these ok-* too: add them to SHELL_OUTFITKIT_COMPONENTS');
+  assert.deepEqual(bareValueImports, [], 'a value import of the whole package defines every ok-* in the shell');
 });
 
 /**

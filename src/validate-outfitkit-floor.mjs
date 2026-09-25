@@ -60,9 +60,23 @@
 // todo se comporta EXACTAMENTE como antes. Degradar siempre se puede; bloquear por una degradación,
 // nunca. Y el trinquete de #201 sigue en pie: con número real, `validate` sigue avisando y quien
 // bloquea sigue siendo `pack`, porque el sello lo pone `../outfitkit`, no el autor.
+//
+// 🔵 **module-toolkit#346 — the stamp is compared only when the SHELL components need it.** The
+// shell defines just the `ok-*` it imports (22, `SHELL_OUTFITKIT_COMPONENTS`); every other `ok-*`
+// in the bundle is painted by the module's own copy, so a newer stamp is only a problem if the
+// module USES, on a shell component, API the floor hub's OutfitKit lacks. That is what
+// `judgeByComponent` asks (`src/validate-outfitkit-api.mjs`: type-check of `ui/` plus the lit
+// property bindings, floor types vs baked types) before the two messages below blame the stamp.
+// Without network or cache to fetch the floor's types it says so and falls back to the whole-package
+// rule above.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OUTFITKIT_STAMP } from './outfitkit-stamp.mjs';
+import {
+  SHELL_OUTFITKIT_COMPONENTS,
+  bakedOutfitkitComponents,
+  defaultOutfitkitApiCheck,
+} from './validate-outfitkit-api.mjs';
 
 /**
  * Qué versión de OutfitKit lleva cada imagen del hub, por tag.
@@ -344,7 +358,11 @@ function readStamp(dir) {
  * `publishing` = se está empaquetando para el marketplace (`erplora pack`). Es lo único que separa
  * el aviso del bloqueo en el caso «sin suelo declarado»: ver el trinquete de la cabecera.
  */
-export function checkOutfitkitFloor(dir, manifest, { publishing = false, source = null } = {}) {
+export function checkOutfitkitFloor(
+  dir,
+  manifest,
+  { publishing = false, source = null, apiCheck = defaultOutfitkitApiCheck } = {},
+) {
   const errors = [];
   const warnings = [];
   // module-toolkit#203: con lectura real del hub, la fila real manda; sin ella, la tabla derivada.
@@ -401,6 +419,42 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false, source 
       `${newestHub.outfitkit} — COSTE: hay que bajar el checkout compartido \`../outfitkit\`, que ` +
       'no es tuyo, así que afecta a quien esté trabajando en él.';
 
+  // module-toolkit#346: the stamp is ONE version for the whole bundle, but the hub's version only
+  // decides the `ok-*` its shell defines — the rest are painted by the module's own copy. So before
+  // blaming the stamp, ask which components the hub actually paints and whether the module uses
+  // anything on them that `floorOutfitkit` does not have. `{ pass }` clears the case; otherwise
+  // `note` goes in front of the old message, saying what was found or why it could not be asked.
+  const judgeByComponent = (floorOutfitkit) => {
+    const esm = join(dir, 'dist', `${manifest?.id}.esm.js`);
+    const baked = existsSync(esm) ? bakedOutfitkitComponents(readFileSync(esm, 'utf8')) : [];
+    // No readable bundle, or one with no `ok-*` found: nothing to split, the whole-package rule stays.
+    if (!baked.length) return { pass: false, note: '' };
+    const shared = baked.filter((tag) => SHELL_OUTFITKIT_COMPONENTS.includes(tag));
+    if (!shared.length) return { pass: true };
+    const verdict = apiCheck({ dir, floor: floorOutfitkit, baked: stamp, shared });
+    if (verdict.ran && !verdict.problems.length) return { pass: true };
+    if (verdict.ran) {
+      const shown = verdict.problems.slice(0, 10);
+      const more = verdict.problems.length - shown.length;
+      return {
+        pass: false,
+        note:
+          `The hub shell paints ${shared.join(', ')} with its own OutfitKit ${floorOutfitkit}, and ` +
+          'this module uses API those copies do not have (type-checked against them, ' +
+          'module-toolkit#346):\n    · ' +
+          shown.join('\n    · ') +
+          (more > 0 ? `\n    · …and ${more} more` : '') +
+          '\n  ',
+      };
+    }
+    return {
+      pass: false,
+      note:
+        `(Could not type-check the shell components ${shared.join(', ')} against OutfitKit ` +
+        `${floorOutfitkit} — ${verdict.reason} — so the whole package is compared instead.) `,
+    };
+  };
+
   if (declared) {
     const floor = outfitkitForFloor(declared, table);
     if (!floor) {
@@ -424,8 +478,11 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false, source 
       return { errors, warnings };
     }
     if (compareOutfitkitVersions(stamp, floor.outfitkit) > 0) {
+      const judged = judgeByComponent(floor.outfitkit);
+      if (judged.pass) return { errors, warnings };
       const older = compareOutfitkitVersions(floor.hub, declared) > 0 ? ` (el más antiguo ≥ ${declared})` : '';
       errors.push(
+        judged.note +
         `el módulo se horneó contra OutfitKit ${stamp}, pero dice correr desde el core ` +
           `${declared}${older}: el hub ${floor.hub} lleva OutfitKit ${floor.outfitkit} ` +
           `(${provenanceOf(floor)}), y los ` +
@@ -437,7 +494,10 @@ export function checkOutfitkitFloor(dir, manifest, { publishing = false, source 
   }
 
   if (compareOutfitkitVersions(stamp, newestHub.outfitkit) > 0) {
+    const judged = judgeByComponent(newestHub.outfitkit);
+    if (judged.pass) return { errors, warnings };
     const said =
+      judged.note +
       `el módulo se horneó contra OutfitKit ${stamp} y no declara ` +
       '`compatibility.min_erplora_version`, o sea que dice correr en CUALQUIER hub — pero el más ' +
       `nuevo que existe (${newestHub.hub}) lleva OutfitKit ${newestHub.outfitkit} ` +
