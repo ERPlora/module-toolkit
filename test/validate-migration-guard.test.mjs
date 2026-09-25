@@ -574,3 +574,82 @@ test('un upsert sobre tabla propia pasa, y el runtime ya no lo rechaza (hub#1109
   assert.deepEqual(tablesTouched(upsert), ['taxes_category_label']);
   assert.deepEqual(tablesTouched('UPDATE sales_sale SET total = 0'), ['sales_sale']);
 });
+
+// ── `DROP COLUMN IF EXISTS` in a `contract`: a COMPATIBILITY rule, like #70 (module-toolkit#329) ──
+//
+// The hub does not drop a column in a `contract`: it sets it aside, rewriting
+// `ALTER TABLE t DROP COLUMN IF EXISTS c` into `ALTER TABLE t RENAME COLUMN IF EXISTS c TO
+// _deprecated_c`. Postgres has no `RENAME COLUMN IF EXISTS` (`syntax error at or near "EXISTS"`),
+// so the update fails on every boot and the module stays on its old version (ERPlora/hub#2108).
+// The hub fix emits a guarded `DO` instead, but a module published today has to update on the hubs
+// that are ALREADY out there, and none of them carries it. The form every hub accepts is the one
+// without the guard.
+test('FALLA (#329): un `contract` que retira una columna «solo si existe» no se actualiza en la flota', () => {
+  for (const sql of [
+    'ALTER TABLE sales_sale DROP COLUMN IF EXISTS legacy',
+    'alter table sales_sale drop column if exists legacy;',
+    'ALTER TABLE sales_sale\n  DROP COLUMN\n  IF   EXISTS legacy',
+    '-- retire the old flag\nALTER TABLE sales_sale DROP COLUMN /* old */ IF EXISTS legacy;',
+  ]) {
+    const errors = guard('sales', 'm.sql', sql, 'contract');
+    assert.equal(errors.length, 1, `debería rechazar \`${sql}\``);
+    assert.match(errors[0], /IF EXISTS/, 'nombra la forma que rompe');
+    assert.match(errors[0], /DROP COLUMN legacy/, 'y dice qué escribir en su lugar, con la columna real');
+  }
+});
+
+test('PASA (#329): las retiradas que el hub SÍ traduce a SQL válido', () => {
+  for (const sql of [
+    // The form the error sends the author to: it has to be open for real.
+    'ALTER TABLE sales_sale DROP COLUMN legacy',
+    // `ALTER TABLE IF EXISTS t RENAME TO …` is valid Postgres.
+    'DROP TABLE IF EXISTS sales_old',
+    // The guard on the TABLE survives the rewrite as `ALTER TABLE IF EXISTS t RENAME COLUMN c …`.
+    'ALTER TABLE IF EXISTS sales_sale DROP COLUMN legacy',
+    // A column whose name merely starts like the guard.
+    'ALTER TABLE sales_sale DROP COLUMN if_exists_flag',
+    // Prose is not SQL.
+    '-- never write DROP COLUMN IF EXISTS here\nALTER TABLE sales_sale DROP COLUMN legacy',
+  ]) {
+    assert.deepEqual(guard('sales', 'm.sql', sql, 'contract'), [], `debería pasar \`${sql}\``);
+  }
+});
+
+test('PASA (#329): un fichero abuelado con `DROP COLUMN IF EXISTS` se sigue aplicando tal cual', () => {
+  // `verifactu/006` is already in the fleet's databases and the hub applies grandfathered files as
+  // written — no rewrite, so no broken `RENAME`.
+  assert.deepEqual(
+    guard(
+      'verifactu',
+      'migrations/postgres/006_drop_cert_columns.sql',
+      'ALTER TABLE verifactu_config DROP COLUMN IF EXISTS cert_password',
+      'contract',
+    ),
+    [],
+  );
+});
+
+test('checkMigrationGuard (#329): caza la retirada «solo si existe» declarada `contract` en el manifest', () => {
+  const m = mod(
+    {
+      'migrations/postgres/001_init.sql': 'CREATE TABLE IF NOT EXISTS demo_items (id uuid, legacy text);',
+      'migrations/postgres/002_retire_legacy.sql': 'ALTER TABLE demo_items DROP COLUMN IF EXISTS legacy;',
+    },
+    {
+      migrations: {
+        postgres: [
+          'migrations/postgres/001_init.sql',
+          { file: 'migrations/postgres/002_retire_legacy.sql', kind: 'contract', since: '1.1.0' },
+        ],
+      },
+    },
+  );
+  try {
+    const { errors } = checkMigrationGuard(m.dir, m.manifest);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /^migrations\/postgres\/002_retire_legacy\.sql: /);
+    assert.match(errors[0], /DROP COLUMN legacy/);
+  } finally {
+    m.clean();
+  }
+});
