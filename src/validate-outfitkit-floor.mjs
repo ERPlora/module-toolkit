@@ -140,14 +140,14 @@ export const HUB_OUTFITKIT = [
   // v1.1.19 («Develop — lote v1.1.19», tagged 2026-09-08T18:53:49Z): still nothing newer than
   // 0.1.67 (2026-09-07T18:11Z) on npm, so the derivation lands on the same floor for the third
   // release in a row. 🔴 And this row is the first one that did NOT have to be derived: the
-  // fleet already serves this tag, and `GET https://banco-pre.a.erplora.com/outfitkit-version.json`
+  // fleet already serves this tag, and `GET /outfitkit-version.json` on the PRE bench hub
   // answered `{"outfitkit":"0.1.67","hub":"1.1.19"}` — the hub's own reading (hub#1588) and the
   // date derivation agree, which is the control that says the rule above still reproduces reality.
   { hub: '1.1.19', built_at: '2026-09-08T18:53:49Z', outfitkit: '0.1.67' },
   // v1.1.20 («Develop — lote v1.1.20», tagged 2026-09-08T23:15:50Z): still nothing newer than
   // 0.1.67 (2026-09-07T18:11Z) on npm, so the derivation lands on the same floor for the fourth
   // release in a row. ⚠️ Unlike 1.1.19, this row COULD NOT be confirmed against the hub itself:
-  // `GET https://banco-pre.a.erplora.com/outfitkit-version.json` still answered
+  // `GET /outfitkit-version.json` on the PRE bench hub still answered
   // `{"outfitkit":"0.1.67","hub":"1.1.19"}` when it was written, so the bench had not been moved
   // to this tag yet. It is derived, and it says so.
   { hub: '1.1.20', built_at: '2026-09-08T23:15:50Z', outfitkit: '0.1.67' },
@@ -166,7 +166,7 @@ export const HUB_OUTFITKIT = [
   // it is derived AFTER the cut — a row written before the tag exists is an invented row, which is
   // what the mirror next door exists to catch.
   // ⚠️ Derived, not confirmed against the hub itself: `GET
-  // https://banco-pre.a.erplora.com/outfitkit-version.json` still answered
+  // /outfitkit-version.json` on the PRE bench hub still answered
   // `{"outfitkit":"0.1.67","hub":"1.1.19"}` when this was written, so the bench had not been moved
   // to this tag yet.
   { hub: '1.1.22', built_at: '2026-09-11T11:48:46Z', outfitkit: '0.1.72' },
@@ -176,7 +176,7 @@ export const HUB_OUTFITKIT = [
   { hub: '1.1.23', built_at: '2026-09-15T12:52:22Z', outfitkit: '0.1.72' },
   // v1.1.24 («Develop → main — lote v1.1.24», tagged 2026-09-15T21:35:53Z): same window as the row
   // above (after 0.1.72, before 0.1.73), so the derivation lands on 0.1.72 again. Confirmed against
-  // the hub itself this time: `GET https://banco-pre.a.erplora.com/outfitkit-version.json` answered
+  // the hub itself this time: `GET /outfitkit-version.json` on the PRE bench hub answered
   // `{"outfitkit":"0.1.72","hub":"1.1.24-dev.270+gfcf740401"}` on 2026-09-16 — a build of the same
   // develop tip the tag was cut from, sealed by hub#1588 — so the date derivation and the hub's own
   // reading agree.
@@ -185,7 +185,7 @@ export const HUB_OUTFITKIT = [
   // here — `@erplora/outfitkit` shipped 0.1.73 on 2026-09-16T08:18:51Z, ten hours before this tag
   // was cut, so the newest published before it is 0.1.73. Confirmed against the hub itself, and
   // this one is the tightest confirmation the table has had: the tag points at `fb3b48ac` and
-  // `GET https://banco-pre.a.erplora.com/outfitkit-version.json` answered
+  // `GET /outfitkit-version.json` on the PRE bench hub answered
   // `{"outfitkit":"0.1.73","hub":"1.1.25-dev.274+gfb3b48ac"}` — the SAME commit, sealed by
   // hub#1588 — so the derivation and the hub's own reading are not two guesses that agree, they
   // are the same build read two ways.
@@ -205,9 +205,9 @@ export const HUB_OUTFITKIT = [
   //     derives the same answer — but a future lightweight tag cut while a release is in flight
   //     would need the real build time, not this one.
   //   - No live hub serves this build yet, so the `/outfitkit-version.json` cross-check of
-  //     hub#1588 cannot close on it: `banco-pre` still answers
+  //     hub#1588 cannot close on it: the PRE bench still answers
   //     `{"outfitkit":"0.1.73","hub":"1.1.25-dev.274+gfb3b48ac"}` (the PREVIOUS tag's commit) and
-  //     the deployed hubs are still on `1.1.23`/`0.1.72`. What the banco-pre reading does confirm
+  //     the deployed hubs are still on `1.1.23`/`0.1.72`. What the PRE bench reading does confirm
   //     is the rule: the image installs `@erplora/outfitkit@latest` at build time, and a build made
   //     after 0.1.73 shipped got 0.1.73.
   { hub: '1.1.26', built_at: '2026-09-16T22:18:56Z', outfitkit: '0.1.73' },
@@ -218,7 +218,7 @@ export const HUB_OUTFITKIT = [
   // Unlike v1.1.26 this tag is ANNOTATED, so `creatordate` is the tagger's date, not the date of
   // the commit it points at (`d440e3f8`, the `origin/develop` tip, committed 2026-09-18T21:56:11Z
   // — five minutes earlier). The cross-check of hub#1588 lands one commit short:
-  // `GET https://banco-pre.a.erplora.com/outfitkit-version.json` answered
+  // `GET /outfitkit-version.json` on the PRE bench hub answered
   // `{"outfitkit":"0.1.73","hub":"1.1.27-dev.4+gae4ebaaa"}` on 2026-09-19, and `ae4ebaaa` is the
   // parent of the tagged commit — a build of the same develop line, made after 0.1.73 shipped,
   // that got 0.1.73.

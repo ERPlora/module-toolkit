@@ -1,9 +1,17 @@
 {
   "name": "@erplora/module-toolkit",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "Toolkit de módulos ERPlora (estilo Ionic): scaffolding (startproject + g module), dev preview y build standalone a dist/<id>.esm.js. El toolkit es el 'envoltorio' que provee deps (lit + @erplora/outfitkit + @erplora/module-sdk + tsconfig) — el repo del módulo queda limpio.",
+  "description": "ERPlora module toolkit (Ionic-style CLI): scaffolding (startproject + g module), dev preview, validation and standalone build to dist/<id>.esm.js. The toolkit is the wrapper that provides the dependencies (lit + @erplora/outfitkit + @erplora/module-sdk + tsconfig), so the module repository stays clean.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ERPlora/module-toolkit.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "bin": {
     "erplora": "bin/erplora.mjs"
   },
