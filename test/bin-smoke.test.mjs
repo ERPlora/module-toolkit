@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 const BIN = join(dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'erplora.mjs');
 
@@ -23,3 +24,14 @@ test('bin/erplora.mjs starts and prints usage for an unknown command', () => {
   assert.match(res.stdout, /uso: erplora <comando>/);
   assert.doesNotMatch(res.stderr, /SyntaxError/);
 });
+
+// module-toolkit#277: the first thing anyone types after installing a CLI. It used to fall through
+// to the usage text with exit 2, so a correct install looked like a broken one.
+for (const flag of ['--version', '-v']) {
+  test(`bin/erplora.mjs ${flag} prints the package version and exits 0`, () => {
+    const pkg = JSON.parse(readFileSync(join(dirname(BIN), '..', 'package.json'), 'utf8'));
+    const res = spawnSync(process.execPath, [BIN, flag], { encoding: 'utf8' });
+    assert.equal(res.status, 0, `expected exit 0, got ${res.status}:\n${res.stdout}${res.stderr}`);
+    assert.equal(res.stdout.trim(), pkg.version);
+  });
+}

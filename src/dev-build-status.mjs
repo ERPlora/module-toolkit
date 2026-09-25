@@ -9,7 +9,7 @@
 // keeps serving the stale build in silence.
 //
 // This module is deliberately dependency-free — no esbuild import — for one reason: CI cannot
-// install esbuild (three of this package's dependencies are `file:` paths into sibling checkouts
+// install esbuild (three of this package's devDependencies are `file:` paths into sibling checkouts
 // that do not exist on a runner), so anything importing `src/dev.mjs` is a local-only suite. The
 // decisions worth guarding live here instead, where `test/dev-build-status.test.mjs` runs on every
 // pull request. An esbuild plugin is a plain object, so the rebuild wiring is covered too.

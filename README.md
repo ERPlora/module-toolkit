@@ -1007,10 +1007,17 @@ El Hub consume los `dist/` de aquí: `hub/apps/web/sync-modules.mjs` **resuelve*
   instalar un módulo con `depends_on`
   ([module-toolkit#135](https://github.com/ERPlora/module-toolkit/issues/135)). Las dos abiertas;
   mientras tanto quien corre esas baterías es la CI del hub (§ *La batería contra el kernel REAL*).
-- **Distribución a devs externos**: `@erplora/outfitkit` **ya está publicado en npm** (MIT); en el
-  workspace local se enlaza por `file:../outfitkit`. `@erplora/module-sdk` y
-  `@erplora/module-types` siguen enlazados por `file:../hub/packages/*` y **sin publicar** (uso
-  interno): para terceros del marketplace queda **publicar/vendorizar** esos dos. Fase aparte —
+- **Distribución a devs externos** ([module-toolkit#277](https://github.com/ERPlora/module-toolkit/issues/277)):
+  las tres dependencias que apuntan a checkouts hermanos (`file:../outfitkit`,
+  `file:../hub/packages/module-sdk|module-types`) son **`devDependencies`**: se enlazan al hacer
+  `npm install` aquí, pero el paquete que sale de `npm pack` solo declara dependencias del
+  registro, así que se instala fuera del monorepo y `erplora --version` responde
+  (`test/install-from-package.test.mjs`, en la CI). Falta: publicarlo en npm
+  ([#332](https://github.com/ERPlora/module-toolkit/issues/332)), que el módulo generado compile
+  desde esa instalación —OutfitKit y el SDK como dependencias reales
+  ([#333](https://github.com/ERPlora/module-toolkit/issues/333), bloqueada por
+  [hub#1371](https://github.com/ERPlora/hub/issues/1371))— y el `guest-sdk` de Rust por versión
+  ([hub#2115](https://github.com/ERPlora/hub/issues/2115)). Plan:
   [`DECISION-aislamiento-terceros.md`](DECISION-aislamiento-terceros.md).
 
 > 🪦 Dos entradas que vivieron aquí y ya no son deuda: la **firma criptográfica** (`erplora sign`

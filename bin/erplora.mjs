@@ -17,17 +17,24 @@
 //
 // Only `validate` is imported statically. The rest of the commands are loaded ON DEMAND because
 // they pull heavy third-party packages (esbuild, lit, @ionic/core, @iconify) that the CI gate of
-// the module repos does not — and cannot — install: three of this package's dependencies are
+// the module repos does not — and cannot — install: three of this package's (dev) dependencies are
 // `file:` paths into sibling checkouts (`../hub/...`, `../outfitkit`) that do not exist on a
-// runner, so `npm install` fails as a whole and the gate installs the public ones by hand
+// runner, so a plain `npm install` cannot link them and the gate installs the public ones by hand
 // (ERPlora/pm#107). Loading `build.mjs` just to run `validate` made the CLI die with
 // `ERR_MODULE_NOT_FOUND: esbuild` before parsing a single argument.
 import { validate } from '../src/validate.mjs';
 import { parseAgainstHub } from '../src/against-hub.mjs';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 const argv = process.argv.slice(2);
+// `erplora --version` (module-toolkit#277): the first thing anyone types to confirm an install.
+// Answered before any other parsing, so it works from any install that can start the bin.
+if (argv[0] === '--version' || argv[0] === '-v') {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  console.log(pkg.version);
+  process.exit(0);
+}
 // `--against-hub [<imagen|digest>]` is the ONE flag that takes a value, and a value does not start
 // with `--`: left in, it would land in `rest` and be read as the module directory (module-toolkit
 // #110). It is consumed first, once, so the split below keeps meaning what it always meant.
@@ -47,6 +54,7 @@ const target = (arg) => {
 const usage = () => {
   console.log(`uso: erplora <comando>
 
+  -v, --version                  muestra la versión instalada del toolkit
   startproject <nombre>          crea un workspace de dev (Ionic + OutfitKit instalados)
   g module <id>                  genera un módulo nuevo (repo propio)
   g view <id> <vista>            añade una vista (Web Component Lit) a un módulo
