@@ -21,9 +21,6 @@
     "smoke": "node bin/erplora.mjs build ../modules-workspace/modules/inventory && node bin/erplora.mjs build ../modules-workspace/modules/sales"
   },
   "dependencies": {
-    "@erplora/module-sdk": "file:../hub/packages/module-sdk",
-    "@erplora/module-types": "file:../hub/packages/module-types",
-    "@erplora/outfitkit": "file:../outfitkit",
     "@iconify-json/ion": "^1.2.7",
     "@iconify/utils": "^3.1.3",
     "@ionic/core": "^8.8.0",
@@ -31,5 +28,10 @@
     "esbuild": "^0.24.0",
     "lit": "^3.2.0",
     "typescript": "^5.7.0"
+  },
+  "devDependencies": {
+    "@erplora/module-sdk": "file:../hub/packages/module-sdk",
+    "@erplora/module-types": "file:../hub/packages/module-types",
+    "@erplora/outfitkit": "file:../outfitkit"
   }
 }
