@@ -57,8 +57,12 @@ jobs:
             process.exit(1);
           ' "$v"
 
+      # The tag goes in as an env value, never spliced into the shell line: an expression inside
+      # `run:` is expanded before the shell sees it, so a tag named `v$(…)` would run as code.
       - name: The tag names the version in package.json
-        run: node scripts/check-release-tag.mjs "${{ github.ref_name }}"
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/check-release-tag.mjs "$RELEASE_TAG"
 
       # The tarball that is about to be published: publishable, public, no stray files, no fleet
       # hosts, and installable outside the monorepo answering `erplora --version`.

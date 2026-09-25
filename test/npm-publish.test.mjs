@@ -110,6 +110,15 @@ test('the publish workflow checks the tag and the tarball before publishing', ()
     return m.index;
   };
   const publish = at(/\n\s+run: npm publish --access public\b/);
-  assert.ok(at(/node scripts\/check-release-tag\.mjs "\$\{\{ github\.ref_name \}\}"/) < publish);
+  assert.ok(at(/node scripts\/check-release-tag\.mjs "\$RELEASE_TAG"/) < publish);
   assert.ok(at(/node --test test\/npm-publish\.test\.mjs test\/install-from-package\.test\.mjs/) < publish);
+});
+
+test('the tag reaches the check through the environment, never spliced into a shell line', () => {
+  // `${{ github.ref_name }}` inside `run:` is expanded BEFORE the shell sees it: a tag named
+  // `v$(…)` would run as code. An env value is passed as data.
+  const wf = readFileSync(WORKFLOW, 'utf8');
+  assert.match(wf, /\n\s+env:\s*\n\s+RELEASE_TAG:\s*\$\{\{\s*github\.ref_name\s*\}\}\s*\n\s+run: node scripts\/check-release-tag\.mjs "\$RELEASE_TAG"/);
+  const spliced = wf.split('\n').filter((line) => line.includes('${{') && !/^\s+[A-Z][A-Z0-9_]*:\s*\$\{\{[^}]*\}\}\s*$/.test(line));
+  assert.deepEqual(spliced, [], 'an expression outside an env value');
 });
