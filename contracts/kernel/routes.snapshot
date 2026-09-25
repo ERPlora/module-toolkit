@@ -33,6 +33,7 @@ DELETE  /api/devices/:device_id                        auth:admin
 PUT     /api/devices/:device_id                        auth:admin
 POST    /api/elevation/approve                         auth:any-credential
 GET     /api/entitlement                               auth:session
+POST    /api/entitlement/refresh                       auth:none
 POST    /api/error-report                              auth:none
 GET     /api/events                                    auth:api-key
 POST    /api/events/ticket                             auth:session
