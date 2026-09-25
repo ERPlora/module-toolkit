@@ -98,7 +98,8 @@ test('the publish workflow runs on version tags and authenticates by OIDC, never
   assert.doesNotMatch(wf, /\n\s+branches:/, 'a branch push must never publish');
   assert.match(wf, /\n\s+id-token:\s*write\b/, 'OIDC needs `id-token: write`');
   assert.doesNotMatch(wf, /^\s*registry-url:/m, 'setup-node with registry-url forces a placeholder token and skips OIDC');
-  assert.doesNotMatch(wf, /NPM_TOKEN|NODE_AUTH_TOKEN|_authToken/, 'no stored npm credential');
+  assert.doesNotMatch(wf, /\$\{\{\s*secrets\./, 'no stored credential reaches the job');
+  assert.doesNotMatch(wf, /^\s*NODE_AUTH_TOKEN:/m, 'no npm token in the environment');
 });
 
 test('the publish workflow checks the tag and the tarball before publishing', () => {
