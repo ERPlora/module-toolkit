@@ -107,8 +107,99 @@ function hybridIndex(bakedDir, floorDir, shell, outDir) {
   return file;
 }
 
+/** `Ok<Pascal>`: the class OutfitKit exports for a tag (`ok-data-table` → `OkDataTable`). */
+function classNameOf(tag) {
+  return `Ok${tag.slice(3).split('-').map((s) => s[0].toUpperCase() + s.slice(1)).join('')}`;
+}
+
+/**
+ * The instance type of each SHELL component, as the program's `@erplora/outfitkit` index exports
+ * it — from the floor package in the hybrid run, from the baked one otherwise.
+ */
+function shellElementTypes(program, checker, indexFile, shell) {
+  const types = new Map();
+  const sf = program.getSourceFile(indexFile);
+  const module = sf && checker.getSymbolAtLocation(sf);
+  if (!module) return types;
+  const exports = checker.getExportsOfModule(module);
+  for (const tag of shell) {
+    const exported = exports.find((e) => e.name === classNameOf(tag));
+    if (!exported) continue;
+    const symbol = exported.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(exported) : exported;
+    if (symbol.flags & ts.SymbolFlags.Class) types.set(tag, checker.getDeclaredTypeOfSymbol(symbol));
+  }
+  return types;
+}
+
+/**
+ * Lit property bindings `.prop=${expr}` on `ok-*` tags inside `html\`…\`` templates of a file. The
+ * literal chunks between expressions are read in order to know which tag is open; the expressions
+ * themselves (where `=>` lives) are never scanned.
+ */
+function okPropertyBindings(sf) {
+  const bindings = [];
+  const visit = (node) => {
+    if (
+      ts.isTaggedTemplateExpression(node) &&
+      ts.isIdentifier(node.tag) &&
+      node.tag.text === 'html' &&
+      ts.isTemplateExpression(node.template)
+    ) {
+      let open = null;
+      const { head, templateSpans } = node.template;
+      templateSpans.forEach((span, i) => {
+        const text = i === 0 ? head.text : templateSpans[i - 1].literal.text;
+        for (const m of text.matchAll(/<(ok-[a-z0-9-]+)|>/g)) open = m[1] ?? null;
+        const prop = open && /\.([A-Za-z_$][\w$]*)=$/.exec(text)?.[1];
+        if (prop) bindings.push({ tag: open, prop, expr: span.expression });
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return bindings;
+}
+
+/**
+ * The property names `source` carries that `target` does not declare — the Android `NewApi` rule
+ * for a value that reaches a component untyped (a lit binding). Walks arrays and nested objects;
+ * a target with an index signature accepts anything, `any`/`unknown` targets are not judged.
+ */
+function unknownProperties(checker, source, target, depth = 0) {
+  if (depth > 4 || !source || !target) return [];
+  const parts = (t) => (t.isUnion() ? t.types : [t]);
+  const out = new Set();
+  for (const s of parts(source)) {
+    if (checker.isArrayType(s)) {
+      const element = checker.getTypeArguments(s)[0];
+      for (const t of parts(target)) {
+        if (!checker.isArrayType(t)) continue;
+        for (const name of unknownProperties(checker, element, checker.getTypeArguments(t)[0], depth + 1)) out.add(name);
+      }
+      continue;
+    }
+    if (!(s.flags & ts.TypeFlags.Object)) continue;
+    const objects = parts(target).filter(
+      (t) => t.flags & ts.TypeFlags.Object && !checker.isArrayType(t) && !checker.getIndexInfosOfType(t).length,
+    );
+    if (!objects.length) continue;
+    for (const property of checker.getPropertiesOfType(s)) {
+      const known = objects.map((t) => t.getProperty(property.name)).filter(Boolean);
+      if (!known.length) {
+        out.add(property.name);
+        continue;
+      }
+      const nested = checker.getTypeOfSymbol(property);
+      for (const k of known) {
+        for (const name of unknownProperties(checker, nested, checker.getTypeOfSymbol(k), depth + 1)) out.add(name);
+      }
+    }
+  }
+  return [...out];
+}
+
 /** `rel:line:code` → `rel:line — message` for the module's own files. */
-function diagnose(moduleDir, files, indexFile, bakedDir) {
+function diagnose(moduleDir, files, indexFile, bakedDir, shell) {
   const options = {
     target: ts.ScriptTarget.ES2022,
     module: ts.ModuleKind.ESNext,
@@ -126,20 +217,48 @@ function diagnose(moduleDir, files, indexFile, bakedDir) {
       '@erplora/outfitkit/*': [join(bakedDir, 'dist', '*')],
     },
   };
-  const program = ts.createProgram(files, options);
+  // The index is a root too: a module that only side-effect-imports `@erplora/outfitkit/ok-*`
+  // never loads it, and its lit bindings still have to be judged against the shell classes.
+  const program = ts.createProgram([...files, indexFile], options);
+  const checker = program.getTypeChecker();
+  const elements = shellElementTypes(program, checker, indexFile, shell);
   const found = new Map();
   for (const file of files) {
     const sf = program.getSourceFile(file);
     if (!sf) continue;
+    const rel = relative(moduleDir, file).split(sep).join('/');
     const diags = [...program.getSyntacticDiagnostics(sf), ...program.getSemanticDiagnostics(sf)];
     for (const d of diags) {
       const line = d.start === undefined ? 0 : sf.getLineAndCharacterOfPosition(d.start).line + 1;
-      const rel = relative(moduleDir, file).split(sep).join('/');
       // Keyed WITHOUT the message on purpose: the same error prints a different type path in each
       // run (the baked index's path vs the hybrid index's path in `import(…).X`), and it must still cancel out.
       const key = `${rel}:${line}:${d.code}`;
       if (!found.has(key)) {
         found.set(key, `${rel}:${line} — ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
+      }
+    }
+    // `tsc` never looks inside a tagged template: what a module binds to `.actions=${…}` of a shell
+    // table from an untyped getter is judged here, against THIS run's declaration of the element.
+    for (const { tag, prop, expr } of okPropertyBindings(sf)) {
+      const element = elements.get(tag);
+      if (!element) continue;
+      const line = sf.getLineAndCharacterOfPosition(expr.getStart(sf)).line + 1;
+      const where = `${rel}:${line} — <${tag} .${prop}=\${…}>`;
+      const property = element.getProperty(prop);
+      if (!property) {
+        found.set(`${rel}:${line}:bind:${tag}.${prop}`, `${where}: '${prop}' does not exist on ${tag}`);
+        continue;
+      }
+      const target = checker.getTypeOfSymbolAtLocation(property, expr);
+      const source = checker.getTypeAtLocation(expr);
+      if (!checker.isTypeAssignableTo(source, target)) {
+        found.set(
+          `${rel}:${line}:bind:${tag}.${prop}`,
+          `${where}: '${checker.typeToString(source)}' is not assignable to '${checker.typeToString(target)}'`,
+        );
+      }
+      for (const name of unknownProperties(checker, source, target)) {
+        found.set(`${rel}:${line}:bind:${tag}.${prop}.${name}`, `${where}: carries '${name}', which ${tag} does not know`);
       }
     }
   }
@@ -159,8 +278,8 @@ export function checkSharedOutfitkitApi({ moduleDir, bakedDir, floorDir, shell =
   try {
     const bakedIndex = join(bakedDir, 'dist', 'index.d.ts');
     const floorIndex = hybridIndex(bakedDir, floorDir, shell, scratch);
-    const before = diagnose(moduleDir, files, bakedIndex, bakedDir);
-    const after = diagnose(moduleDir, files, floorIndex, bakedDir);
+    const before = diagnose(moduleDir, files, bakedIndex, bakedDir, shell);
+    const after = diagnose(moduleDir, files, floorIndex, bakedDir, shell);
     const problems = [...after].filter(([key]) => !before.has(key)).map(([, text]) => text);
     return { problems };
   } finally {
@@ -184,7 +303,18 @@ function toolkitOutfitkitDir() {
  * toolkit's own checkout if it claims that exact version — last, because a development checkout's
  * `dist/` can be stale against its own `package.json`.
  */
-export function resolveOutfitkitTypes(version, { cacheRoot, localDir = toolkitOutfitkitDir() } = {}) {
+/** `npm pack` of the published `@erplora/outfitkit@<version>` into `work`, unpacked as `work/package`. */
+function npmPack(version, work) {
+  execFileSync('npm', ['pack', `@erplora/outfitkit@${version}`, '--pack-destination', work, '--silent'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: 60_000,
+  });
+  const tarball = readdirSync(work).find((f) => f.endsWith('.tgz'));
+  if (!tarball) throw new Error('npm pack produced no tarball');
+  execFileSync('tar', ['-xzf', join(work, tarball), '-C', work], { stdio: 'pipe', timeout: 60_000 });
+}
+
+export function resolveOutfitkitTypes(version, { cacheRoot, localDir = toolkitOutfitkitDir(), pack = npmPack } = {}) {
   if (!VERSION_RE.test(String(version))) return { error: `not an OutfitKit version: ${version}` };
   const root = cacheRoot ?? process.env[OUTFITKIT_TYPES_CACHE_ENV] ?? join(homedir(), '.cache', 'erplora', 'outfitkit-types');
   const cached = join(root, version, 'package');
@@ -194,13 +324,7 @@ export function resolveOutfitkitTypes(version, { cacheRoot, localDir = toolkitOu
     mkdirSync(root, { recursive: true });
     const work = mkdtempSync(join(root, '.fetch-'));
     try {
-      execFileSync('npm', ['pack', `@erplora/outfitkit@${version}`, '--pack-destination', work, '--silent'], {
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 60_000,
-      });
-      const tarball = readdirSync(work).find((f) => f.endsWith('.tgz'));
-      if (!tarball) throw new Error('npm pack produced no tarball');
-      execFileSync('tar', ['-xzf', join(work, tarball), '-C', work], { stdio: 'pipe', timeout: 60_000 });
+      pack(version, work);
       if (!existsSync(join(work, 'package', 'dist', 'index.d.ts'))) {
         throw new Error('the published package has no dist/index.d.ts');
       }
@@ -211,7 +335,10 @@ export function resolveOutfitkitTypes(version, { cacheRoot, localDir = toolkitOu
       rmSync(work, { recursive: true, force: true });
     }
   } catch (err) {
-    fetchError = String(err?.stderr || err?.message || err).trim().split('\n')[0];
+    // `err.stderr` is a Buffer, and an EMPTY one (npm timed out, `--silent`) is still truthy: read
+    // it as text first so the message never degrades to "()".
+    const stderr = String(err?.stderr ?? '').trim();
+    fetchError = (stderr || String(err?.message ?? err)).trim().split('\n')[0];
   }
   try {
     const local = JSON.parse(readFileSync(join(localDir, 'package.json'), 'utf8'));

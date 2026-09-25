@@ -60,6 +60,15 @@
 // todo se comporta EXACTAMENTE como antes. Degradar siempre se puede; bloquear por una degradación,
 // nunca. Y el trinquete de #201 sigue en pie: con número real, `validate` sigue avisando y quien
 // bloquea sigue siendo `pack`, porque el sello lo pone `../outfitkit`, no el autor.
+//
+// 🔵 **module-toolkit#346 — the stamp is compared only when the SHELL components need it.** The
+// shell defines just the `ok-*` it imports (22, `SHELL_OUTFITKIT_COMPONENTS`); every other `ok-*`
+// in the bundle is painted by the module's own copy, so a newer stamp is only a problem if the
+// module USES, on a shell component, API the floor hub's OutfitKit lacks. That is what
+// `judgeByComponent` asks (`src/validate-outfitkit-api.mjs`: type-check of `ui/` plus the lit
+// property bindings, floor types vs baked types) before the two messages below blame the stamp.
+// Without network or cache to fetch the floor's types it says so and falls back to the whole-package
+// rule above.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { OUTFITKIT_STAMP } from './outfitkit-stamp.mjs';

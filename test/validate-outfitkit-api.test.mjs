@@ -46,16 +46,17 @@ function outfitkitPackage({ dataTable, lightbox }) {
       "export { OkDataTable } from './components/ok-data-table/ok-data-table.js';",
       "export type { DataTableAction } from './components/ok-data-table/ok-data-table.js';",
       "export type { OkLightboxItem } from './components/ok-lightbox/ok-lightbox.js';",
+      "export { OkLightbox } from './components/ok-lightbox/ok-lightbox.js';",
       '',
     ].join('\n'),
   );
   writeFileSync(
     join(dist, 'components', 'ok-data-table', 'ok-data-table.d.ts'),
-    `export interface DataTableAction { ${dataTable} }\nexport declare class OkDataTable {}\n`,
+    `export interface DataTableAction { ${dataTable} }\nexport declare class OkDataTable { actions: DataTableAction[]; }\n`,
   );
   writeFileSync(
     join(dist, 'components', 'ok-lightbox', 'ok-lightbox.d.ts'),
-    `export interface OkLightboxItem { ${lightbox} }\n`,
+    `export interface OkLightboxItem { ${lightbox} }\nexport declare class OkLightbox { items: OkLightboxItem[]; }\n`,
   );
   return root;
 }
@@ -150,6 +151,80 @@ test('type errors the module already has, and tests, are not blamed on the floor
   });
   const { problems } = checkSharedOutfitkitApi({ moduleDir, bakedDir: BAKED(), floorDir: FLOOR() });
   assert.deepEqual(problems, []);
+});
+
+// --- Lit property bindings: the API that reaches a shell component WITHOUT a type annotation --------
+//
+// 11 of the 25 modules with a table bind `.actions=${this.rowActions}` from an UNTYPED getter
+// (measured 2026-09-25: appointments, whatsapp_inbox, tickets, reservations…). A tagged template is
+// opaque to `tsc`, so a `hidden` (0.1.8x) or a function `label` in that getter reaches a hub that
+// lacks them with no type error anywhere. What the floor must judge is the TYPE OF THE EXPRESSION
+// bound to the shell element's property, against the floor's declaration of that property.
+
+/** A component class whose `render()` binds `expr` to `.actions` of a shell `ok-data-table`. */
+const BOUND_TABLE = (getter) =>
+  `${IMPORTS}declare const html: (s: TemplateStringsArray, ...v: unknown[]) => unknown;
+export class X {
+  private get rowActions() { return ${getter}; }
+  render() { return html\`<ok-data-table testid="t" .actions=\${this.rowActions}></ok-data-table>\`; }
+}
+`;
+
+test('an UNTYPED lit binding that carries a property the floor ok-data-table does not know is refused', () => {
+  const moduleDir = moduleWithUi({
+    'components/x/x.ts': BOUND_TABLE("[{ id: 'r', label: 'Refund', hidden: () => true }]"),
+  });
+  const { problems } = checkSharedOutfitkitApi({ moduleDir, bakedDir: BAKED(), floorDir: FLOOR() });
+  assert.equal(problems.length, 1, JSON.stringify(problems));
+  assert.match(problems[0], /^ui\/components\/x\/x\.ts:5 — /, 'the line of the binding');
+  assert.match(problems[0], /ok-data-table/);
+  assert.match(problems[0], /'hidden'/);
+});
+
+test('an UNTYPED lit binding whose shape the floor cannot take (function label, sales#259) is refused', () => {
+  const moduleDir = moduleWithUi({
+    'components/x/x.ts': BOUND_TABLE("[{ id: 'r', label: (row: unknown) => String(row) }]"),
+  });
+  const { problems } = checkSharedOutfitkitApi({ moduleDir, bakedDir: BAKED(), floorDir: FLOOR() });
+  assert.equal(problems.length, 1, JSON.stringify(problems));
+  assert.match(problems[0], /^ui\/components\/x\/x\.ts:5 — /);
+  assert.match(problems[0], /ok-data-table.*\.actions/);
+});
+
+test('a key of the module\'s own that NO OutfitKit knows is not blamed on the floor', () => {
+  const moduleDir = moduleWithUi({
+    'components/x/x.ts': BOUND_TABLE("[{ id: 'r', label: 'Refund', testid: 'refund-row' }]"),
+  });
+  const { problems } = checkSharedOutfitkitApi({ moduleDir, bakedDir: BAKED(), floorDir: FLOOR() });
+  assert.deepEqual(problems, []);
+});
+
+test('an UNTYPED lit binding on a component the shell does NOT define is not judged (module copy paints it)', () => {
+  const moduleDir = moduleWithUi({
+    'components/x/x.ts': `${IMPORTS}declare const html: (s: TemplateStringsArray, ...v: unknown[]) => unknown;
+export class X {
+  render() { return html\`<ok-lightbox .items=\${[{ src: 'a.jpg', zoom: true }]}></ok-lightbox>\`; }
+}
+`,
+  });
+  const { problems } = checkSharedOutfitkitApi({ moduleDir, bakedDir: BAKED(), floorDir: FLOOR() });
+  assert.deepEqual(problems, []);
+});
+
+test('a module that never imports the package index (side-effect imports only) is judged all the same', () => {
+  // Without an `import … from '@erplora/outfitkit'` the index is not in the program by itself, and
+  // the shell classes would be unknown: the binding on the table would be skipped, unjudged.
+  const moduleDir = moduleWithUi({
+    'components/x/x.ts': `declare const html: (s: TemplateStringsArray, ...v: unknown[]) => unknown;
+export class X {
+  private get rowActions() { return [{ id: 'r', label: 'Refund', hidden: () => true }]; }
+  render() { return html\`<ok-data-table .actions=\${this.rowActions}></ok-data-table>\`; }
+}
+`,
+  });
+  const { problems } = checkSharedOutfitkitApi({ moduleDir, bakedDir: BAKED(), floorDir: FLOOR() });
+  assert.equal(problems.length, 1, JSON.stringify(problems));
+  assert.match(problems[0], /'hidden'/);
 });
 
 // --- The gate itself (`checkOutfitkitFloor`) ------------------------------------------------------
@@ -303,4 +378,15 @@ test('resolveOutfitkitTypes refuses something that is not a version, before runn
     assert.ok(got.error, `${bad} should be refused`);
     assert.equal(got.dir, undefined);
   }
+});
+
+test('resolveOutfitkitTypes names the npm failure even when npm left stderr EMPTY (timeout)', () => {
+  const cacheRoot = mkdtempSync(join(tmpdir(), 'erplora-ok-cache-'));
+  const pack = () => {
+    const err = new Error('spawnSync npm ETIMEDOUT');
+    err.stderr = Buffer.alloc(0); // an empty Buffer is truthy: `err.stderr || err.message` printed "()"
+    throw err;
+  };
+  const got = resolveOutfitkitTypes('0.1.72', { cacheRoot, localDir: join(cacheRoot, 'nowhere'), pack });
+  assert.match(got.error, /ETIMEDOUT/, got.error);
 });
