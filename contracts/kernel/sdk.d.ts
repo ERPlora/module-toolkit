@@ -164,6 +164,7 @@ export declare class HttpWsTransport implements ErploraTransport {
     private post;
     coreRequest(req: CoreRequest, extraHeaders?: Record<string, string>): Promise<unknown>;
     fetchMediaBlob(ref: string, opts?: MediaFetchOptions): Promise<Blob | null>;
+    coreBlobRequest(path: string, extraHeaders?: Record<string, string>): Promise<Blob>;
     private send;
     query(name: string, params?: Record<string, unknown>): Promise<unknown>;
     command(name: string, payload?: Record<string, unknown>): Promise<unknown>;
@@ -383,6 +384,15 @@ export declare class WhatsappTemplatesApi {
     register(template: WhatsappTemplateInput): Promise<WhatsappTemplate>;
     remove(name: string): Promise<void>;
 }
+export declare const WHATSAPP_MEDIA_BASE_PATH = "/api/hub/whatsapp/media";
+export interface CoreBlobTransport {
+    coreBlobRequest(path: string, headers?: Record<string, string>): Promise<Blob>;
+}
+export declare class WhatsappMediaApi {
+    private readonly fetchBlob;
+    constructor(fetchBlob: (path: string) => Promise<Blob>);
+    get(mediaId: string): Promise<Blob>;
+}
 export declare const CERTIFICATE_BASE_PATH = "/api/business/certificate";
 export interface CertificateSlot {
     present: boolean;
@@ -432,6 +442,7 @@ export declare class ErploraClient {
     private eventsApi?;
     private printApi?;
     private whatsappTemplatesApi?;
+    private whatsappMediaApi?;
     private certificateApi?;
     constructor(transport: ErploraTransport, opts?: {
         permissions?: () => ReadonlySet<string>;
@@ -449,6 +460,7 @@ export declare class ErploraClient {
     get flows(): FlowsApi;
     get events(): EventsApi;
     get whatsappTemplates(): WhatsappTemplatesApi;
+    get whatsappMedia(): WhatsappMediaApi;
     get certificate(): CertificateApi;
     get printQueue(): PrintApi;
     query<T = unknown>(name: string, params?: Record<string, unknown>): Promise<T>;
