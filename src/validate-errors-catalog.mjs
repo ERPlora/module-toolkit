@@ -304,9 +304,27 @@ export function checkErrorsCatalog(dir, manifest, { previous = previousReleaseMa
     const code = command?.expect_rows?.error;
     if (typeof code === 'string') expectRows.push({ name, code });
   }
+  // hub#2081: `on_unique` maps a unique index of the module to a code the dispatcher RAISES when
+  // that index refuses a write. The hub's installer refuses a code outside the module's namespace
+  // with or without a catalog, and one the catalog does not list when there is one.
+  const onUnique = [];
+  for (const [name, command] of Object.entries(manifest.commands ?? {})) {
+    const map = command?.on_unique;
+    if (!map || typeof map !== 'object') continue;
+    for (const [index, code] of Object.entries(map)) {
+      if (typeof code !== 'string') continue;
+      if (!validDomainCode(moduleId, code)) {
+        errors.push(
+          `commands.${name}: \`on_unique\` maps the index \`${index}\` to \`${code}\`, which is not a domain code of this module (expected \`${moduleId}.<snake_case>\`, ADR-0205)`,
+        );
+        continue;
+      }
+      onUnique.push({ name, code });
+    }
+  }
 
   if (!declared) {
-    const codes = [...new Set([...emitted.keys(), ...expectRows.map((e) => e.code)])].sort();
+    const codes = [...new Set([...emitted.keys(), ...expectRows.map((e) => e.code), ...onUnique.map((e) => e.code)])].sort();
     if (codes.length) {
       warnings.push(
         `emits ${codes.length} domain error code(s) without an \`errors\` catalog in module.json (ADR-0398) — ` +
@@ -332,6 +350,11 @@ export function checkErrorsCatalog(dir, manifest, { previous = previousReleaseMa
   for (const { name, code } of expectRows) {
     if (!(code in declared)) {
       errors.push(`commands.${name}: \`expect_rows.error\` raises \`${code}\`, which the \`errors\` catalog does not declare (ADR-0398)`);
+    }
+  }
+  for (const { name, code } of onUnique) {
+    if (!(code in declared)) {
+      errors.push(`commands.${name}: \`on_unique\` raises \`${code}\`, which the \`errors\` catalog does not declare (ADR-0398)`);
     }
   }
 

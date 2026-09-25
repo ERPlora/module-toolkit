@@ -120,6 +120,76 @@ test('FAILS: an `expect_rows.error` outside the catalog, naming the command', ()
   }
 });
 
+// hub#2081: `commands.<name>.on_unique` maps one of the module's unique indexes to a code the
+// dispatcher RAISES, so the author's door says what the install door says (`installer.rs`).
+test('FAILS: an `on_unique` code outside the catalog, naming the command and the code', () => {
+  const dir = mod(
+    base({
+      errors: catalog(['appointments.other']),
+      commands: { 'appointments.book': { permission: '', on_unique: { uq_appointments_slot: 'appointments.slot_taken' } } },
+    }),
+    { en: locales(['appointments.other']), es: locales(['appointments.other']) },
+  );
+  try {
+    const out = checkErrorsCatalog(dir, JSON.parse(readManifest(dir)));
+    assert.equal(out.errors.length, 1, out.errors.join('\n'));
+    assert.match(out.errors[0], /appointments\.book/);
+    assert.match(out.errors[0], /on_unique/);
+    assert.match(out.errors[0], /appointments\.slot_taken/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('PASSES: an `on_unique` code the catalog declares and the locales translate', () => {
+  const codes = ['appointments.slot_taken'];
+  const dir = mod(
+    base({
+      errors: catalog(codes),
+      commands: { 'appointments.book': { permission: '', on_unique: { uq_appointments_slot: 'appointments.slot_taken' } } },
+    }),
+    { en: locales(codes), es: locales(codes) },
+  );
+  try {
+    const out = checkErrorsCatalog(dir, JSON.parse(readManifest(dir)));
+    assert.deepEqual(out.errors, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS even without a catalog: an `on_unique` code of ANOTHER module (the hub refuses to install it)', () => {
+  const dir = mod(
+    base({
+      commands: { 'appointments.book': { permission: '', on_unique: { uq_appointments_slot: 'sales.slot_taken' } } },
+    }),
+  );
+  try {
+    const out = checkErrorsCatalog(dir, JSON.parse(readManifest(dir)));
+    assert.equal(out.errors.length, 1, out.errors.join('\n'));
+    assert.match(out.errors[0], /on_unique/);
+    assert.match(out.errors[0], /sales\.slot_taken/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('WARNS without a catalog: an own `on_unique` code is listed with the other undeclared codes', () => {
+  const dir = mod(
+    base({
+      commands: { 'appointments.book': { permission: '', on_unique: { uq_appointments_slot: 'appointments.slot_taken' } } },
+    }),
+  );
+  try {
+    const out = checkErrorsCatalog(dir, JSON.parse(readManifest(dir)));
+    assert.deepEqual(out.errors, []);
+    assert.equal(out.warnings.length, 1);
+    assert.match(out.warnings[0], /appointments\.slot_taken/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('FAILS: a declared code with no `en` or no `es` text (the UI translates by code, ADR-0055)', () => {
   const dir = mod(base({ errors: catalog(['appointments.overlap']) }), {
     en: locales(['appointments.overlap']),

@@ -527,6 +527,19 @@
             },
             "description": "Gate traducible de filas afectadas (hub#139): la versión con código de dominio estable de `min_affected_rows` (no combinables en un mismo command). Si la mutación afecta menos de `n` filas, rollback ENTERO (mutación + outbox) y el caller recibe HTTP 409 con `{code: error, message}` — nunca un `200 ok` con 0 filas ni un evento falso. Por defecto el recuento es del LOTE; con varias sentencias donde una es incondicional, esa promesa solo se cumple declarando `statement` (hub#1091)."
           },
+          "on_unique": {
+            "type": "object",
+            "propertyNames": {
+              "pattern": "^[a-z_][a-z0-9_]*$",
+              "maxLength": 63
+            },
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$"
+            },
+            "description": "What a refusal of one of the module's unique indexes MEANS (hub#2081): index name → domain code (`{\"uq_staff_member_hub_user\": \"staff.user_already_linked\"}`). A guard in a read cannot stop two requests that pass it at the same time; the unique index behind it stops the second write, and this names the code the loser of that race gets instead of the generic `db` error. The runtime maps a unique violation (SQLSTATE 23505) of a DECLARED index on a table the module OWNS (`<id>_…`) to that code; any other violation stays a database error. The code must be of the module's own namespace and, when the module declares an `errors` catalog, listed in it (the installer checks both, ADR-0398)."
+          },
           "ai": {
             "$ref": "#/$defs/aiTool"
           }
