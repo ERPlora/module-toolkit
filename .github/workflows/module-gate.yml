@@ -39,6 +39,15 @@ on:
         required: false
         type: boolean
         default: true
+    secrets:
+      MODULES_DEPLOY_KEYS:
+        description: >
+          Read-only deploy keys of the module repos (tar.gz + base64, one private key per module
+          id — the same bundle ERPlora/hub uses, hub#1216). Only a module whose recipes declare
+          version floors on neighbours (`flows/*.requires.json`) needs it; without it that module's
+          gate is red, because its battery would otherwise skip every floor and pass
+          (module-toolkit#343).
+        required: false
 
 jobs:
   validate:
@@ -120,6 +129,16 @@ jobs:
           sdk-path: ${{ steps.sdk.outputs.path }}
           base-sha: ${{ github.event.pull_request.base.sha }}
 
+      # ── The neighbours a recipe puts a floor on (module-toolkit#343) ────────────────────────
+      # `erplora test` runs the module's battery, which checks every `flows/*.requires.json` floor
+      # against the neighbour's history NEXT TO the module. Without them it skipped and went green.
+      # A no-op for a module without floors; red for one with floors and no bundle.
+      - name: Bring the neighbours the recipes' floors name
+        uses: ERPlora/module-toolkit/.github/actions/module-neighbours@main
+        with:
+          path: ${{ inputs.path }}
+          keys: ${{ secrets.MODULES_DEPLOY_KEYS }}
+
       # Resolved without any token: this repository is private, but its actions are shared with the
       # organization (repo Settings → Actions → Access). Pinned to `main` on purpose — the gate is
       # meant to be the CURRENT validator, not the one that existed when the stub was written.
@@ -129,3 +148,11 @@ jobs:
           pg: ${{ inputs.pg }}
           typescript: ${{ inputs.typescript }}
           module-sdk-path: ${{ steps.sdk.outputs.path }}
+
+      # The runner is self-hosted and keeps `_work/` between jobs: the neighbours go even when a
+      # step above failed, or the next job would find this one's clones next to its module.
+      - if: always()
+        uses: ERPlora/module-toolkit/.github/actions/module-neighbours@main
+        with:
+          path: ${{ inputs.path }}
+          cleanup: 'true'

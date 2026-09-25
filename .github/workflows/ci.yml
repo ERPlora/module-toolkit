@@ -246,6 +246,7 @@ jobs:
           test/against-hub.test.mjs
           test/gate-wiring.test.mjs
           test/check-hub-battery-pairing.test.mjs
+          test/module-neighbours.test.mjs
           test/gate-infra-annotations.test.mjs
           test/release-dispatch.test.mjs
           test/scaffold-runs-on-postgres.test.mjs
