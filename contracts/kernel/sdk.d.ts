@@ -254,6 +254,7 @@ export declare class FlowsApi {
     activateTemplate(family: string): Promise<Flow>;
     deactivateTemplate(family: string): Promise<Flow>;
     restoreTemplate(family: string): Promise<Flow>;
+    restoreModuleTemplate(module: string, family: string): Promise<Flow>;
 }
 export interface FlowTemplateDiscard {
     module: string;
