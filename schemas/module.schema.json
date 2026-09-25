@@ -1180,7 +1180,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Columnas (de la proyección base) sobre las que aplica el buscador global con LIKE."
+          "description": "Columnas (de la proyección base) sobre las que aplica el buscador global: un «contiene» que no distingue mayúsculas ni acentos (hub#2096)."
         },
         "sort": {
           "type": "array",
