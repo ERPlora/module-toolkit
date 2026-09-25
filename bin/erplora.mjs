@@ -19,7 +19,7 @@
 // they pull heavy third-party packages (esbuild, lit, @ionic/core, @iconify) that the CI gate of
 // the module repos does not — and cannot — install: three of this package's (dev) dependencies are
 // `file:` paths into sibling checkouts (`../hub/...`, `../outfitkit`) that do not exist on a
-// runner, so `npm install` fails as a whole and the gate installs the public ones by hand
+// runner, so a plain `npm install` cannot link them and the gate installs the public ones by hand
 // (ERPlora/pm#107). Loading `build.mjs` just to run `validate` made the CLI die with
 // `ERR_MODULE_NOT_FOUND: esbuild` before parsing a single argument.
 import { validate } from '../src/validate.mjs';

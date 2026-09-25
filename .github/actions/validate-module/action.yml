@@ -7,9 +7,9 @@
 # it the same way it fetches a public action. No PAT lives in 24 repos, and the gate always runs
 # the validator that sits on this repo's `main`, so fixing a hole here fixes it everywhere at once.
 #
-# WHY NOT `npm install`. Three of this package's dependencies are `file:` paths into sibling
+# WHY NOT `npm install`. Three of this package's devDependencies are `file:` paths into sibling
 # checkouts (`../hub/packages/module-sdk`, `../hub/packages/module-types`, `../outfitkit`) that do
-# not exist on a runner, so a plain install fails as a whole. `validate` needs TWO public packages —
+# not exist on a runner, so a plain install cannot link them. `validate` needs TWO public packages —
 # `typescript`, used by contracts.mjs to read the module's .ts, and `ajv`, which EVALUATES the
 # canonical manifest schema (module-toolkit#247) instead of only reading its key names — so those
 # are installed on their own, at the versions this repo declares. If the validator ever grows a
@@ -127,7 +127,7 @@ runs:
         rm -rf "$deps"
         mkdir -p "$deps"
         # Installed in a scratch prefix on purpose: installing INTO the toolkit would reify its
-        # whole tree, `file:` dependencies included, and fail.
+        # whole tree, `file:` devDependencies included, and leave dangling links.
         # `--legacy-peer-deps`: npm 10's arborist (Node 22's npm) crashes computing a peer set the day
         # a peer family bumps major on the registry — vitest 5.0.0 took the whole module CI down on
         # 2026-09-03 (module-toolkit#171). A throwaway prefix with an explicit package list needs no
