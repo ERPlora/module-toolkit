@@ -1,0 +1,67 @@
+# Brings the published neighbours a module's recipes put a floor on — module-toolkit#343.
+#
+# WHY. `flows/*.requires.json` declare the minimum release of every neighbour a recipe needs, and
+# the module's battery checks each floor by reading that neighbour's git history NEXT TO the
+# module. The gate checked out the module alone, so on CI every floor printed «skipped» and went
+# green over a floor too low (whatsapp_inbox#213). This step clones the neighbours, WITH history,
+# into the directory that holds the module checkout.
+#
+# WHY A SECRET HERE, when the rest of the gate goes out of its way to need none. The SDK and the
+# toolkit reach the runner as composite actions, which GitHub resolves without a credential — but
+# a resolved action is a tarball with no history, and the history is the whole point. So the
+# neighbours come through read-only deploy keys, one per module repo, in the same tar+base64
+# bundle ERPlora/hub already uses for its crater (hub#1216). Only a module WITH floors needs it:
+# the others see this step print one line and move on.
+#
+# The keys live in $RUNNER_TEMP for the length of this step and are deleted on exit, success or
+# not. The clones are removed by the `cleanup: 'true'` call at the end of the gate, which runs
+# `if: always()`: the runner is self-hosted and keeps `_work/` between jobs.
+name: Bring the module's neighbours
+description: >
+  Clones, with history, every module of the MODULES_DEPLOY_KEYS bundle next to this module when
+  its recipes declare version floors on neighbours; red when they declare floors and no bundle came.
+
+inputs:
+  path:
+    description: Path of the module inside the repository.
+    required: false
+    default: '.'
+  keys:
+    description: The MODULES_DEPLOY_KEYS secret (tar.gz of one private key per module id, base64).
+    required: false
+    default: ''
+  cleanup:
+    description: "'true' removes the neighbours an earlier call of this action cloned."
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Los vecinos de los suelos de versión
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        MODULE_PATH: ${{ inputs.path }}
+        KEYS_B64: ${{ inputs.keys }}
+        CLEANUP: ${{ inputs.cleanup }}
+      run: |
+        set -euo pipefail
+        toolkit=$(cd "$ACTION_PATH/../../.." && pwd)
+        module_dir=$(cd "$MODULE_PATH" && pwd)
+
+        if [ "$CLEANUP" = 'true' ]; then
+            node "$toolkit/src/module-neighbours.mjs" cleanup "$module_dir"
+            exit 0
+        fi
+
+        keys="$RUNNER_TEMP/erplora-neighbour-keys"
+        rm -rf "$keys"
+        trap 'rm -rf "$keys"' EXIT
+        mkdir -p "$keys" && chmod 700 "$keys"
+        if [ -n "$KEYS_B64" ]; then
+            printf '%s' "$KEYS_B64" | base64 -d | tar xz -C "$keys"
+            find "$keys" -type f -exec chmod 600 {} +
+        fi
+
+        node "$toolkit/src/module-neighbours.mjs" --module-dir "$module_dir" --keys "$keys"

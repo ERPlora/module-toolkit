@@ -314,3 +314,45 @@ for (const [name, file] of [
     }
   });
 }
+
+// ── The neighbours a module's recipes put a floor on are ON the runner (#343) ────────────────
+// The module's battery checks every `flows/*.requires.json` floor by reading the neighbour's
+// history next to the module. Without this step it printed «skipped» on CI and went green over a
+// floor too low (whatsapp_inbox#213). Four links, all in YAML nobody runs locally: the secret the
+// stub passes in, the step that clones, its place BEFORE the batteries run, and the cleanup that
+// keeps a self-hosted runner from serving one job's neighbours to the next.
+const NEIGHBOURS_ACTION = 'ERPlora/module-toolkit/.github/actions/module-neighbours@main';
+const NEIGHBOURS = readFileSync(join(REPO, '.github/actions/module-neighbours/action.yml'), 'utf8');
+
+test('the gate accepts the deploy-key bundle as an OPTIONAL secret', () => {
+  assert.match(
+    GATE,
+    /workflow_call:[\s\S]*?\n\s{4}secrets:\s*\n\s{6}MODULES_DEPLOY_KEYS:\s*\n[\s\S]*?required:\s*false/,
+    'optional: the 26 modules without floors must keep calling the gate without a secret',
+  );
+});
+
+test('the gate brings the neighbours with that secret, BEFORE the batteries run', () => {
+  const step = stepUsing(GATE, NEIGHBOURS_ACTION);
+  assert.match(step, /keys:\s*\$\{\{\s*secrets\.MODULES_DEPLOY_KEYS\s*\}\}/);
+  assert.match(step, /path:\s*\$\{\{\s*inputs\.path\s*\}\}/);
+  assert.ok(
+    GATE.indexOf(NEIGHBOURS_ACTION) < GATE.indexOf('ERPlora/module-toolkit/.github/actions/validate-module@main'),
+    'validate-module runs `erplora test`: the neighbours have to be there before it',
+  );
+});
+
+test('the neighbours are removed even when the gate fails', () => {
+  const at = GATE.lastIndexOf(`uses: ${NEIGHBOURS_ACTION}`);
+  assert.ok(at > GATE.indexOf('ERPlora/module-toolkit/.github/actions/validate-module@main'));
+  const step = stepUsing(GATE.slice(GATE.lastIndexOf('\n      - ', at)), NEIGHBOURS_ACTION);
+  assert.match(step, /if:\s*always\(\)/);
+  assert.match(step, /cleanup:\s*'?true'?/);
+});
+
+test('the action unpacks the keys into RUNNER_TEMP, drops them on exit, and runs the toolkit script', () => {
+  assert.match(NEIGHBOURS, /RUNNER_TEMP/);
+  assert.match(NEIGHBOURS, /trap 'rm -rf "\$keys"' EXIT/);
+  assert.match(NEIGHBOURS, /base64 -d \| tar xz -C "\$keys"/);
+  assert.match(NEIGHBOURS, /src\/module-neighbours\.mjs/);
+});
