@@ -14,7 +14,7 @@
 //     it is reported, with the command that writes it, instead of failing somebody else's work.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, copyFileSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -147,8 +147,11 @@ test('a source without the table is refused instead of rewritten blind (#271)', 
 
 test('the REAL source file accepts a row and still imports with it (#271)', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'hub-outfitkit-rows-'));
-  // The module imports `./outfitkit-stamp.mjs`; copy both so the rewritten file really loads.
+  // The module imports `./outfitkit-stamp.mjs` and `./validate-outfitkit-api.mjs` (which imports
+  // `typescript`, #346): copy its siblings and link node_modules so the rewritten file really loads.
   copyFileSync(join(REPO, 'src/outfitkit-stamp.mjs'), join(dir, 'outfitkit-stamp.mjs'));
+  copyFileSync(join(REPO, 'src/validate-outfitkit-api.mjs'), join(dir, 'validate-outfitkit-api.mjs'));
+  symlinkSync(join(REPO, 'node_modules'), join(dir, 'node_modules'), 'dir');
   const next = { hub: '1.1.999', built_at: '2026-12-01T00:00:00Z', outfitkit: '0.1.73' };
   writeFileSync(join(dir, 'floor.mjs'), insertHubRows(readFileSync(FLOOR_SRC, 'utf8'), [next]));
   const mod = await import(join(dir, 'floor.mjs'));
