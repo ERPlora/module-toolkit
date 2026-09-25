@@ -35,6 +35,18 @@ aporta las dependencias y la configuración de build.
 > `build`/`dev`/`pack`/`validate` aceptan una **ruta** o un **id suelto** (resuelve a `modules/<id>`
 > dentro de un workspace).
 
+## Publicar el toolkit en npm (module-toolkit#332)
+
+El paquete `@erplora/module-toolkit` se publica en **npmjs público** desde una **etiqueta de
+versión**, nunca desde una rama: se sube `version` en `package.json` por PR a `main` y se empuja la
+etiqueta que la nombra (`git tag v0.2.0 <sha> && git push origin v0.2.0`). El workflow
+`.github/workflows/publish.yml` rechaza una etiqueta que no coincida con el manifest
+(`scripts/check-release-tag.mjs`), vuelve a probar el tarball (`test/npm-publish.test.mjs` +
+`test/install-from-package.test.mjs`) y publica por **OIDC** (Trusted Publishing, como
+`@erplora/outfitkit`): no hay `NPM_TOKEN` guardado en ningún sitio. La primera publicación y el alta
+del Trusted Publisher en npmjs (org `ERPlora` · repo `module-toolkit` · workflow `publish.yml`) se
+hacen una sola vez a mano: module-toolkit#337.
+
 ## Cómo resuelve las deps un módulo standalone (el nudo técnico)
 
 Un repo de módulo vive **fuera de cualquier workspace** y **no declara** `lit` ni `@erplora/*`.
