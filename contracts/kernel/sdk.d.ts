@@ -197,6 +197,7 @@ export interface CoreRequest {
     method: CoreMethod;
     path: string;
     body?: unknown;
+    envelope?: boolean;
 }
 export interface CoreApiTransport {
     coreRequest(req: CoreRequest, headers?: Record<string, string>): Promise<unknown>;
@@ -249,8 +250,20 @@ export declare class FlowsApi {
     deleteSecret(name: string): Promise<unknown>;
     schema(): Promise<FlowSchema>;
     templates(): Promise<ModuleFlowTemplate[]>;
+    templateDiscards(): Promise<FlowTemplateDiscard[]>;
     activateTemplate(family: string): Promise<Flow>;
     deactivateTemplate(family: string): Promise<Flow>;
+}
+export interface FlowTemplateDiscard {
+    module: string;
+    family: string;
+    code: string;
+    detail: string;
+    requires?: {
+        module: string;
+        floor: string;
+        installed: string | null;
+    };
 }
 export interface ModuleFlowTemplate {
     module: string;
