@@ -253,6 +253,7 @@ export declare class FlowsApi {
     templateDiscards(): Promise<FlowTemplateDiscard[]>;
     activateTemplate(family: string): Promise<Flow>;
     deactivateTemplate(family: string): Promise<Flow>;
+    restoreTemplate(family: string): Promise<Flow>;
 }
 export interface FlowTemplateDiscard {
     module: string;
@@ -279,6 +280,7 @@ export interface ModuleFlowTemplate {
     installed?: {
         flow_id: string;
         enabled: boolean;
+        outdated?: boolean | null;
     } | null;
 }
 export interface EventFieldShape {
