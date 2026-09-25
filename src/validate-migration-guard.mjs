@@ -397,6 +397,21 @@ export function dropsMoreThanOne(statement) {
   return null;
 }
 
+/**
+ * The column a `contract` retires with `DROP COLUMN IF EXISTS`, or `null`.
+ *
+ * A COMPATIBILITY rule, like #70: it is judged with the hub the CUSTOMER runs, not the one on
+ * `develop`. Every hub up to ERPlora/hub#2108 rewrites it to `RENAME COLUMN IF EXISTS c TO
+ * _deprecated_c`, which Postgres rejects, so the module never updates there (module-toolkit#329).
+ * The guard on the TABLE (`ALTER TABLE IF EXISTS t …`, `DROP TABLE IF EXISTS t`) survives the
+ * rewrite as valid SQL and is not this rule's business. Retire the rule once the whole fleet runs a
+ * hub with that fix.
+ */
+export function columnDropGuardedByIfExists(statement) {
+  const found = /\bDROP\s+COLUMN\s+IF\s+EXISTS\s+("?[\w$]+"?)/i.exec(stripComments(statement));
+  return found ? found[1] : null;
+}
+
 /** The DDL verb the statement starts with, if any — what a `backfill` may not contain. */
 export function ddlVerb(statement) {
   const upper = stripComments(statement).trimStart().toUpperCase();
@@ -491,6 +506,17 @@ export function checkMigrationSql(moduleId, filename, sql, kind = 'expand') {
             'DESTRUYE FILAS sin vuelta atrás. Un `contract` retira ESTRUCTURA y el runtime la aparta ' +
             'a `_deprecated_*`; de las filas no hay nada que apartar. Si de verdad hay que ' +
             'limpiarlas, va en una migración `backfill`, que es donde el DML tiene su sitio',
+        ];
+      }
+      const guarded = columnDropGuardedByIfExists(statement);
+      if (guarded) {
+        return [
+          ...errors,
+          `${filename}: la migración \`contract\` retira la columna \`${guarded}\` con ` +
+            '`DROP COLUMN IF EXISTS`, y los hubs desplegados hoy la apartan con un ' +
+            '`RENAME COLUMN IF EXISTS` que Postgres no acepta: la actualización del módulo falla en ' +
+            'cada arranque (ERPlora/hub#2108). Escribe `DROP COLUMN ' +
+            `${guarded}\` sin \`IF EXISTS\`: es la forma que todos los hubs traducen bien`,
         ];
       }
       const many = dropsMoreThanOne(statement);
