@@ -1,0 +1,73 @@
+# Publishes `@erplora/module-toolkit` to the public npm registry from a version tag
+# (module-toolkit#332).
+#
+# WHY. The developers page of the SaaS tells a vendor to `npm install @erplora/module-toolkit`;
+# until this workflow existed, npm answered E404.
+#
+# HOW TO RELEASE. Bump `version` in package.json on `main` (through a pull request, like any
+# change), then push the tag that names it: `git tag v0.2.0 <sha> && git push origin v0.2.0`.
+# The tag is the release: `scripts/check-release-tag.mjs` refuses a tag that does not name the
+# manifest's version, and a branch push never publishes.
+#
+# AUTHENTICATION: Trusted Publishing (OIDC), the same way `@erplora/outfitkit` is published — no npm
+# token is stored anywhere. npmjs.com has to know this workflow: on the package's settings page,
+# Trusted Publisher = GitHub Actions · organization `ERPlora` · repository `module-toolkit` ·
+# workflow `publish.yml`. Renaming this file breaks that binding.
+#
+# 🔴 GitHub-hosted runner on purpose, NOT `vars.CI_RUNNER_LABEL`: npm's trusted publishing does not
+# accept OIDC tokens from self-hosted runners.
+
+name: Publish to npm
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  id-token: write # OIDC token for npm Trusted Publishing
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # WITHOUT registry-url on purpose: setup-node would write an .npmrc with a placeholder
+      # `_authToken`, npm would authenticate with it and never try OIDC.
+      # Node 24 carries npm 11 (Trusted Publishing needs npm >= 11.5.1).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: npm supports Trusted Publishing
+        run: |
+          set -euo pipefail
+          v=$(npm --version)
+          echo "node=$(node --version) npm=$v"
+          node -e '
+            const [maj, min, pat] = process.argv[1].split(".").map(Number);
+            if (maj > 11 || (maj === 11 && (min > 5 || (min === 5 && pat >= 1)))) process.exit(0);
+            console.error(`::error::npm ${process.argv[1]} cannot publish by OIDC (needs >= 11.5.1)`);
+            process.exit(1);
+          ' "$v"
+
+      # The tag goes in as an env value, never spliced into the shell line: an expression inside
+      # `run:` is expanded before the shell sees it, so a tag named `v$(…)` would run as code.
+      - name: The tag names the version in package.json
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/check-release-tag.mjs "$RELEASE_TAG"
+
+      # The tarball that is about to be published: publishable, public, no stray files, no fleet
+      # hosts, and installable outside the monorepo answering `erplora --version`.
+      - name: The tarball is publishable and installs
+        run: node --test test/npm-publish.test.mjs test/install-from-package.test.mjs test/check-release-tag.test.mjs
+
+      - name: Publish (OIDC, no token)
+        run: npm publish --access public

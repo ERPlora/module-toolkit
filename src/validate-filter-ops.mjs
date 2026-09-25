@@ -140,10 +140,8 @@ export const FILTER_OPS_GRANDFATHERED = [
   ['verifactu', 'verifactu.events.list', 'event_type'],
   ['verifactu', 'verifactu.aeat.records.list', 'invoice_number'],
   ['verifactu', 'verifactu.aeat.records.list', 'estado'],
-  // whatsapp_inbox — 4
+  // whatsapp_inbox — 2 (the requests screen was retired in whatsapp_inbox#193)
   ['whatsapp_inbox', 'whatsapp_inbox.conversations.list', 'contact_name'],
-  ['whatsapp_inbox', 'whatsapp_inbox.requests.list', 'reference_number'],
-  ['whatsapp_inbox', 'whatsapp_inbox.requests.list', 'contact_name'],
   ['whatsapp_inbox', 'whatsapp_inbox.templates.list', 'language'],
 ];
 

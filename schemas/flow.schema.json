@@ -364,6 +364,9 @@
             "header_image": { "description": "Enlace http(s) público de la IMAGEN de la cabecera de la plantilla (Meta lo descarga). Parámetro `header` de tipo `image`." },
             "header_video": { "description": "Enlace http(s) público del VÍDEO de la cabecera de la plantilla (Meta lo descarga). Parámetro `header` de tipo `video`." },
             "header_document": { "description": "Enlace http(s) público del DOCUMENTO de la cabecera de la plantilla (Meta lo descarga). Parámetro `header` de tipo `document`." }
+          },
+          "patternProperties": {
+            "^button_url_[0-9]$": { "description": "hub#2110 — la PARTE VARIABLE del botón de enlace de la plantilla de WhatsApp en la posición `<n>` (0-9, como Meta cuenta los botones de la plantilla): el texto que Meta pone en el `{{1}}` de su URL (el código de la cita, el del pedido). El transporte lo convierte en el componente `button` (`sub_type: url`) de Meta. Solo en `whatsapp` y solo con `template`; un valor vacío o una clave con otra posición se RECHAZAN." }
           }
         },
         "interactive": {
