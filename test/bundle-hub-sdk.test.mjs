@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BUNDLED_HUB_PACKAGES, bundleHubSdk, hubPackageDir, removeBundle } from '../scripts/bundle-hub-sdk.mjs';
+import { BUNDLED_HUB_PACKAGES, SDK_CONTRACT, bundleHubSdk, hubPackageDir, removeBundle } from '../scripts/bundle-hub-sdk.mjs';
 
 const scratch = mkdtempSync(join(tmpdir(), 'erplora-bundle-sdk-'));
 test.after(() => rmSync(scratch, { recursive: true, force: true }));
@@ -20,9 +20,20 @@ function write(path, body) {
   writeFileSync(path, body);
 }
 
+/** The frozen public surface of the SDK (`contracts/kernel/sdk.d.ts`) both sides agree on. */
+const CONTRACT = 'export declare function fromMicro(n: number): number;\n';
+
+/** A toolkit checkout whose kernel contract mirror says `contract`. */
+function fakeToolkit(name, contract = CONTRACT) {
+  const toolkit = join(scratch, name);
+  write(join(toolkit, SDK_CONTRACT), contract);
+  return toolkit;
+}
+
 /** A hub checkout with the two packages, the SDK carrying a test file that must not ship. */
-function fakeHub(name) {
+function fakeHub(name, contract = CONTRACT) {
   const hub = join(scratch, name);
+  write(join(hub, SDK_CONTRACT), contract);
   write(join(hub, 'packages/module-sdk/package.json'), JSON.stringify({ name: '@erplora/module-sdk', main: 'src/index.ts' }));
   write(join(hub, 'packages/module-sdk/src/index.ts'), "export * from './quantity.ts';\n");
   write(join(hub, 'packages/module-sdk/src/quantity.ts'), 'export const fromMicro = (n: number) => n / 1e6;\n');
@@ -39,7 +50,7 @@ test('both hub packages are carried', () => {
 
 test('a declared hub is the source: package.json and the sources ship, tests and scripts do not', () => {
   const hub = fakeHub('hub-declared');
-  const toolkit = join(scratch, 'toolkit-declared');
+  const toolkit = fakeToolkit('toolkit-declared');
   const copied = bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } });
 
   assert.deepEqual(copied.sort(), [
@@ -80,9 +91,39 @@ test('no declared hub and nothing installed stops the pack', () => {
   assert.throws(() => hubPackageDir('module-sdk', { env: {}, resolve }), { code: 'hub_sdk_missing' });
 });
 
+// The copy is read from whatever hub is at hand — in the monorepo, `../hub` on whatever branch it was
+// left. Measured in the review of #365: `../hub` on a stale feature branch, `npm pack` exited 0 and the
+// tarball carried an SDK that was neither develop's nor the one its own `contracts/kernel/sdk.d.ts`
+// describes. The kernel contract is the SDK's frozen surface, mirrored here and checked against
+// develop by the canonical mirrors: a hub that disagrees with it is not the hub this toolkit speaks to.
+test('a hub whose SDK contract is not the one the toolkit ships stops the pack, copying nothing', () => {
+  const hub = fakeHub('hub-drifted', 'export declare function fromMicro(n: number, scale: number): number;\n');
+  const toolkit = fakeToolkit('toolkit-drifted');
+  assert.throws(() => bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } }), { code: 'hub_sdk_out_of_date' });
+  assert.equal(existsSync(join(toolkit, 'vendor')), false);
+});
+
+test('a hub with no SDK contract to compare stops the pack', () => {
+  const hub = fakeHub('hub-no-contract');
+  rmSync(join(hub, SDK_CONTRACT));
+  assert.throws(
+    () => bundleHubSdk({ toolkitRoot: fakeToolkit('toolkit-no-contract'), env: { ERPLORA_HUB_DIR: hub } }),
+    { code: 'hub_sdk_out_of_date' },
+  );
+});
+
+test('the installed SDK is checked against the contract of the hub it lives in', () => {
+  const hub = fakeHub('hub-installed-drifted', 'export {};\n');
+  const resolve = (spec) => join(hub, 'packages', spec.split('/')[1], 'package.json');
+  assert.throws(
+    () => bundleHubSdk({ toolkitRoot: fakeToolkit('toolkit-installed-drifted'), env: {}, resolve }),
+    { code: 'hub_sdk_out_of_date' },
+  );
+});
+
 test('a file the hub dropped does not linger in the next pack', () => {
   const hub = fakeHub('hub-shrinks');
-  const toolkit = join(scratch, 'toolkit-shrinks');
+  const toolkit = fakeToolkit('toolkit-shrinks');
   bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } });
   rmSync(join(hub, 'packages/module-sdk/src/quantity.ts'));
   bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } });
@@ -91,7 +132,7 @@ test('a file the hub dropped does not linger in the next pack', () => {
 
 test('after the pack, the copy is removed from the checkout', () => {
   const hub = fakeHub('hub-clean');
-  const toolkit = join(scratch, 'toolkit-clean');
+  const toolkit = fakeToolkit('toolkit-clean');
   bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } });
   removeBundle(toolkit);
   assert.equal(existsSync(join(toolkit, 'vendor')), false);
