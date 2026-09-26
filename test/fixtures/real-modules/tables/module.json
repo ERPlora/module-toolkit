@@ -1,0 +1,942 @@
+{
+  "id": "tables",
+  "name": "Tables",
+  "version": "2.2.45",
+  "description": "Restaurant floor plan: zones, tables and table sessions.",
+  "agent": {
+    "description": "Manages restaurant floor plan zones, tables, and table sessions: create/update/delete zones and tables, open/close/transfer sessions, and bulk-create tables.",
+    "keywords": [
+      "table",
+      "zone",
+      "floor plan",
+      "session",
+      "restaurant",
+      "seating",
+      "dining"
+    ]
+  },
+  "depends_on": [],
+  "permissions": [
+    "tables.view_zone",
+    "tables.add_zone",
+    "tables.change_zone",
+    "tables.delete_zone",
+    "tables.view_table",
+    "tables.add_table",
+    "tables.change_table",
+    "tables.delete_table",
+    "tables.view_tablesession",
+    "tables.add_tablesession",
+    "tables.change_tablesession",
+    "tables.transfer_tablesession",
+    "tables.delete_tablesession",
+    "tables.view_settings",
+    "tables.manage_settings"
+  ],
+  "role_permissions": {
+    "admin": [
+      "*"
+    ],
+    "cashier": [
+      "tables.view_zone",
+      "tables.view_table",
+      "tables.view_tablesession",
+      "tables.add_tablesession",
+      "tables.change_tablesession",
+      "tables.transfer_tablesession",
+      "tables.view_settings"
+    ],
+    "manager": [
+      "tables.view_zone",
+      "tables.add_zone",
+      "tables.change_zone",
+      "tables.view_table",
+      "tables.add_table",
+      "tables.change_table",
+      "tables.view_tablesession",
+      "tables.add_tablesession",
+      "tables.change_tablesession",
+      "tables.transfer_tablesession",
+      "tables.view_settings"
+    ],
+    "employee": [
+      "tables.view_zone",
+      "tables.view_table",
+      "tables.view_tablesession",
+      "tables.add_tablesession",
+      "tables.change_tablesession",
+      "tables.transfer_tablesession",
+      "tables.view_settings"
+    ]
+  },
+  "navigation": [
+    {
+      "id": "floor_plan",
+      "label": "Floor Plan",
+      "icon": "map-outline",
+      "component": "erp-tables-canvas"
+    },
+    {
+      "id": "zones",
+      "label": "Zones",
+      "icon": "layers-outline",
+      "component": "erp-tables-zones"
+    },
+    {
+      "id": "tables",
+      "label": "Tables",
+      "icon": "grid-outline",
+      "component": "erp-tables-floor-plan"
+    },
+    {
+      "id": "sessions",
+      "label": "Sessions",
+      "icon": "time-outline",
+      "component": "erp-tables-sessions"
+    }
+  ],
+  "settings": {
+    "title": "Tables",
+    "icon": "grid-outline",
+    "schema": "schemas/settings_update.json",
+    "get": "tables.settings.get",
+    "set": "tables.settings.update"
+  },
+  "provides_slots": [
+    {
+      "slot": "sales.pos.assign",
+      "component": "erp-tables-pos-zones",
+      "permission": "tables.view_table",
+      "priority": 100
+    }
+  ],
+  "migrations": {
+    "postgres": [
+      "migrations/postgres/001_init.sql",
+      "migrations/postgres/002_gate.sql",
+      "migrations/postgres/003_session_merge.sql",
+      "migrations/postgres/004_session_order.sql",
+      "migrations/postgres/005_session_assignment.sql",
+      "migrations/postgres/006_session_no_table.sql",
+      "migrations/postgres/007_session_history_fk.sql",
+      "migrations/postgres/008_table_hold.sql",
+      "migrations/postgres/009_session_split.sql",
+      "migrations/postgres/010_settings.sql",
+      {
+        "file": "migrations/postgres/011_named_gate_constraints.sql",
+        "kind": "contract",
+        "since": "2.2.39"
+      }
+    ]
+  },
+  "queries": {
+    "tables.zones.list": {
+      "permission": "tables.view_zone",
+      "sql": "queries/zones_list.sql",
+      "list": {
+        "search": [
+          "name"
+        ],
+        "sort": [
+          "id",
+          "name",
+          "color",
+          "sort_order",
+          "is_active",
+          "table_count",
+          "available_tables_count"
+        ],
+        "default_sort": "sort_order",
+        "default_dir": "asc",
+        "filters": {
+          "name": {
+            "op": "like"
+          },
+          "color": {
+            "op": "eq"
+          },
+          "sort_order": {
+            "op": "eq"
+          },
+          "is_active": {
+            "op": "eq"
+          }
+        },
+        "page_size": 50
+      },
+      "ai": {
+        "description": "Lists all floor plan zones (dining room, terrace, bar, etc.)"
+      }
+    },
+    "tables.zones.get": {
+      "permission": "tables.view_zone",
+      "sql": "queries/zone_get.sql",
+      "schema": "schemas/zone_get.json",
+      "ai": {
+        "description": "Gets the details of a specific zone by its identifier"
+      }
+    },
+    "tables.tables.list": {
+      "permission": "tables.view_table",
+      "sql": "queries/tables_list.sql",
+      "list": {
+        "search": [
+          "number",
+          "name"
+        ],
+        "sort": [
+          "id",
+          "number",
+          "number_sort",
+          "name",
+          "capacity",
+          "shape",
+          "status",
+          "is_active",
+          "position_x",
+          "position_y",
+          "width",
+          "height",
+          "zone_id",
+          "zone"
+        ],
+        "default_sort": "number_sort",
+        "default_dir": "asc",
+        "filters": {
+          "number": {
+            "op": "like"
+          },
+          "name": {
+            "op": "like"
+          },
+          "capacity": {
+            "op": "range"
+          },
+          "shape": {
+            "op": "eq"
+          },
+          "status": {
+            "op": "eq"
+          },
+          "is_active": {
+            "op": "eq"
+          },
+          "position_x": {
+            "op": "eq"
+          },
+          "position_y": {
+            "op": "eq"
+          },
+          "width": {
+            "op": "eq"
+          },
+          "height": {
+            "op": "eq"
+          },
+          "zone_id": {
+            "op": "eq"
+          },
+          "zone": {
+            "op": "eq"
+          }
+        },
+        "page_size": 50
+      },
+      "ai": {
+        "description": "Lists all available tables with their current status"
+      }
+    },
+    "tables.tables.get": {
+      "permission": "tables.view_table",
+      "sql": "queries/table_get.sql",
+      "schema": "schemas/table_get.json",
+      "ai": {
+        "description": "Gets one table by its identifier, with its current status and how many checks are open on it"
+      }
+    },
+    "tables.sessions.list": {
+      "permission": "tables.view_tablesession",
+      "sql": "queries/sessions_list.sql",
+      "list": {
+        "search": [
+          "table_number"
+        ],
+        "sort": [
+          "id",
+          "table_id",
+          "table_number",
+          "guests_count",
+          "status",
+          "waiter_id",
+          "opened_at",
+          "closed_at",
+          "notes",
+          "zone_id",
+          "zone"
+        ],
+        "default_sort": "id",
+        "default_dir": "asc",
+        "filters": {
+          "table_id": {
+            "op": "eq"
+          },
+          "table_number": {
+            "op": "like"
+          },
+          "guests_count": {
+            "op": "range"
+          },
+          "status": {
+            "op": "eq"
+          },
+          "waiter_id": {
+            "op": "eq"
+          },
+          "opened_at": {
+            "op": "range"
+          },
+          "closed_at": {
+            "op": "range"
+          },
+          "notes": {
+            "op": "like"
+          },
+          "zone_id": {
+            "op": "eq"
+          }
+        },
+        "page_size": 50
+      },
+      "ai": {
+        "description": "Lists active or historical table sessions"
+      }
+    },
+    "tables.sessions.by_order": {
+      "permission": "tables.view_tablesession",
+      "expose_api": true,
+      "sql": "queries/session_by_order.sql",
+      "ai": {
+        "description": "Resolves the TABLE linked to a given order id via the table-session junction (ADR-0141). Used by kitchen to route a dine-in ticket without sales carrying table_id."
+      }
+    },
+    "tables.floor.status": {
+      "permission": "tables.view_table",
+      "sql": "queries/floor_status.sql",
+      "ai": {
+        "description": "Reports whether the floor plan is set up: how many usable tables (not deleted, active) the hub has. One row, always. Read by the onboarding checklist."
+      }
+    },
+    "tables.settings.get": {
+      "permission": "tables.view_settings",
+      "sql": "queries/settings_get.sql",
+      "ai": {
+        "description": "Reads the room settings: whether seating asks for the guests and the amber/red timer thresholds of an open check"
+      }
+    }
+  },
+  "commands": {
+    "tables.zones.create": {
+      "permission": "tables.add_zone",
+      "schema": "schemas/zone_create.json",
+      "transaction": true,
+      "sql": [
+        "commands/zone_create.sql"
+      ],
+      "emit": [
+        "tables.zone.created"
+      ],
+      "ai": {
+        "description": "Creates a new zone in the floor plan"
+      }
+    },
+    "tables.zones.update": {
+      "permission": "tables.change_zone",
+      "schema": "schemas/zone_update.json",
+      "transaction": true,
+      "sql": [
+        "commands/zone_update.sql"
+      ],
+      "emit": [
+        "tables.zone.updated"
+      ],
+      "ai": {
+        "description": "Updates the name or configuration of an existing zone"
+      },
+      "expect_rows": {
+        "op": "min",
+        "n": 1,
+        "error": "tables.zone_not_found",
+        "message": "That zone does not exist in this business."
+      }
+    },
+    "tables.zones.delete": {
+      "permission": "tables.delete_zone",
+      "schema": "schemas/zone_delete.json",
+      "handler": {
+        "type": "wasm",
+        "file": "dist/handler.wasm",
+        "function": "delete_zone"
+      },
+      "emit": [
+        "tables.zone.deleted"
+      ],
+      "ai": {
+        "description": "Deletes a zone and all its associated tables (destructive)"
+      },
+      "reads": [
+        {
+          "query": "tables.zones.get",
+          "params": {
+            "zone_id": "payload.zone_id"
+          },
+          "required": true
+        }
+      ]
+    },
+    "tables.tables.create": {
+      "permission": "tables.add_table",
+      "schema": "schemas/table_create.json",
+      "transaction": true,
+      "sql": [
+        "commands/table_create.sql"
+      ],
+      "emit": [
+        "tables.table.created"
+      ],
+      "ai": {
+        "description": "Creates a new table inside a zone"
+      },
+      "expect_rows": {
+        "op": "min",
+        "n": 1,
+        "error": "tables.zone_unavailable",
+        "message": "That zone is not available: it does not exist in this business or it has been deleted."
+      }
+    },
+    "tables.tables.update": {
+      "permission": "tables.change_table",
+      "schema": "schemas/table_update.json",
+      "transaction": true,
+      "sql": [
+        "commands/table_update.sql"
+      ],
+      "emit": [
+        "tables.table.updated"
+      ],
+      "ai": {
+        "description": "Updates a table's data (name, capacity, position)"
+      },
+      "expect_rows": {
+        "op": "min",
+        "n": 1,
+        "error": "tables.table_not_found",
+        "message": "That table does not exist in this business."
+      }
+    },
+    "tables.tables.move": {
+      "permission": "tables.change_table",
+      "schema": "schemas/table_move.json",
+      "transaction": true,
+      "sql": [
+        "commands/table_move.sql"
+      ],
+      "emit": [
+        "tables.table.updated"
+      ],
+      "ai": {
+        "description": "Repositions or resizes a table on the floor plan (drag in the canvas editor)"
+      },
+      "expect_rows": {
+        "op": "min",
+        "n": 1,
+        "error": "tables.table_not_found",
+        "message": "That table does not exist in this business."
+      }
+    },
+    "tables.tables.delete": {
+      "permission": "tables.delete_table",
+      "schema": "schemas/table_delete.json",
+      "handler": {
+        "type": "wasm",
+        "file": "dist/handler.wasm",
+        "function": "delete_table"
+      },
+      "emit": [
+        "tables.table.deleted"
+      ],
+      "ai": {
+        "description": "Deletes a table from the system (destructive)"
+      },
+      "reads": [
+        {
+          "query": "tables.tables.get",
+          "params": {
+            "table_id": "payload.table_id"
+          },
+          "required": true
+        }
+      ]
+    },
+    "tables.tables.bulk_create": {
+      "permission": "tables.add_table",
+      "schema": "schemas/table_bulk_create.json",
+      "handler": {
+        "type": "wasm",
+        "file": "dist/handler.wasm",
+        "function": "bulk_create_tables"
+      },
+      "emit": [
+        "tables.table.created"
+      ],
+      "ai": {
+        "description": "Creates multiple tables at once within a zone"
+      }
+    },
+    "tables.tables.hold": {
+      "permission": "tables.change_tablesession",
+      "transaction": true,
+      "schema": "schemas/table_hold.json",
+      "sql": [
+        "commands/table_hold_upsert.sql",
+        "commands/table_hold_mark.sql"
+      ],
+      "emit": [
+        "tables.table.held"
+      ],
+      "ai": {
+        "description": "Holds a table for a booking so the floor plan shows it as reserved"
+      },
+      "expect_rows": {
+        "op": "min",
+        "n": 1,
+        "error": "tables.table_not_found",
+        "message": "That table does not exist in this business."
+      }
+    },
+    "tables.tables.release_hold": {
+      "permission": "tables.change_tablesession",
+      "transaction": true,
+      "schema": "schemas/table_release_hold.json",
+      "sql": [
+        "commands/table_hold_release.sql",
+        "commands/_hold_free_stale.sql"
+      ],
+      "emit": [
+        "tables.table.hold_released"
+      ],
+      "ai": {
+        "description": "Releases a table held for a booking that was cancelled or moved"
+      },
+      "expect_rows": {
+        "op": "min",
+        "n": 1,
+        "statement": "commands/table_hold_release.sql",
+        "error": "tables.hold_not_found",
+        "message": "That hold is not there any more: it was already released, it expired, or that booking never held a table."
+      }
+    },
+    "tables.tables.expire_holds": {
+      "permission": "tables.change_tablesession",
+      "transaction": true,
+      "sql": [
+        "commands/table_hold_expire.sql",
+        "commands/_hold_free_stale.sql"
+      ],
+      "emit": [
+        "tables.table.hold_released"
+      ]
+    },
+    "tables.sessions.open": {
+      "permission": "tables.add_tablesession",
+      "schema": "schemas/session_open.json",
+      "handler": {
+        "type": "wasm",
+        "file": "dist/handler.wasm",
+        "function": "open_session"
+      },
+      "emit": [
+        "tables.session.opened"
+      ],
+      "ai": {
+        "description": "Opens a session on a table to begin serving guests"
+      },
+      "reads": [
+        {
+          "query": "tables.tables.get",
+          "params": {
+            "table_id": "payload.table_id"
+          },
+          "required": true
+        }
+      ]
+    },
+    "tables.sessions.close": {
+      "permission": "tables.change_tablesession",
+      "schema": "schemas/session_close.json",
+      "handler": {
+        "type": "wasm",
+        "file": "dist/handler.wasm",
+        "function": "close_session"
+      },
+      "emit": [
+        "tables.session.closed"
+      ],
+      "ai": {
+        "description": "Closes the active session on a table after payment"
+      }
+    },
+    "tables.sessions.transfer": {
+      "permission": "tables.transfer_tablesession",
+      "schema": "schemas/session_transfer.json",
+      "handler": {
+        "type": "wasm",
+        "file": "dist/handler.wasm",
+        "function": "transfer_session"
+      },
+      "emit": [
+        "tables.session.transferred"
+      ],
+      "ai": {
+        "description": "Transfers the active session from one table to another"
+      }
+    },
+    "tables.sessions.merge": {
+      "permission": "tables.transfer_tablesession",
+      "schema": "schemas/session_merge.json",
+      "handler": {
+        "type": "wasm",
+        "file": "dist/handler.wasm",
+        "function": "merge_session"
+      },
+      "emit": [
+        "tables.session.merged"
+      ],
+      "ai": {
+        "description": "Merges the active session of one table into another occupied table (combines their tickets and frees the origin table)"
+      }
+    },
+    "tables.sessions.split": {
+      "permission": "tables.change_tablesession",
+      "schema": "schemas/session_split.json",
+      "handler": {
+        "type": "wasm",
+        "file": "dist/handler.wasm",
+        "function": "split_session"
+      },
+      "emit": [
+        "tables.session.split"
+      ],
+      "ai": {
+        "description": "Splits a table check in two so each half of the party pays separately"
+      }
+    },
+    "tables.sessions.delete": {
+      "permission": "tables.delete_tablesession",
+      "schema": "schemas/session_delete.json",
+      "handler": {
+        "type": "wasm",
+        "file": "dist/handler.wasm",
+        "function": "delete_session"
+      },
+      "emit": [
+        "tables.session.deleted"
+      ],
+      "ai": {
+        "description": "Deletes a table session (destructive, requires delete permission)"
+      }
+    },
+    "tables._insert_table": {
+      "permission": "tables.add_table",
+      "sql": [
+        "commands/_bulk_insert_table.sql",
+        "commands/_bulk_insert_assert.sql",
+        "commands/_gate_clear.sql"
+      ]
+    },
+    "tables._session_open": {
+      "permission": "tables.add_tablesession",
+      "sql": [
+        "commands/_session_open_insert.sql",
+        "commands/_assignment_open.sql",
+        "commands/_session_open_occupy.sql",
+        "commands/_hold_consume_seated.sql",
+        "commands/_session_open_assert.sql",
+        "commands/_gate_clear.sql"
+      ]
+    },
+    "tables._session_close": {
+      "permission": "tables.change_tablesession",
+      "sql": [
+        "commands/_session_close_update.sql",
+        "commands/_assignment_release_closed.sql",
+        "commands/_session_close_free.sql",
+        "commands/_session_close_assert.sql",
+        "commands/_gate_clear.sql"
+      ]
+    },
+    "tables._session_transfer": {
+      "permission": "tables.transfer_tablesession",
+      "sql": [
+        "commands/_session_transfer_close.sql",
+        "commands/_assignment_release_transferred.sql",
+        "commands/_session_transfer_free.sql",
+        "commands/_session_transfer_insert.sql",
+        "commands/_session_transfer_occupy.sql",
+        "commands/_assignment_transfer_open.sql",
+        "commands/_session_transfer_detach_order.sql",
+        "commands/_hold_consume_seated.sql",
+        "commands/_session_transfer_assert.sql",
+        "commands/_gate_clear.sql"
+      ]
+    },
+    "tables._session_merge": {
+      "permission": "tables.transfer_tablesession",
+      "sql": [
+        "commands/_session_merge_close.sql",
+        "commands/_assignment_release_merged.sql",
+        "commands/_session_merge_free.sql",
+        "commands/_session_merge_adopt_order.sql",
+        "commands/_session_merge_detach_order.sql",
+        "commands/_session_merge_assert.sql",
+        "commands/_gate_clear.sql"
+      ]
+    },
+    "tables._session_split": {
+      "permission": "tables.change_tablesession",
+      "transaction": true,
+      "sql": [
+        "commands/_session_split_insert.sql",
+        "commands/_assignment_split_open.sql",
+        "commands/_session_split_occupy.sql",
+        "commands/_hold_consume_seated.sql",
+        "commands/_session_split_assert.sql",
+        "commands/_gate_clear.sql"
+      ]
+    },
+    "tables._session_delete": {
+      "permission": "tables.delete_tablesession",
+      "sql": [
+        "commands/_session_delete_update.sql",
+        "commands/_session_delete_assert.sql",
+        "commands/_gate_clear.sql"
+      ]
+    },
+    "tables._zone_delete": {
+      "permission": "tables.delete_zone",
+      "sql": [
+        "commands/_zone_delete_update.sql",
+        "commands/_zone_delete_assert.sql",
+        "commands/_gate_clear.sql"
+      ]
+    },
+    "tables._table_delete": {
+      "permission": "tables.delete_table",
+      "sql": [
+        "commands/_table_delete_update.sql",
+        "commands/_table_delete_assert.sql",
+        "commands/_gate_clear.sql"
+      ]
+    },
+    "tables.sessions.link_order": {
+      "permission": "tables.add_tablesession",
+      "transaction": true,
+      "sql": [
+        "commands/session_link_order.sql"
+      ],
+      "ai": {
+        "description": "Links the active session of a table to an open order (ADR-0141 table-order junction). Called by the POS when it opens an order while a table is selected."
+      },
+      "expect_rows": {
+        "op": "min",
+        "n": 1,
+        "error": "tables.session_not_active",
+        "message": "That check is not open: it does not exist in this business, or it has already been closed, transferred, merged or parked."
+      }
+    },
+    "tables.sessions.set_guests": {
+      "permission": "tables.change_tablesession",
+      "transaction": true,
+      "schema": "schemas/session_set_guests.json",
+      "sql": [
+        "commands/session_set_guests.sql"
+      ],
+      "emit": [
+        "tables.session.updated"
+      ],
+      "ai": {
+        "description": "Corrects the number of covers (guests) of an open table session, e.g. when an extra guest joins. Only active sessions are updated."
+      },
+      "expect_rows": {
+        "op": "min",
+        "n": 1,
+        "error": "tables.session_not_active",
+        "message": "That check is not open: it does not exist in this business, or it has already been closed, transferred, merged or parked."
+      }
+    },
+    "tables._session_close_by_order": {
+      "permission": "tables.change_tablesession",
+      "transaction": true,
+      "sql": [
+        "commands/_session_close_by_order.sql",
+        "commands/_assignment_release_by_order.sql",
+        "commands/_table_free_by_order.sql"
+      ],
+      "ai": {
+        "description": "Internal: closes the table session (and its history segment) when its order ends — paid or voided (ADR-0146). Listener target, not called directly."
+      }
+    },
+    "tables.sessions.park": {
+      "permission": "tables.change_tablesession",
+      "transaction": true,
+      "sql": [
+        "commands/_assignment_release_parked.sql",
+        "commands/_table_free_by_session.sql",
+        "commands/_session_park.sql"
+      ],
+      "schema": "schemas/session_park.json",
+      "emit": [
+        "tables.session.parked"
+      ],
+      "ai": {
+        "description": "Parks an open check: releases the table WITHOUT closing the account (ADR-0146). The session stays alive (guests, waiter, start time) and its history segment closes with reason `parked`; parking never opens a new segment, because a parked check is not sitting at any table."
+      },
+      "expect_rows": {
+        "op": "min",
+        "n": 1,
+        "error": "tables.session_not_active",
+        "message": "That check is not open: it does not exist in this business, or it has already been closed, transferred, merged or parked."
+      }
+    },
+    "tables.sessions.restore": {
+      "permission": "tables.change_tablesession",
+      "transaction": true,
+      "sql": [
+        "commands/_session_restore.sql",
+        "commands/_assignment_restore.sql",
+        "commands/_table_occupy_by_session.sql",
+        "commands/_hold_consume_seated.sql"
+      ],
+      "schema": "schemas/session_restore.json",
+      "emit": [
+        "tables.session.restored"
+      ],
+      "ai": {
+        "description": "Seats a parked check at a table again (the same one or another) — ADR-0146. Opens a new history segment with reason `restored`."
+      },
+      "expect_rows": {
+        "op": "min",
+        "n": 1,
+        "error": "tables.session_not_parked",
+        "message": "That check is not parked: it does not exist in this business, or it is already seated at a table."
+      }
+    },
+    "tables._hold_from_reservation": {
+      "permission": "tables.change_tablesession",
+      "transaction": true,
+      "sql": [
+        "commands/_hold_from_reservation_upsert.sql",
+        "commands/_hold_paint_reservation.sql",
+        "commands/_hold_from_reservation_release.sql",
+        "commands/_hold_free_stale.sql"
+      ]
+    },
+    "tables._hold_move_from_reservation": {
+      "permission": "tables.change_tablesession",
+      "transaction": true,
+      "sql": [
+        "commands/_hold_move_from_reservation.sql",
+        "commands/_hold_paint_reservation.sql",
+        "commands/_hold_free_stale.sql"
+      ]
+    },
+    "tables.settings.update": {
+      "permission": "tables.manage_settings",
+      "transaction": true,
+      "schema": "schemas/settings_update.json",
+      "sql": [
+        "commands/settings_update.sql"
+      ],
+      "emit": [
+        "tables.settings.updated"
+      ],
+      "ai": {
+        "description": "Updates the room settings (guests prompt on seating, amber/red timer thresholds)"
+      }
+    }
+  },
+  "errors": {
+    "tables.hold_not_found": {},
+    "tables.session_not_active": {},
+    "tables.session_not_parked": {},
+    "tables.table_has_active_session": {},
+    "tables.table_not_available": {},
+    "tables.table_not_found": {},
+    "tables.zone_has_tables": {},
+    "tables.zone_not_found": {},
+    "tables.zone_unavailable": {}
+  },
+  "ui": {
+    "entry": "dist/tables.esm.js"
+  },
+  "events": {
+    "listen": {
+      "order.completed": {
+        "command": "tables._session_close_by_order"
+      },
+      "sale.voided": {
+        "command": "tables._session_close_by_order"
+      },
+      "reservations.reservation.status_changed": {
+        "command": "tables._hold_from_reservation"
+      },
+      "reservations.reservation.updated": {
+        "command": "tables._hold_move_from_reservation"
+      }
+    },
+    "emits": [
+      "tables.session.closed",
+      "tables.session.deleted",
+      "tables.session.merged",
+      "tables.session.opened",
+      "tables.session.parked",
+      "tables.session.restored",
+      "tables.session.split",
+      "tables.session.transferred",
+      "tables.session.updated",
+      "tables.table.created",
+      "tables.table.deleted",
+      "tables.table.held",
+      "tables.table.hold_released",
+      "tables.table.updated",
+      "tables.zone.created",
+      "tables.zone.deleted",
+      "tables.zone.updated",
+      "tables.settings.updated"
+    ]
+  },
+  "scheduled_tasks": [
+    {
+      "name": "expire_table_holds",
+      "command": "tables.tables.expire_holds",
+      "cron": "*/15 * * * *",
+      "catch_up": "collapse"
+    }
+  ],
+  "setup": {
+    "query": "tables.floor.status",
+    "configured_when": [
+      {
+        "field": "usable_tables",
+        "truthy": true
+      }
+    ],
+    "title": "Your tables",
+    "description": "Add the tables of your dining room: without them there is no order per table, no split and no transfer.",
+    "icon": "map-outline",
+    "route": "/m/tables/tables",
+    "permission": "tables.add_table",
+    "countries": [],
+    "order": 100,
+    "required": false
+  }
+}
