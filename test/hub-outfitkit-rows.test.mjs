@@ -95,8 +95,11 @@ test('missing tags: only releases from the table floor up, in VERSION order (#27
     ['v1.1.32-rc.1', '2026-09-23T00:00:00Z'], // not a release tag
     ['v1.2.0', '2026-09-23T01:00:00Z'], // a new minor is NOT outside the table
   ];
+  // A fixed table, not the real one: the real HUB_OUTFITKIT grows with every hub tag, and the day
+  // v1.1.30 got its row this assertion went red on a correct table.
+  const table = [{ hub: '1.1.29', built_at: '2026-09-19T20:46:51Z', outfitkit: '0.1.73' }];
   assert.deepEqual(
-    missingHubTags(tags, HUB_OUTFITKIT).map(([tag]) => tag),
+    missingHubTags(tags, table).map(([tag]) => tag),
     ['v1.1.30', 'v1.1.31', 'v1.2.0'],
   );
 });
