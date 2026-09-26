@@ -60,6 +60,12 @@ test('nothing installed and nothing carried is the resolution error, not a guess
 
 test('only the hub packages fall back: a missing lit or OutfitKit stays an error', () => {
   const root = vendorRoot('vendor-lit');
+  // Copies that WOULD be picked up if the fallback reached past the hub packages.
+  for (const [dir, main] of [['lit', 'index.js'], ['outfitkit', 'define']]) {
+    mkdirSync(join(root, dir), { recursive: true });
+    writeFileSync(join(root, dir, 'package.json'), JSON.stringify({ main }));
+    writeFileSync(join(root, dir, main), 'export {};\n');
+  }
   for (const spec of ['lit', '@erplora/outfitkit/define']) {
     assert.throws(() => resolvePinned(spec, { resolve: notInstalled, vendorRoot: root }), { code: 'ERR_MODULE_NOT_FOUND' });
   }
