@@ -336,6 +336,23 @@ shell, y además corre este escáner sobre las vistas `.vue` del hub —limpias 
 que las dos puertas no digan cosas distintas del mismo marcado. Un chequeo que sobrevive a su causa
 es peor que no tenerlo: enseña que el gate pide cosas que dan igual.
 
+### El control que no pide caja (ERPlora/pm#479)
+
+La puerta de arriba solo mira los controles que **declaran** `fill`. Un `ion-input`/`ion-select`/
+`ion-textarea` **sin** `fill` tampoco tiene caja: el shell lo deja en `ios` (su arreglo, hub#1060,
+solo pasa a `md` los que declaran uno) y sale como texto suelto. Así llegaron el «%» y la
+«Calificación» del alta de reglas de impuestos (taxes#73) con el gate en verde.
+`checkIonicMissingFill` (mismo fichero) lo cierra con la receta de siempre: `fill="outline"
+mode="md"`. Quedan fuera tres cosas que no se pintan como formulario suelto: un control **dentro de
+un `ion-item`** (una fila de lista: la fila es la superficie, como en los ajustes de `verifactu`), un
+`<ion-select>` **nombrado en un comentario** y los ficheros **`*.test.*`/`*.spec.*`**, cuyos fixtures
+citan controles a propósito.
+
+Mismo trinquete, con su propia lista (`MISSING_FILL_GRANDFATHERED`): medido el 2026-09-26 sobre
+`origin/main` de los 27 módulos, **24 controles en 6 ficheros** de `appointments`, `printing`,
+`reservations` y `sales` (los de `taxes` los arregla taxes#75). Solo encoge; cada módulo tiene su
+issue (appointments#221, printing#50, reservations#71, sales#414) y su PR borra su línea.
+
 ## El `color=` que no cruza el shadow root (module-toolkit#273)
 
 `src/validate-ionic-color.mjs`. Ionic da color en dos mitades: el componente pone
