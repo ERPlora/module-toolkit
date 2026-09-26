@@ -82,6 +82,42 @@ test('toolkit installed from npm: no dangling SDK/types links, a warning per mis
         ['local_package_missing', '@erplora/module-types'],
       ],
     );
+    // The warning names where the package was looked for, so the person knows what to clone.
+    assert.deepEqual(
+      warnings.map((w) => w.path),
+      [resolve(toolkitDir, '../hub/packages/module-sdk'), resolve(toolkitDir, '../hub/packages/module-types')],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// module-toolkit#359: the npm package carries the SDK in `vendor/` (prepack), so a toolkit installed
+// from npm HAS it — the workspace links that copy (editor types, vitest) and must not warn that
+// modules «will not compile», which would now be false.
+test('toolkit from npm carrying the SDK: the workspace links its copy, without warnings (#359)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'erplora-startproject-vendored-'));
+  try {
+    const projectDir = join(root, 'demo-ws');
+    const toolkitDir = join(root, 'global', 'node_modules', '@erplora', 'module-toolkit');
+    mkdirSync(toolkitDir, { recursive: true });
+    writeFileSync(join(toolkitDir, 'package.json'), '{}');
+    for (const name of ['module-sdk', 'module-types']) {
+      mkdirSync(join(toolkitDir, 'vendor', '@erplora', name), { recursive: true });
+      writeFileSync(join(toolkitDir, 'vendor', '@erplora', name, 'package.json'), '{}');
+    }
+
+    const { devDependencies, warnings } = workspaceDevDependencies(projectDir, {
+      toolkitDir,
+      hubPackagesDir: resolve(toolkitDir, '../hub/packages'),
+    });
+
+    for (const name of ['module-sdk', 'module-types']) {
+      const spec = devDependencies[`@erplora/${name}`];
+      assert.ok(spec, `@erplora/${name} is not linked`);
+      assert.equal(resolve(projectDir, spec.slice('file:'.length)), join(toolkitDir, 'vendor', '@erplora', name));
+    }
+    assert.deepEqual(warnings, []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -93,7 +129,9 @@ test('hub packages present: SDK and types are linked locally, without warnings (
     const projectDir = join(root, 'demo-ws');
     const toolkitDir = join(root, 'module-toolkit');
     const hubPackagesDir = join(root, 'hub', 'packages');
-    for (const d of [toolkitDir, join(hubPackagesDir, 'module-sdk'), join(hubPackagesDir, 'module-types')]) {
+    // A stale packed copy left in the checkout must not beat the live hub sibling (#359).
+    const vendored = ['module-sdk', 'module-types'].map((n) => join(toolkitDir, 'vendor', '@erplora', n));
+    for (const d of [toolkitDir, join(hubPackagesDir, 'module-sdk'), join(hubPackagesDir, 'module-types'), ...vendored]) {
       mkdirSync(d, { recursive: true });
       writeFileSync(join(d, 'package.json'), '{}');
     }
@@ -112,8 +150,27 @@ test('hub packages present: SDK and types are linked locally, without warnings (
   }
 });
 
+/** A toolkit folder, carrying the packed copy of the hub packages (`vendor/`, #359) or not. */
+function toolkitAt(root, { vendored }) {
+  const toolkitDir = join(root, 'toolkit');
+  mkdirSync(toolkitDir, { recursive: true });
+  writeFileSync(join(toolkitDir, 'package.json'), '{}');
+  if (vendored) {
+    for (const name of ['module-sdk', 'module-types']) {
+      mkdirSync(join(toolkitDir, 'vendor', '@erplora', name), { recursive: true });
+      writeFileSync(join(toolkitDir, 'vendor', '@erplora', name, 'package.json'), '{}');
+    }
+  }
+  return toolkitDir;
+}
+
 // Reviewer of #362: deleting the `console.warn` loop left the four tests above green, so the
 // developer could still get a workspace without the SDK and no word about it.
+//
+// #359: whether a hub package can be linked no longer depends only on a sibling hub — the toolkit
+// may carry its own copy in `vendor/`. So this case pins BOTH absences: no hub alongside and a
+// toolkit without the copy. It used to take the real checkout as the toolkit, whose `vendor/` comes
+// and goes with every `npm pack` other suites run in parallel — red in CI whenever they overlapped.
 test('startproject: warns on the console about every hub package it could not link (#361)', async () => {
   const root = mkdtempSync(join(tmpdir(), 'erplora-startproject-warn-'));
   const prev = process.cwd();
@@ -122,13 +179,42 @@ test('startproject: warns on the console about every hub package it could not li
   console.warn = (...args) => warned.push(args.join(' '));
   process.chdir(root);
   try {
-    await startproject('demo-ws', { hubPackagesDir: join(root, 'no-hub', 'packages') });
+    await startproject('demo-ws', {
+      toolkitDir: toolkitAt(root, { vendored: false }),
+      hubPackagesDir: join(root, 'no-hub', 'packages'),
+    });
     const pkg = JSON.parse(readFileSync(join(root, 'demo-ws', 'package.json'), 'utf8'));
     assert.equal(pkg.devDependencies['@erplora/module-sdk'], undefined);
     assert.equal(pkg.devDependencies['@erplora/module-types'], undefined);
     assert.equal(warned.length, 2);
     assert.match(warned[0], /@erplora\/module-sdk/);
     assert.match(warned[1], /@erplora\/module-types/);
+  } finally {
+    console.warn = original;
+    process.chdir(prev);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// #359: with the copy the toolkit carries, nothing is left unlinked — so nothing is announced as
+// «will not compile», which would be false.
+test('startproject: a toolkit carrying the SDK links it and warns about nothing (#359)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'erplora-startproject-nowarn-'));
+  const prev = process.cwd();
+  const original = console.warn;
+  const warned = [];
+  console.warn = (...args) => warned.push(args.join(' '));
+  process.chdir(root);
+  try {
+    const toolkitDir = toolkitAt(root, { vendored: true });
+    await startproject('demo-ws', { toolkitDir, hubPackagesDir: join(root, 'no-hub', 'packages') });
+    const pkg = JSON.parse(readFileSync(join(root, 'demo-ws', 'package.json'), 'utf8'));
+    for (const name of ['module-sdk', 'module-types']) {
+      const spec = pkg.devDependencies[`@erplora/${name}`];
+      assert.ok(spec, `@erplora/${name} is not linked`);
+      assert.equal(resolve(root, 'demo-ws', spec.slice('file:'.length)), join(toolkitDir, 'vendor', '@erplora', name));
+    }
+    assert.deepEqual(warned, []);
   } finally {
     console.warn = original;
     process.chdir(prev);
