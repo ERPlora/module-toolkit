@@ -161,3 +161,45 @@ test('g view: on a module with no catalogue yet it creates locales/en.json and e
     assert.equal(dig(es, 'ui.save'), 'Guardar');
   });
 });
+
+test('g module: the create panel fields are boxed, the panel closes on save and the listener is released (#366)', async () => {
+  await inScratch(async (root) => {
+    await generate('module', 'demo_mod');
+    const src = readFileSync(join(root, 'demo_mod', COMP), 'utf8');
+
+    // Every field carries fill="outline" mode="md": without them the hub's ios mode paints no box
+    // and `erplora validate` rejects the module (pm#479, module-toolkit#367).
+    const inputs = [...src.matchAll(/<ion-input\b[^>]*>/g)].map((m) => m[0]);
+    assert.ok(inputs.length >= 2, 'the create form has no fields');
+    for (const tag of inputs) {
+      assert.match(tag, /\sfill="outline"/, `a field without fill="outline": ${tag}`);
+      assert.match(tag, /\smode="md"/, `a field without mode="md": ${tag}`);
+    }
+
+    // Saving closes the create panel once the row exists (before reloading the list), and the
+    // button tells the user it is saving meanwhile.
+    const create = src.slice(src.indexOf('private async create('), src.indexOf('render()'));
+    assert.match(create, /this\.dataTable\(\)\?\.close\(\);[\s\S]*await this\.ctrl\.load\(\)/, 'the create panel stays open after saving');
+    assert.match(src, /this\.saving \? t\('ui\.saving'\) : t\('ui\.save'\)/, 'the submit button does not show it is saving');
+
+    // The language listener added on connect is removed on disconnect.
+    assert.match(src, /removeEventListener\('erplora:locale-changed', this\.onLocaleChange\)/, 'the language listener leaks');
+  });
+});
+
+test('g view: a catalogue with the developer\'s own keys keeps them all and only gains the view keys (#366)', async () => {
+  await inScratch(async (root) => {
+    await generate('module', 'demo_mod');
+    const dir = join(root, 'demo_mod');
+    // A module whose catalogue was written by hand: its own name, menu and ui keys, none of the view's.
+    const own = { name: 'Mi módulo', navigation: { items: { label: 'Artículos' } }, ui: { greeting: 'Hola' } };
+    writeFileSync(join(dir, 'locales/es.json'), JSON.stringify(own, null, 2) + '\n');
+
+    await generate('view', 'demo_mod', 'orders');
+    const es = JSON.parse(readFileSync(join(dir, 'locales/es.json'), 'utf8'));
+    assert.equal(es.name, 'Mi módulo', 'g view dropped the module name');
+    assert.equal(dig(es, 'navigation.items.label'), 'Artículos', 'g view dropped the menu entry');
+    assert.equal(dig(es, 'ui.greeting'), 'Hola', 'g view dropped a ui key the developer wrote');
+    assert.equal(dig(es, 'ui.save'), 'Guardar', 'g view did not bring its own keys');
+  });
+});
