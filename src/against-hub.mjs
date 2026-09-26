@@ -30,6 +30,8 @@
 // containers exist the harness listens for those signals, tears down, and exits with 128+signal.
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { readFileSync, readdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 /** The repository the fleet publishes to. A bare channel/digest is anchored here. */
 export const HUB_IMAGE_REPO = 'ghcr.io/erplora/hub';
@@ -42,8 +44,11 @@ export const DEFAULT_PG_IMAGE = 'postgres:18';
 
 /**
  * `hub_id` of the rows the runtime writes in dev mode: `context_from_headers` falls back to
- * `"local"` when a request carries no `X-Hub-Id` (`hub/crates/server/src/auth.rs`). Handed to the
- * battery so that sending the header and omitting it cannot disagree.
+ * `"local"` when a request carries no `X-Hub-Id` (`hub/crates/server/src/auth.rs`). Only the
+ * FALLBACK default of `hubBatteryVars`, for a battery run with no harness behind it: `--against-hub`
+ * itself hands the battery the runtime's OWN `hub_id` (module-toolkit#135) — `GET /api/hub/context`
+ * answers something like `00000000-0000-0000-0000-000000000001`, and the seeds land under THAT id,
+ * never under `"local"`.
  */
 export const DEV_HUB_ROW_ID = 'local';
 
@@ -148,6 +153,162 @@ export function hubBatteryVars(moduleId, { baseUrl, hubId = DEV_HUB_ROW_ID, imag
     ERPLORA_HUB_IMAGE: image,
     ERPLORA_MODULE_ID: moduleId,
   };
+}
+
+// ── the catalogue a hub battery needs ────────────────────────────────────────────────────────
+
+/** `"taxes"` or `{ id, min_version }` (or a mix of both) → `["taxes"]`. Missing/empty → `[]`. */
+function normalizeDependsOn(raw) {
+  if (!raw) return [];
+  const list = Array.isArray(raw) ? raw : [raw];
+  return list
+    .map((entry) => (typeof entry === 'string' ? entry : entry?.id))
+    .filter((id) => typeof id === 'string' && id.length > 0);
+}
+
+/**
+ * Direct subdirectories of `parentDir` that are an actual module: they carry a `module.json` that
+ * parses as JSON and whose `id` matches the directory's own name. That last check is what keeps a
+ * worktree (`sales-wt-3`, id `sales`) or a stray copy out of the catalogue — the directory name and
+ * the manifest disagree, so it is not treated as `sales`. Unreadable directories, missing or broken
+ * `module.json`, and the module under test itself (`excludeId`) are silently left out; a `parentDir`
+ * that does not exist or cannot be read yields an empty catalogue rather than an error — most
+ * modules are developed with nothing next to them at all.
+ */
+function readSiblingCatalogue(parentDir, excludeId) {
+  const catalogue = new Map();
+  let entries;
+  try {
+    entries = readdirSync(parentDir, { withFileTypes: true });
+  } catch {
+    return catalogue;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const entryDir = join(parentDir, entry.name);
+    let parsed;
+    try {
+      parsed = JSON.parse(readFileSync(join(entryDir, 'module.json'), 'utf8'));
+    } catch {
+      continue;
+    }
+    if (!parsed || parsed.id !== entry.name || parsed.id === excludeId) continue;
+    catalogue.set(parsed.id, { id: parsed.id, dir: entryDir, deps: normalizeDependsOn(parsed.depends_on) });
+  }
+  return catalogue;
+}
+
+/**
+ * Deterministic topological sort (deps before dependents) over `nodes` (`id → { id, dir, deps }`,
+ * every `deps` entry already known to be a key of `nodes`). Among nodes with nothing left to wait
+ * for, the alphabetically-first id goes next — so the same catalogue always produces the same
+ * order, run to run and machine to machine. A `depends_on` cycle leaves nodes that never become
+ * ready: that is the one case this throws, naming every id still stuck.
+ */
+function topoSortInstallPlan(nodes) {
+  const indegree = new Map([...nodes.keys()].map((id) => [id, 0]));
+  const dependents = new Map([...nodes.keys()].map((id) => [id, []]));
+  for (const [id, node] of nodes) {
+    for (const depId of node.deps) {
+      indegree.set(id, indegree.get(id) + 1);
+      dependents.get(depId).push(id);
+    }
+  }
+  const ready = [...nodes.keys()].filter((id) => indegree.get(id) === 0);
+  const order = [];
+  while (ready.length) {
+    ready.sort();
+    const id = ready.shift();
+    order.push(nodes.get(id));
+    for (const dependent of dependents.get(id)) {
+      indegree.set(dependent, indegree.get(dependent) - 1);
+      if (indegree.get(dependent) === 0) ready.push(dependent);
+    }
+  }
+  if (order.length !== nodes.size) {
+    const stuck = [...nodes.keys()].filter((id) => !order.some((installed) => installed.id === id)).sort();
+    throw new Error(`ciclo de \`depends_on\` entre los módulos: ${stuck.join(', ')}`);
+  }
+  return order;
+}
+
+/**
+ * WHY THIS EXISTS (module-toolkit#135). A hub battery tests a CHAIN, not a module in isolation:
+ * the runtime REFUSES to install a module whose `depends_on` is not already installed
+ * (`installer::register_module` → `missing_dependency`), so mounting only the module under test
+ * would run ZERO batteries for anything that declares a dependency. And a module with NO
+ * `depends_on` at all can still need neighbours at runtime and never say so in the manifest —
+ * `cash_register/tests/reverse_on_void.hub.test.py` voids a real sale, so `taxes`+`sales` have to be
+ * installed alongside it regardless. This mirrors what the hub's own
+ * `run-module-hub-batteries.sh` already does (install the whole sibling catalogue) and what the
+ * gate's `module-neighbours` action already lays out on disk (siblings next to the module under
+ * test): `installPlan` turns that same layout into an install ORDER, computed once so
+ * `withHubRuntime` can mount and install it before the battery ever talks to the runtime.
+ *
+ * Returns `{ order, skipped }`. `order` is the module under test plus every dependency it actually
+ * needs (REQUIRED — missing one is a loud error, never a guess) plus every companion sibling whose
+ * own dependencies are satisfiable, topologically sorted. `skipped` lists the companions left out
+ * and why, so a run says what it did NOT install instead of pretending the catalogue was empty.
+ */
+export function installPlan({ dir, manifest }) {
+  const parentDir = dirname(dir);
+  const catalogue = readSiblingCatalogue(parentDir, manifest.id);
+  const moduleDeps = normalizeDependsOn(manifest.depends_on);
+
+  // Transitive closure of the manifest's OWN depends_on: every one of these has to exist, or the
+  // runtime will refuse the install of whatever named it — so that refusal is raised HERE, loudly,
+  // before any container is even started.
+  const required = new Map();
+  const requireTransitively = (depId, requiredBy) => {
+    if (depId === manifest.id || required.has(depId)) return;
+    const entry = catalogue.get(depId);
+    if (!entry) {
+      throw new Error(
+        `el módulo \`${requiredBy}\` depende de \`${depId}\` y no está al lado: se buscó en ` +
+          `\`${join(parentDir, depId)}\`. Coloca el módulo \`${depId}\` junto a \`${manifest.id}\` ` +
+          '(mismo directorio padre) antes de correr la batería contra el hub.',
+      );
+    }
+    required.set(depId, entry);
+    for (const nested of entry.deps) requireTransitively(nested, depId);
+  };
+  for (const depId of moduleDeps) requireTransitively(depId, manifest.id);
+
+  // A companion is installable when its whole `depends_on` closure resolves inside the catalogue
+  // (or to the module under test). The first id that does not resolve is the reason it is skipped;
+  // a companion that depends on a skipped one hits the same missing id, so it is skipped too.
+  const firstMissingDep = (id, visiting) => {
+    if (id === manifest.id || required.has(id)) return null;
+    if (visiting.has(id)) return null; // a cycle among companions is not a MISSING dependency
+    const entry = catalogue.get(id);
+    if (!entry) return id;
+    visiting.add(id);
+    for (const depId of entry.deps) {
+      const missing = firstMissingDep(depId, visiting);
+      if (missing) return missing;
+    }
+    return null;
+  };
+
+  const skipped = [];
+  const companions = [];
+  for (const [id, entry] of catalogue) {
+    if (required.has(id)) continue;
+    const missing = firstMissingDep(id, new Set());
+    if (missing) {
+      skipped.push({ id, reason: `depende de \`${missing}\`, que no está en el catálogo de al lado` });
+    } else {
+      companions.push(entry);
+    }
+  }
+
+  const nodes = new Map();
+  nodes.set(manifest.id, { id: manifest.id, dir, deps: moduleDeps.filter((id) => id !== manifest.id) });
+  for (const entry of required.values()) nodes.set(entry.id, entry);
+  for (const entry of companions) nodes.set(entry.id, entry);
+
+  const order = topoSortInstallPlan(nodes).map(({ id, dir: entryDir }) => ({ id, dir: entryDir }));
+  return { order, skipped };
 }
 
 // ── docker, on the command line ──────────────────────────────────────────────────────────────
@@ -270,17 +431,44 @@ async function installThroughRuntime({ baseUrl, dir, hubId }) {
   }
 }
 
+/**
+ * The real hub context: `GET /api/hub/context`, the runtime's own answer for which `hub_id` a dev
+ * install actually seeded (module-toolkit#135). The battery and the install both have to agree
+ * with THIS id, not with whatever a header would have said, so it is read once, straight from the
+ * runtime, before anything is installed.
+ */
+async function fetchHubContext(baseUrl) {
+  let res;
+  try {
+    res = await fetch(`${baseUrl}/api/hub/context`, { signal: AbortSignal.timeout(30_000) });
+  } catch (err) {
+    throw new Error(`GET ${baseUrl}/api/hub/context no respondió: ${err.message}`);
+  }
+  const text = await res.text();
+  let body = null;
+  try {
+    body = JSON.parse(text);
+  } catch { /* the runtime answers JSON; anything else is reported verbatim below */ }
+  if (!res.ok || !body) {
+    throw new Error(
+      `GET ${baseUrl}/api/hub/context devolvió algo inesperado (HTTP ${res.status}): ${text.slice(0, 800)}`,
+    );
+  }
+  return body;
+}
+
 // ── the orchestration ────────────────────────────────────────────────────────────────────────
 
 /**
- * Starts `image` with a scratch Postgres, installs the module of `dir` through the runtime's own
- * door, and calls `body({ baseUrl, hubId, image })`. Tears EVERYTHING down afterwards, on every
- * path, and only what it created.
+ * Starts `image` with a scratch Postgres, mounts and installs the whole `installPlan` of `dir`
+ * (the module under test, its required `depends_on`, and the satisfiable sibling companions)
+ * through the runtime's own door, and calls `body({ baseUrl, hubId, image })`. Tears EVERYTHING
+ * down afterwards, on every path, and only what it created.
  *
- * `exec`, `probe` and `install` are injectable so the suite can check the failure paths without a
- * Docker daemon — the paths that matter are the ones where something did not come up. `signals`
- * (an emitter, `process` by default) and `exit` are injectable for the same reason: a SIGINT in a
- * test must not kill the test runner.
+ * `exec`, `probe`, `install` and `hubContext` are injectable so the suite can check the failure
+ * paths without a Docker daemon — the paths that matter are the ones where something did not come
+ * up. `signals` (an emitter, `process` by default) and `exit` are injectable for the same reason: a
+ * SIGINT in a test must not kill the test runner.
  */
 export async function withHubRuntime(
   {
@@ -291,6 +479,7 @@ export async function withHubRuntime(
     exec = run,
     probe = null,
     install = null,
+    hubContext = null,
     readyTimeoutMs = READY_TIMEOUT_MS,
     readyIntervalMs = 1000,
     now = Date.now,
@@ -301,11 +490,14 @@ export async function withHubRuntime(
   },
   body,
 ) {
+  // Computed before any Docker call: a chain that cannot be resolved (a missing `depends_on`, or a
+  // cycle) must fail with NO containers created, not with a hub left running for nothing.
+  const plan = installPlan({ dir, manifest });
+
   const tag = `${manifest.id}-${randomBytes(4).toString('hex')}`;
   const net = `erplora-ah-${tag}`;
   const pg = `erplora-ah-pg-${tag}`;
   const hub = `erplora-ah-hub-${tag}`;
-  const mountPoint = `${STAGING_ROOT}/${manifest.id}`;
 
   const info = await exec('docker', ['info', '--format', '{{.ServerVersion}}']);
   if (info.code !== 0) {
@@ -392,10 +584,17 @@ export async function withHubRuntime(
       '-e', 'HUB_DEV_MODE=1',
       '-e', 'HUB_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres',
       // The staging root the installer confines `dir` to. `HUB_MODULES_DIR` is deliberately NOT
-      // set: with it, the boot scan would install the module by itself and the explicit call
-      // through the real door — the thing being tested — would never happen.
+      // set: with it, the boot scan would install the module (and every companion mounted next to
+      // it) by itself, and the explicit calls through the real door — the thing being tested —
+      // would never happen.
       '-e', `HUB_MODULE_CACHE=${STAGING_ROOT}`,
-      '-v', `${dir}:${mountPoint}:ro`,
+      // Where the dev disk backend writes a module's `static_files` (`verifactu`). The default is
+      // relative to a directory the image's user cannot write: `Permission denied` at install.
+      '-e', 'HUB_MEDIA_DIR=/tmp/erplora-media',
+      // One mount per entry of the install plan: the module under test, its required dependencies,
+      // and the companion siblings — the batteries need the whole chain on disk, not just the one
+      // directory the caller named (module-toolkit#135).
+      ...plan.order.flatMap((entry) => ['-v', `${entry.dir}:${STAGING_ROOT}/${entry.id}:ro`]),
       image,
     ]);
     if (runHub.code !== 0) {
@@ -417,7 +616,6 @@ export async function withHubRuntime(
       );
     }
     const baseUrl = `http://127.0.0.1:${mapped}`;
-    const live = { baseUrl, hubId: DEV_HUB_ROW_ID, image, container: hub };
 
     try {
       await waitForReady({
@@ -436,11 +634,28 @@ export async function withHubRuntime(
       throw new Error(`${err.message}\n${await logsTail(exec, hub)}`);
     }
 
-    log(`  · instalando ${manifest.id} por \`POST /api/modules/install\``);
-    try {
-      await (install ?? installThroughRuntime)({ baseUrl, dir: mountPoint, hubId: DEV_HUB_ROW_ID });
-    } catch (err) {
-      throw new Error(`${err.message}\n${await logsTail(exec, hub)}`);
+    // The tenant the installer actually seeds, straight from the runtime — not a header nobody
+    // sent. Read BEFORE any install: an id nobody can confirm must fail loudly instead of quietly
+    // installing under a guess (module-toolkit#135).
+    const context = await (hubContext ?? fetchHubContext)(baseUrl);
+    const hubId = context?.hub_id;
+    if (!hubId) {
+      throw new Error(
+        `\`GET /api/hub/context\` no devolvió un \`hub_id\` utilizable: ${JSON.stringify(context)}`,
+      );
+    }
+    const live = { baseUrl, hubId, image, container: hub };
+
+    for (const entry of plan.skipped) {
+      log(`  · vecino ${entry.id} sin instalar: ${entry.reason}`);
+    }
+    for (const entry of plan.order) {
+      log(`  · instalando ${entry.id} por \`POST /api/modules/install\``);
+      try {
+        await (install ?? installThroughRuntime)({ baseUrl, dir: `${STAGING_ROOT}/${entry.id}`, hubId });
+      } catch (err) {
+        throw new Error(`instalando \`${entry.id}\`: ${err.message}\n${await logsTail(exec, hub)}`);
+      }
     }
 
     return await body(live);
