@@ -279,6 +279,7 @@ jobs:
           test/outfitkit-stamp.test.mjs
           test/pack-include.test.mjs
           test/scaffold.test.mjs
+          test/startproject-deps.test.mjs
           test/signing.test.mjs
           test/ci-runs-every-suite.test.mjs
 
