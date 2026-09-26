@@ -31,6 +31,7 @@ PUT     /api/device/mode                               auth:admin
 GET     /api/devices                                   auth:admin
 DELETE  /api/devices/:device_id                        auth:admin
 PUT     /api/devices/:device_id                        auth:admin
+POST    /api/devices/prune                             auth:admin
 POST    /api/elevation/approve                         auth:any-credential
 GET     /api/entitlement                               auth:session
 POST    /api/entitlement/refresh                       auth:none
