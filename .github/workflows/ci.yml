@@ -12,11 +12,12 @@
 #     of its own, would have deadlocked every future merge into this repository. A workflow that
 #     does answer to `pull_request` is what keeps that door open.
 #
-# SCOPE. Only the validator's tests run here: `npm install` is impossible on a runner (three
-# dependencies are `file:` paths into sibling checkouts that do not exist), so the suites that need
-# esbuild or lit — build, dev, icons, pack, scaffold, signing, wasm-build — stay a local
-# `node --test`. What runs is what the gate runs, including the real PREPARE ones, in about 30
-# seconds. The public packages the running suites DO need are installed one by one below.
+# SCOPE. `npm install` is still impossible on a runner (three dependencies are `file:` paths into
+# sibling checkouts that do not exist), but every PUBLIC package the suites need is installed one
+# by one below, so build, dev, icons, pack, scaffold, signing and wasm now run here too
+# (module-toolkit#148). The only suite left out is `pack-outfitkit-floor`, whose #201 controls need
+# a real `@erplora/outfitkit` (a `file:` sibling); `test/ci-runs-every-suite.test.mjs` names it with
+# that reason and fails if an excuse ever blames a package this file installs.
 #
 # The file list is EXPLICIT rather than a `validate-*` glob: `manifest-schema`,
 # `canonical-mirrors` (module-toolkit#30/#40), `hub-mirror` (#61), `sync-hub-mirrors` (#115),
@@ -171,7 +172,7 @@ jobs:
             || erplora_infra_fail 'rustup no ha podido instalar la toolchain de Rust'
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      # Three public dependencies, installed one by one (never `npm install`, which would try to
+      # Six public dependencies, installed one by one (never `npm install`, which would try to
       # resolve the three `file:` paths into sibling checkouts that do not exist on a runner).
       #
       # `@ionic/core` is here for ONE assertion, and it is the one that must not skip: the
@@ -184,6 +185,11 @@ jobs:
       # This list and the module gate's are not kept in step by hand: `test/gate-wiring.test.mjs`
       # reads the validator's own import graph and fails the pull request that adds a package
       # without installing it in BOTH files.
+      #
+      # `esbuild`, `@iconify/utils` and `@iconify-json/ion` are what `erplora build`/`pack`/`dev`
+      # import; the suites that drive them (wasm, build-entry, pack-include, signing, scaffold,
+      # icons, dev-*) used to be excused as «needs esbuild» although these are public packages
+      # (module-toolkit#148).
       - name: Install the public dependencies the validator needs
         run: |
           set -euo pipefail
@@ -197,7 +203,7 @@ jobs:
           # a peer family bumps major on the registry — vitest 5.0.0 took the whole module CI down on
           # 2026-09-03 (module-toolkit#171). A throwaway prefix with an explicit package list needs no
           # peer resolution. Guard: test/npm-scratch-install-skips-peer-resolution.test.mjs
-          for pkg in typescript @ionic/core ajv; do
+          for pkg in typescript @ionic/core ajv esbuild @iconify/utils @iconify-json/ion; do
             want=$(node -p "require('./package.json').dependencies['$pkg']")
             npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error --legacy-peer-deps "$pkg@$want"
           done
@@ -207,6 +213,13 @@ jobs:
           # Only `ajv` itself is linked: node resolves a symlink through its realpath, so ajv's own
           # four dependencies are found next to it inside the scratch prefix.
           ln -sfn "$deps/node_modules/ajv" node_modules/ajv
+          # Same trick for esbuild and @iconify/utils: esbuild's platform binary
+          # (`@esbuild/<os>-<arch>`) and @iconify/utils' own dependencies are found through the
+          # symlink's realpath inside the scratch prefix, same as ajv.
+          ln -sfn "$deps/node_modules/esbuild" node_modules/esbuild
+          mkdir -p node_modules/@iconify node_modules/@iconify-json
+          ln -sfn "$deps/node_modules/@iconify/utils" node_modules/@iconify/utils
+          ln -sfn "$deps/node_modules/@iconify-json/ion" node_modules/@iconify-json/ion
 
       - name: Start the scratch Postgres
         env:
@@ -257,6 +270,15 @@ jobs:
           test/install-from-package.test.mjs
           test/npm-publish.test.mjs
           test/check-release-tag.test.mjs
+          test/wasm.test.mjs
+          test/build-entry.test.mjs
+          test/dev-collect.test.mjs
+          test/dev-emit-dedup-key.test.mjs
+          test/icons.test.mjs
+          test/outfitkit-stamp.test.mjs
+          test/pack-include.test.mjs
+          test/scaffold.test.mjs
+          test/signing.test.mjs
           test/ci-runs-every-suite.test.mjs
 
       # Nobody tidies up after a job on a self-hosted runner: without this, a Postgres stays holding
