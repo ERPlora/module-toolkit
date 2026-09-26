@@ -357,9 +357,8 @@ export const MISSING_FILL_GRANDFATHERED = [
   // (the rate and the operation class of a new rule) are fixed by taxes#75, which merges first.
   // `appointments` left too: appointments#221 boxed its series panel and its list toolbar.
   // `reservations` left with reservations#71 (the new-reservation form and the day picker).
+  // `sales` left with sales#414 (the customer details over the simplified ceiling and the refund form).
   ['printing', 'ui/components/erp-printing-settings/erp-printing-settings.ts', 4], // printing#50
-  ['sales', 'ui/components/erp-pos-touch/erp-pos-touch.ts', 5], // sales#414
-  ['sales', 'ui/components/erp-sale-refund/erp-sale-refund.ts', 3], // sales#414
 ];
 
 /**
