@@ -20,18 +20,40 @@ const VENDOR_ROOT = fileURLToPath(new URL('../vendor/@erplora/', import.meta.url
 
 /**
  * The copy of a hub package shipped inside the toolkit, or null when there is none (a checkout of
- * the monorepo, where the devDependency link is what resolves). An INSTALLED package always wins:
- * the module gate and the monorepo build against the hub they have (module-toolkit#99).
+ * the monorepo, where the devDependency link is what resolves).
  */
-function vendoredPath(spec) {
+function vendoredPath(spec, vendorRoot) {
   const m = VENDORED.exec(spec);
   if (!m) return null;
-  const dir = join(VENDOR_ROOT, m[1]);
+  const dir = join(vendorRoot, m[1]);
   const manifest = join(dir, 'package.json');
   if (!existsSync(manifest)) return null;
   if (m[2]) return join(dir, m[2].slice(1));
   const { main, types } = JSON.parse(readFileSync(manifest, 'utf8'));
   return join(dir, main ?? types ?? 'index.js');
+}
+
+function defaultResolve(spec) {
+  return import.meta.resolve(spec);
+}
+
+/**
+ * The file a pinned specifier builds from. An INSTALLED package always wins: the module gate and the
+ * monorepo build against the hub they were given (module-toolkit#99); the copy in `vendor/` is only
+ * for an install that has nothing else. Throws the resolution error when neither exists.
+ *
+ * @param {string} spec
+ * @param {{resolve?: (spec: string) => string, vendorRoot?: string}} [options]
+ *   `resolve` returns a `file:` URL (injected in tests)
+ */
+export function resolvePinned(spec, { resolve = defaultResolve, vendorRoot = VENDOR_ROOT } = {}) {
+  try {
+    return fileURLToPath(resolve(spec));
+  } catch (err) {
+    const vendored = vendoredPath(spec, vendorRoot);
+    if (vendored && existsSync(vendored)) return vendored;
+    throw err;
+  }
 }
 
 // `import.meta.resolve(spec)` (Node ≥20, estable y síncrono) resuelve relativo a ESTE módulo,
@@ -45,10 +67,8 @@ export function erploraResolvePlugin() {
     setup(build) {
       build.onResolve({ filter: PINNED }, (args) => {
         try {
-          return { path: fileURLToPath(import.meta.resolve(args.path)) };
+          return { path: resolvePinned(args.path) };
         } catch (err) {
-          const vendored = vendoredPath(args.path);
-          if (vendored && existsSync(vendored)) return { path: vendored };
           return {
             errors: [
               {
