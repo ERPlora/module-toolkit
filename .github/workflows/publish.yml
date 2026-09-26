@@ -38,6 +38,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The package carries the hub's module SDK (module-toolkit#359): `prepack` copies it from a
+      # DECLARED hub and stops without one, because a tarball without it is a toolkit whose
+      # generated module does not build. This job checks no hub out; the hub's `module-sdk` action,
+      # shared with the organization, brings it with no credential — the same way `ci.yml` does.
+      - id: sdk
+        uses: ERPlora/hub/.github/actions/module-sdk@develop
+
+      - name: Declare the hub the SDK is copied from
+        env:
+          SDK_PATH: ${{ steps.sdk.outputs.path }}
+        run: |
+          set -euo pipefail
+          sdk="$SDK_PATH"
+          [ -f "$sdk/package.json" ] || { echo "::error::the module-sdk action returned no package ($sdk)"; exit 1; }
+          echo "ERPLORA_HUB_DIR=$(cd "$sdk/../.." && pwd)" >> "$GITHUB_ENV"
+
       # WITHOUT registry-url on purpose: setup-node would write an .npmrc with a placeholder
       # `_authToken`, npm would authenticate with it and never try OIDC.
       # Node 24 carries npm 11 (Trusted Publishing needs npm >= 11.5.1).

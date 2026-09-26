@@ -58,8 +58,17 @@ De dónde sale cada una (module-toolkit#333): `lit` y `@erplora/outfitkit` son `
 **registro**, así que quien instala el toolkit desde npm las recibe y un módulo recién generado
 compila con OutfitKit. En este checkout, `@erplora/outfitkit` figura **además** como
 `devDependencies` `file:../outfitkit`, y en la raíz npm hace caso a esa: el desarrollo sigue
-enlazando el OutfitKit compartido, que va por delante de la flota a propósito. `@erplora/module-sdk`
-y `module-types` siguen siendo solo `file:` hasta que el SDK se publique en abierto (hub#1371).
+enlazando el OutfitKit compartido, que va por delante de la flota a propósito.
+
+`@erplora/module-sdk` y `module-types` no están en ningún registro público (hub#1371), así que el
+paquete los **lleva dentro** (module-toolkit#359): al hacer `npm pack`/`npm publish`, el `prepack`
+([`scripts/bundle-hub-sdk.mjs`](scripts/bundle-hub-sdk.mjs)) copia sus fuentes TypeScript a
+`vendor/@erplora/<paquete>/` desde el hub declarado en `ERPLORA_HUB_DIR` (la CI y el job de
+publicación lo sacan de la action `module-sdk` del hub) o, sin él, desde la `devDependencies`
+`file:` enlazada; sin ninguna de las dos el empaquetado **se para**. `postpack` borra la copia y git
+la ignora. El resolvedor prefiere siempre un SDK **instalado** —el monorepo y el gate de módulos
+siguen compilando contra el hub que tienen (#99)— y solo cae a `vendor/` cuando no lo hay, que es
+el caso de quien instala el toolkit desde npm.
 
 Esto además **deduplica `lit`**: tanto el WC del módulo como el `dist` de `@erplora/outfitkit`
 importan `lit`/`lit/decorators.js`/`lit/directives/*`; sin el plugin esbuild metería **dos copias**
@@ -1039,11 +1048,11 @@ El Hub consume los `dist/` de aquí: `hub/apps/web/sync-modules.mjs` **resuelve*
   `file:../hub/packages/module-sdk|module-types`) son **`devDependencies`**: se enlazan al hacer
   `npm install` aquí, pero el paquete que sale de `npm pack` solo declara dependencias del
   registro, así que se instala fuera del monorepo y `erplora --version` responde
-  (`test/install-from-package.test.mjs`, en la CI). Falta: publicarlo en npm
-  ([#332](https://github.com/ERPlora/module-toolkit/issues/332)), que el módulo generado compile
-  desde esa instalación —OutfitKit y el SDK como dependencias reales
-  ([#333](https://github.com/ERPlora/module-toolkit/issues/333), bloqueada por
-  [hub#1371](https://github.com/ERPlora/hub/issues/1371))— y el `guest-sdk` de Rust por versión
+  (`test/install-from-package.test.mjs`, en la CI), y desde esa instalación `erplora g module` +
+  `erplora build` compilan el módulo generado tal cual: OutfitKit del registro
+  ([#333](https://github.com/ERPlora/module-toolkit/issues/333)) y el SDK dentro del paquete
+  ([#359](https://github.com/ERPlora/module-toolkit/issues/359)). Falta: publicarlo en npm
+  ([#332](https://github.com/ERPlora/module-toolkit/issues/332)) y el `guest-sdk` de Rust por versión
   ([hub#2115](https://github.com/ERPlora/hub/issues/2115)). Plan:
   [`DECISION-aislamiento-terceros.md`](DECISION-aislamiento-terceros.md).
 
