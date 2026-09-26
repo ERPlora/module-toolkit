@@ -379,10 +379,16 @@ function onCommentLine(source, index) {
   return /^\s*(?:\/\/|\/\*|\*)/.test(source.slice(lineStart, index));
 }
 
-/** Whether the tag at `index` sits inside an open `<ion-item>` of `source` — a list row. */
+/**
+ * Whether the tag at `index` sits inside an open `<ion-item>` of `source` — a list row. An edge on a
+ * comment line is prose, not markup: counted, it would leave the rest of the file one row deep.
+ */
 function insideListRow(source, index) {
   let depth = 0;
-  for (const m of source.slice(0, index).matchAll(ITEM_EDGE)) depth += m[1] ? -1 : 1;
+  for (const m of source.slice(0, index).matchAll(ITEM_EDGE)) {
+    if (onCommentLine(source, m.index)) continue;
+    depth += m[1] ? -1 : 1;
+  }
   return depth > 0;
 }
 

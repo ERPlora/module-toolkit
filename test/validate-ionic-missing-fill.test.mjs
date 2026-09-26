@@ -160,6 +160,19 @@ test('FAILS: once the ion-item CLOSES, the next bare control is outside any row'
   );
 });
 
+test('FAILS: an `<ion-item>` named in a COMMENT opens no row — the bare controls after it are still seen', () => {
+  // Prose is not markup for the row either: a doc comment that says «each setting is an `<ion-item>`»
+  // would otherwise leave the counter one row deep and exempt every bare control below it in the file.
+  const opened = ['/** Each setting is an `<ion-item>` of the list below. */', `html\`${BARE}\``].join('\n');
+  assert.deepEqual(
+    controlsWithoutFill(opened).map((c) => c.line),
+    [2],
+  );
+  // …and a `</ion-item>` quoted in prose inside a real row does not close it.
+  const closed = `html\`<ion-item>\n  // </ion-item> quoted inside the row\n  ${BARE}\n</ion-item>\``;
+  assert.deepEqual(controlsWithoutFill(closed), []);
+});
+
 test('FAILS: ion-item-divider / ion-item-group are not a row — they do not hide a control', () => {
   assert.equal(controlsWithoutFill(`<ion-item-divider>Head</ion-item-divider>\n${BARE}`).length, 1);
   assert.equal(controlsWithoutFill(`<ion-item-group>\n${BARE}\n</ion-item-group>`).length, 1);
