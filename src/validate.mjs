@@ -21,7 +21,7 @@ import { resolve, join } from 'node:path';
 import { validateSql } from './validate-sql.mjs';
 import { checkMigrations } from './validate-migrations.mjs';
 import { checkMigrationGuard } from './validate-migration-guard.mjs';
-import { checkIonicFill } from './validate-ionic-fill.mjs';
+import { checkIonicFill, checkIonicMissingFill } from './validate-ionic-fill.mjs';
 import { checkIonicColor } from './validate-ionic-color.mjs';
 import { checkIonicClass } from './validate-ionic-class.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
@@ -412,6 +412,21 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
     throw new Error(
       'controles Ionic con un `fill` que el hub NUNCA pinta (hub#760):\n  - ' +
         ionicFill.errors.join('\n  - '),
+    );
+  }
+
+  // ERPlora/pm#479: la otra mitad del mismo defecto. Un `ion-input`/`ion-select`/`ion-textarea` que
+  // NO declara `fill` se queda en `ios` (el arreglo del shell, hub#1060, solo mueve a `md` los que
+  // declaran uno) y sale sin caja: así llegaron el «%» y la «Calificación» del alta de reglas de
+  // impuestos (taxes#73) con la puerta de arriba en verde. Fuera quedan los que van dentro de un
+  // `ion-item` (una fila de lista, que ya es la superficie). Trinquete como el de `fill`: lo
+  // publicado vive en `MISSING_FILL_GRANDFATHERED` y solo encoge.
+  const ionicMissingFill = checkIonicMissingFill(dir, manifest);
+  for (const w of ionicMissingFill.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (ionicMissingFill.errors.length) {
+    throw new Error(
+      'controles Ionic SIN `fill` fuera de una fila de lista: salen sin caja en el hub (ERPlora/pm#479):\n  - ' +
+        ionicMissingFill.errors.join('\n  - '),
     );
   }
 
