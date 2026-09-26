@@ -20,12 +20,12 @@
     "src",
     "schemas",
     "contracts",
-    "vendor"
+    "vendor",
+    "!vendor/**/*.tmp"
   ],
   "scripts": {
     "test": "node --test",
     "prepack": "node scripts/bundle-hub-sdk.mjs",
-    "postpack": "node scripts/bundle-hub-sdk.mjs --clean",
     "sync-mirrors": "node scripts/sync-hub-mirrors.mjs",
     "sync-schema": "npm run --silent sync-mirrors",
     "hub-outfitkit-rows": "node scripts/hub-outfitkit-rows.mjs",

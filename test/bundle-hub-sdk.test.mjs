@@ -7,10 +7,10 @@
 // a tarball without it is exactly the broken install #359 is about, under a green `npm pack`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BUNDLED_HUB_PACKAGES, bundleHubSdk, hubPackageDir, removeBundle } from '../scripts/bundle-hub-sdk.mjs';
+import { BUNDLED_HUB_PACKAGES, bundleHubSdk, hubPackageDir } from '../scripts/bundle-hub-sdk.mjs';
 
 const scratch = mkdtempSync(join(tmpdir(), 'erplora-bundle-sdk-'));
 test.after(() => rmSync(scratch, { recursive: true, force: true }));
@@ -89,10 +89,51 @@ test('a file the hub dropped does not linger in the next pack', () => {
   assert.equal(existsSync(join(toolkit, 'vendor/@erplora/module-sdk/src/quantity.ts')), false);
 });
 
-test('after the pack, the copy is removed from the checkout', () => {
-  const hub = fakeHub('hub-clean');
-  const toolkit = join(scratch, 'toolkit-clean');
+// Two `npm pack` of the same checkout at once — CI runs `install-from-package` and `npm-publish` in
+// parallel, and both pack on load. With a `postpack` that deleted `vendor/`, one pack could remove
+// the copy while the other was still reading it and ship a tarball without the SDK. So the copy
+// stays in the checkout (git ignores it), and packing again over an identical copy touches nothing:
+// a concurrent reader never sees a file missing or half written.
+test('the copy stays in the checkout after the pack: no postpack removes it', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.scripts.prepack, 'node scripts/bundle-hub-sdk.mjs');
+  assert.equal(manifest.scripts.postpack, undefined);
+});
+
+test('packing again from the same hub rewrites nothing', () => {
+  const hub = fakeHub('hub-idempotent');
+  const toolkit = join(scratch, 'toolkit-idempotent');
   bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } });
-  removeBundle(toolkit);
-  assert.equal(existsSync(join(toolkit, 'vendor')), false);
+  const file = join(toolkit, 'vendor/@erplora/module-sdk/src/index.ts');
+  const before = statSync(file);
+  bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } });
+  const after = statSync(file);
+  assert.equal(after.ino, before.ino, 'the file was replaced');
+  assert.equal(after.mtimeMs, before.mtimeMs, 'the file was rewritten');
+});
+
+test('a source the hub changed is updated in place', () => {
+  const hub = fakeHub('hub-changes');
+  const toolkit = join(scratch, 'toolkit-changes');
+  bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } });
+  writeFileSync(join(hub, 'packages/module-sdk/src/quantity.ts'), 'export const fromMicro = 2;\n');
+  bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } });
+  assert.equal(readFileSync(join(toolkit, 'vendor/@erplora/module-sdk/src/quantity.ts'), 'utf8'), 'export const fromMicro = 2;\n');
+  assert.deepEqual(readdirSync(join(toolkit, 'vendor/@erplora/module-sdk/src')).sort(), ['index.ts', 'quantity.ts'], 'a temporary file was left behind');
+});
+
+test('the temporary file of a pack running alongside is not swept as stale', () => {
+  const hub = fakeHub('hub-alongside');
+  const toolkit = join(scratch, 'toolkit-alongside');
+  bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } });
+  // What another process leaves for an instant between its write and its rename.
+  const theirs = join(toolkit, 'vendor/@erplora/module-sdk/src/quantity.ts.99999.tmp');
+  writeFileSync(theirs, 'x');
+  bundleHubSdk({ toolkitRoot: toolkit, env: { ERPLORA_HUB_DIR: hub } });
+  assert.equal(existsSync(theirs), true, 'its rename would fail and that pack with it');
+});
+
+test('a temporary file never ships in the tarball', () => {
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.ok(manifest.files.includes('!vendor/**/*.tmp'), `files = ${JSON.stringify(manifest.files)}`);
 });

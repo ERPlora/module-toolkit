@@ -8,15 +8,15 @@
 // (ERPlora/hub#1371). So their first `erplora build` stopped on «could not resolve».
 //
 // HOW. `npm pack`/`npm publish` run this as `prepack`: the TypeScript sources of the two hub packages
-// are copied into `vendor/@erplora/<name>/` (shipped through `files`, ignored by git) and `postpack`
-// removes them again. The resolver prefers an INSTALLED SDK and only falls back to `vendor/`, so the
+// are brought into `vendor/@erplora/<name>/` (shipped through `files`, ignored by git). The copy
+// stays in the checkout — see `bundleHubSdk` for why there is no `postpack` removing it. The resolver prefers an INSTALLED SDK and only falls back to `vendor/`, so the
 // monorepo and the module gate keep building against the hub they have (module-toolkit#99).
 //
 // WHERE FROM. A declared hub (`ERPLORA_HUB_DIR`, what CI and the publish job set from the hub's
 // `module-sdk` action) is read from disk; otherwise the installed devDependency. Neither → the pack
 // STOPS: a tarball without the SDK is the broken install this exists to prevent, and `npm pack`
 // would otherwise report it green.
-import { cpSync, existsSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -72,40 +72,60 @@ function sourcesOf(dir) {
     .map((entry) => relative(dir, join(entry.parentPath, entry.name)));
 }
 
+/** The name a file has between its write and its rename (`<file>.<pid>.tmp`). */
+const TEMPORARY = /\.\d+\.tmp$/;
+
+/** Every file under `dir`, relative to it (empty when `dir` does not exist yet). */
+function filesUnder(dir) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(dir, join(entry.parentPath, entry.name)));
+}
+
 /**
- * Copies the hub packages into `<toolkitRoot>/vendor/@erplora/<name>/`, replacing any older copy.
+ * Brings `<toolkitRoot>/vendor/@erplora/<name>/` in line with the hub packages.
  *
- * @returns {string[]} the copied files, relative to `toolkitRoot`
+ * The copy stays in the checkout between packs, and it is refreshed WITHOUT a moment in which a
+ * file is missing or half written: two `npm pack` of the same checkout run at once in CI, and a
+ * pack reading the copy while another rewrites it would ship without the SDK. So a file whose bytes
+ * already match is left alone, a changed one is written to a temporary name and renamed over the
+ * old one (atomic), and only files the hub no longer has are removed.
+ *
+ * @returns {string[]} the files of the copy, relative to `toolkitRoot`
  */
 export function bundleHubSdk({ toolkitRoot = TOOLKIT, env = process.env, resolve = defaultResolve } = {}) {
   const copied = [];
   for (const name of BUNDLED_HUB_PACKAGES) {
     const from = hubPackageDir(name, { env, resolve });
     const to = join(toolkitRoot, VENDOR_DIR, '@erplora', name);
-    rmSync(to, { recursive: true, force: true });
-    for (const file of ['package.json', ...sourcesOf(from)]) {
-      cpSync(join(from, file), join(to, file));
-      copied.push(relative(toolkitRoot, join(to, file)));
+    const wanted = ['package.json', ...sourcesOf(from)];
+    for (const file of wanted) {
+      const source = readFileSync(join(from, file));
+      const target = join(to, file);
+      if (!existsSync(target) || !readFileSync(target).equals(source)) {
+        mkdirSync(dirname(target), { recursive: true });
+        const temporary = `${target}.${process.pid}.tmp`;
+        writeFileSync(temporary, source);
+        renameSync(temporary, target);
+      }
+      copied.push(relative(toolkitRoot, target));
+    }
+    // Another pack's temporary file is not stale: removing it would make its rename fail.
+    const stales = filesUnder(to).filter((file) => !wanted.includes(file) && !TEMPORARY.test(file));
+    for (const stale of stales) {
+      rmSync(join(to, stale), { force: true });
     }
   }
   return copied;
 }
 
-/** Removes the copies from the checkout once the tarball is written (`postpack`). */
-export function removeBundle(toolkitRoot = TOOLKIT) {
-  rmSync(join(toolkitRoot, VENDOR_DIR), { recursive: true, force: true });
-}
-
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   try {
-    if (process.argv.includes('--clean')) {
-      removeBundle();
-    } else {
-      const copied = bundleHubSdk();
-      // stderr, not stdout: npm hands a lifecycle script its own stdout, and `npm pack --json`
-      // callers parse that stream as the tarball's JSON report.
-      console.error(`✓ module SDK bundled into the package (${copied.length} files under ${VENDOR_DIR}/)`);
-    }
+    const copied = bundleHubSdk();
+    // stderr, not stdout: npm hands a lifecycle script its own stdout, and `npm pack --json`
+    // callers parse that stream as the tarball's JSON report.
+    console.error(`✓ module SDK bundled into the package (${copied.length} files under ${VENDOR_DIR}/)`);
   } catch (error) {
     console.error(`✗ ${error.message}`);
     process.exit(1);
