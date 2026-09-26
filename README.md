@@ -65,10 +65,12 @@ paquete los **lleva dentro** (module-toolkit#359): al hacer `npm pack`/`npm publ
 ([`scripts/bundle-hub-sdk.mjs`](scripts/bundle-hub-sdk.mjs)) copia sus fuentes TypeScript a
 `vendor/@erplora/<paquete>/` desde el hub declarado en `ERPLORA_HUB_DIR` (la CI y el job de
 publicación lo sacan de la action `module-sdk` del hub) o, sin él, desde la `devDependencies`
-`file:` enlazada; sin ninguna de las dos el empaquetado **se para**. La copia **se queda** en el
-checkout (git la ignora) y se refresca sin un instante en que falte un fichero: solo reescribe lo
-que cambió, con fichero temporal + `rename`. Así dos `npm pack` simultáneos (la CI corre
-`install-from-package` y `npm-publish` en paralelo) nunca empaquetan sin el SDK. El resolvedor prefiere siempre un SDK **instalado** —el monorepo y el gate de módulos
+`file:` enlazada; sin ninguna de las dos el empaquetado **se para**, y también si ese hub no casa
+con el `contracts/kernel/sdk.d.ts` que lleva el toolkit (una rama vieja de `../hub` ya no se empaqueta
+en silencio). La copia **se queda** en el checkout (git la ignora) y se refresca sin un instante en
+que falte un fichero: solo reescribe lo que cambió, con fichero temporal + `rename`. Así dos
+`npm pack` simultáneos (la CI corre `install-from-package` y `npm-publish` en paralelo) nunca
+empaquetan sin el SDK. El resolvedor prefiere siempre un SDK **instalado** —el monorepo y el gate de módulos
 siguen compilando contra el hub que tienen (#99)— y solo cae a `vendor/` cuando no lo hay, que es
 el caso de quien instala el toolkit desde npm.
 

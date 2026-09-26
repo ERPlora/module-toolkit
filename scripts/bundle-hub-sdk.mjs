@@ -28,6 +28,9 @@ export const BUNDLED_HUB_PACKAGES = ['module-sdk', 'module-types'];
 /** Where the copies live inside the toolkit, relative to its root. */
 export const VENDOR_DIR = 'vendor';
 
+/** The SDK's frozen public surface, relative to a hub root AND to the toolkit root (its mirror). */
+export const SDK_CONTRACT = 'contracts/kernel/sdk.d.ts';
+
 function missing(message) {
   return Object.assign(new Error(message), { code: 'hub_sdk_missing' });
 }
@@ -65,6 +68,27 @@ function defaultResolve(spec) {
   return fileURLToPath(import.meta.resolve(spec));
 }
 
+/**
+ * Refuses an SDK whose hub disagrees with the kernel contract this toolkit ships. Without it the copy
+ * came from whatever branch `../hub` was left on and `npm pack` still exited 0 (review of #365): the
+ * tarball carried an SDK its own `contracts/kernel/sdk.d.ts` did not describe. The hub keeps that file
+ * equal to the SDK's surface (`contract:check`), and the canonical mirrors keep the toolkit's copy
+ * equal to develop's.
+ */
+function assertSdkMatchesContract(sdkDir, toolkitRoot) {
+  const hubContract = join(sdkDir, '..', '..', SDK_CONTRACT);
+  const hubSide = existsSync(hubContract) ? readFileSync(hubContract, 'utf8') : null;
+  if (hubSide !== null && hubSide === readFileSync(join(toolkitRoot, SDK_CONTRACT), 'utf8')) return;
+  throw Object.assign(
+    new Error(
+      `the module SDK in ${sdkDir} is not the one this toolkit's ${SDK_CONTRACT} describes ` +
+        `(${hubSide === null ? `${hubContract} is missing` : 'the two files differ'}): point ERPLORA_HUB_DIR ` +
+        'at a hub checkout on develop, or resync the mirrors (npm run sync-mirrors).',
+    ),
+    { code: 'hub_sdk_out_of_date' },
+  );
+}
+
 /** Every source file under `src/`, test files excluded — what a build of a module can import. */
 function sourcesOf(dir) {
   return readdirSync(join(dir, 'src'), { recursive: true, withFileTypes: true })
@@ -95,6 +119,7 @@ function filesUnder(dir) {
  * @returns {string[]} the files of the copy, relative to `toolkitRoot`
  */
 export function bundleHubSdk({ toolkitRoot = TOOLKIT, env = process.env, resolve = defaultResolve } = {}) {
+  assertSdkMatchesContract(hubPackageDir('module-sdk', { env, resolve }), toolkitRoot);
   const copied = [];
   for (const name of BUNDLED_HUB_PACKAGES) {
     const from = hubPackageDir(name, { env, resolve });
