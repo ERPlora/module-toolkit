@@ -67,19 +67,20 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * allowance (module-toolkit#189; `test/validate-grandfathered-scope.test.mjs` holds that line for
  * every grandfathered list in `src/`).
  *
- * WHERE THE SWEEP IS — 122 dead controls left, in 19 files across 11 modules. It started at 275 in
+ * WHERE THE SWEEP IS — 113 dead controls left, in 18 files across 10 modules. It started at 275 in
  * 45 files across 22 the day the check landed.
  *
- *   done, and out of the list  cash_register · customers · inventory · kitchen · pricing · printing ·
- *                              staff · tables · tasks · tickets · whatsapp_inbox  (148 controls, 25 files)
+ *   done, and out of the list  appointments · cash_register · customers · inventory · kitchen ·
+ *                              pricing · printing · staff · tables · tasks · tickets · whatsapp_inbox
+ *                              (157 controls, 26 files)
  *   still owing, worst first   taxes 18 · invoice 16 · online_booking 16 · services 16 ·
- *                              schedules 14 · reservations 11 · appointments 9 ·
+ *                              schedules 14 · reservations 11 ·
  *                              payment_gateways 8 · invoice_series 6 · payments 5 ·
  *                              cart_checkout 3
  *
  * ⚠️ Four of those modules are RETIRED and nobody is going to pay their debt: `invoice_series`
  * (ADR-0369) and `cart_checkout` / `payments` / `online_booking` (saas migration 0058) — 30 of the
- * 122. Their entries stay while their `ui/` still ships the dead controls, because the rule above is
+ * 113. Their entries stay while their `ui/` still ships the dead controls, because the rule above is
  * measured, not declared; they leave with the repos when those are archived.
  *
  * `sales`, `verifactu` and `flows` were never here: their `fill` sits on `ion-button`, where it paints.
@@ -87,7 +88,6 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
 export const FILL_GRANDFATHERED = [
   // Measured on 2026-08-20 over `origin/main` of the 25 module repos — what is PUBLISHED, not what
   // happens to be in a checkout other workers are editing.
-  ['appointments', 'ui/components/erp-appointments-list/erp-appointments-list.ts', 9],
   ['cart_checkout', 'ui/components/erp-cart-checkout-carts/erp-cart-checkout-carts.ts', 3],
   ['invoice', 'ui/components/erp-invoice-list/erp-invoice-list.ts', 10],
   ['invoice', 'ui/components/erp-invoice-settings/erp-invoice-settings.ts', 6],
