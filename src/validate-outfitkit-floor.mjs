@@ -440,8 +440,8 @@ export function checkOutfitkitFloor(
         pass: false,
         note:
           `The hub shell paints ${shared.join(', ')} with its own OutfitKit ${floorOutfitkit}, and ` +
-          'this module uses API those copies do not have (type-checked against them, ' +
-          'module-toolkit#346):\n    · ' +
+          'this module uses API those copies do not have (properties type-checked against them, ' +
+          'attributes and events read from their bundles; module-toolkit#346, #348):\n    · ' +
           shown.join('\n    · ') +
           (more > 0 ? `\n    · …and ${more} more` : '') +
           '\n  ',

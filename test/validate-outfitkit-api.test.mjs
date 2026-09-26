@@ -296,7 +296,7 @@ const FLOOR_BUNDLES = () =>
     lightbox: { props: [['src']], events: ['ok-close'] },
   });
 
-/** The baked pill adds `pulse`, `max-width` (explicit), `hideIcon` (default), and `ok-retry`. */
+/** The baked pill adds `pulse`, `max-width` (explicit), `hideIcon` (default), `ok-retry`, `ok-expand`. */
 const BAKED_BUNDLES = () =>
   outfitkitWithBundles({
     pill: {
@@ -311,7 +311,9 @@ const BAKED_BUNDLES = () =>
         ['rows', '{ attribute: false }'],
       ],
       states: ['open', 'hover'],
-      events: ['ok-dismiss', 'ok-retry'],
+      // `ok-retry` goes out through the component's `emit()` helper, `ok-expand` through a direct
+      // `new CustomEvent(…)`: real shell components use both (ok-data-table vs ok-inline-feedback).
+      events: ['ok-dismiss', 'ok-retry', 'ok-expand'],
     },
     lightbox: { props: [['src'], ['zoom', '{ type: Boolean }']], events: ['ok-close', 'ok-zoom'] },
   });
@@ -367,11 +369,12 @@ test('attribute names are matched the way the HTML parser reads them: case-insen
 
 test('an event only the baked shell component dispatches is refused; DOM and known events are not', () => {
   const problems = checkPill(
-    '<ok-status-pill @click=${this.handler} @ok-dismiss=${this.handler} @ok-retry=${this.handler}></ok-status-pill>',
+    '<ok-status-pill @click=${this.handler} @ok-dismiss=${this.handler} @ok-retry=${this.handler} @ok-expand=${this.handler}></ok-status-pill>',
   );
-  assert.equal(problems.length, 1, JSON.stringify(problems));
-  assert.match(problems[0], /ok-status-pill/);
-  assert.match(problems[0], /'ok-retry'/);
+  assert.equal(problems.length, 2, JSON.stringify(problems));
+  for (const p of problems) assert.match(p, /ok-status-pill/);
+  assert.ok(problems.some((p) => /'ok-retry'/.test(p)), 'dispatched through emit()');
+  assert.ok(problems.some((p) => /'ok-expand'/.test(p)), 'dispatched through new CustomEvent()');
 });
 
 test('events are case-sensitive: a known event under another case is not the known one', () => {
