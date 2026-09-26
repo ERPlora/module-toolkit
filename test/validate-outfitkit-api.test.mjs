@@ -21,7 +21,7 @@
 // module's unrelated type noise can neither block nor hide anything.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -225,6 +225,195 @@ export class X {
   const { problems } = checkSharedOutfitkitApi({ moduleDir, bakedDir: BAKED(), floorDir: FLOOR() });
   assert.equal(problems.length, 1, JSON.stringify(problems));
   assert.match(problems[0], /'hidden'/);
+});
+
+// --- Attributes and events on shell components — module-toolkit#348 ------------------------------
+//
+// `.prop=${…}` is judged above, but a module can also reach a shell component through an ATTRIBUTE
+// written in the template (`tone="x"`, `?dot=${…}`, `size=${…}`) or an EVENT it listens to
+// (`@ok-dismiss=${…}`). Neither is visible to `tsc`, and neither survives into the `.d.ts`: lit's
+// `@property({ attribute: 'page-size' })` is erased, and OutfitKit declares no event map. What does
+// carry both is the component's own bundle, `dist/<tag>.js`, which every OutfitKit ships: the
+// esbuild-lowered `__decorateClass([property({…})], X.prototype, "name")` and the literal event names
+// it dispatches. Rule, as for properties: an attribute or event the BAKED component knows and the
+// FLOOR one does not is new API the hub cannot paint — block, naming the line.
+
+/** esbuild's output for a lit component: decorated properties + the events it dispatches. */
+function componentJs({ className, tag, props = [], states = [], events = [] }) {
+  const decorate = (decorator, name) =>
+    `__decorateClass([\n  ${decorator}\n], ${className}.prototype, "${name}");`;
+  return [
+    'import { LitElement, html } from "lit";',
+    'import { property, state } from "lit/decorators.js";',
+    'import { define } from "./define.js";',
+    `class ${className} extends LitElement {`,
+    '  emit(type, detail) {',
+    '    this.dispatchEvent(new CustomEvent(type, { detail, bubbles: true, composed: true }));',
+    '  }',
+    '  fireAll() {',
+    ...events.map((e, i) =>
+      i % 2
+        ? `    this.emit("${e}", {});`
+        : `    this.dispatchEvent(new CustomEvent("${e}", { bubbles: true, composed: true }));`,
+    ),
+    '  }',
+    '}',
+    ...props.map(([name, options = '{ type: String }']) => decorate(`property(${options})`, name)),
+    ...states.map((name) => decorate('state()', name)),
+    `define("${tag}", ${className});`,
+    `export { ${className} };`,
+    '',
+  ].join('\n');
+}
+
+/** A fake package with `ok-status-pill` (shell) and `ok-lightbox` (module-only) bundles. */
+function outfitkitWithBundles({ pill, lightbox }) {
+  const root = outfitkitPackage({ dataTable: 'id: string; label: string;', lightbox: 'src: string;' });
+  writeFileSync(
+    join(root, 'dist', 'ok-status-pill.js'),
+    componentJs({ className: 'OkStatusPill', tag: 'ok-status-pill', ...pill }),
+  );
+  writeFileSync(
+    join(root, 'dist', 'ok-lightbox.js'),
+    componentJs({ className: 'OkLightbox', tag: 'ok-lightbox', ...lightbox }),
+  );
+  return root;
+}
+
+/** The floor pill: tone/label/dot, `empty-text` under an explicit attribute name, `ok-dismiss`. */
+const FLOOR_BUNDLES = () =>
+  outfitkitWithBundles({
+    pill: {
+      props: [
+        ['tone', '{ type: String, reflect: true }'],
+        ['label'],
+        ['dot', '{ type: Boolean, reflect: true }'],
+        ['emptyText', '{ type: String, attribute: "empty-text" }'],
+      ],
+      states: ['open'],
+      events: ['ok-dismiss'],
+    },
+    lightbox: { props: [['src']], events: ['ok-close'] },
+  });
+
+/** The baked pill adds `pulse`, `max-width` (explicit), `hideIcon` (default), and `ok-retry`. */
+const BAKED_BUNDLES = () =>
+  outfitkitWithBundles({
+    pill: {
+      props: [
+        ['tone', '{ type: String, reflect: true }'],
+        ['label'],
+        ['dot', '{ type: Boolean, reflect: true }'],
+        ['emptyText', '{ type: String, attribute: "empty-text" }'],
+        ['pulse', '{ type: Boolean, reflect: true }'],
+        ['maxWidth', '{ type: String, attribute: "max-width" }'],
+        ['hideIcon', '{ type: Boolean }'],
+        ['rows', '{ attribute: false }'],
+      ],
+      states: ['open', 'hover'],
+      events: ['ok-dismiss', 'ok-retry'],
+    },
+    lightbox: { props: [['src'], ['zoom', '{ type: Boolean }']], events: ['ok-close', 'ok-zoom'] },
+  });
+
+/** A component whose `render()` returns `template` (the part between the backticks). */
+const RENDERS = (template) =>
+  `declare const html: (s: TemplateStringsArray, ...v: unknown[]) => unknown;
+export class X {
+  on = true;
+  handler = () => {};
+  render() {
+    return html\`${template}\`;
+  }
+}
+`;
+
+const checkPill = (template) =>
+  checkSharedOutfitkitApi({
+    moduleDir: moduleWithUi({ 'components/x/x.ts': RENDERS(template) }),
+    bakedDir: BAKED_BUNDLES(),
+    floorDir: FLOOR_BUNDLES(),
+  }).problems;
+
+test('attributes and events the floor shell component already has pass', () => {
+  const problems = checkPill(
+    '<ok-status-pill tone="success" label="Paid" dot empty-text="—" ?dot=${this.on} @ok-dismiss=${this.handler}></ok-status-pill>',
+  );
+  assert.deepEqual(problems, []);
+});
+
+test('a static attribute the floor shell component does not have is refused, naming the line', () => {
+  const problems = checkPill('<ok-status-pill tone="success"\n      max-width="8rem"></ok-status-pill>');
+  assert.equal(problems.length, 1, JSON.stringify(problems));
+  assert.match(problems[0], /^ui\/components\/x\/x\.ts:7 — /, 'the line of the attribute, not of the tag');
+  assert.match(problems[0], /ok-status-pill/);
+  assert.match(problems[0], /'max-width'/);
+});
+
+test('a bare boolean attribute, a ?boolean binding and an attribute binding are all judged', () => {
+  const problems = checkPill(
+    '<ok-status-pill pulse></ok-status-pill><ok-status-pill ?pulse=${this.on}></ok-status-pill><ok-status-pill hideicon=${this.on}></ok-status-pill>',
+  );
+  assert.equal(problems.length, 3, JSON.stringify(problems));
+  assert.ok(problems.filter((p) => /'pulse'/.test(p)).length === 2, JSON.stringify(problems));
+  assert.ok(problems.some((p) => /'hideicon'/.test(p)), JSON.stringify(problems));
+});
+
+test('attribute names are matched the way the HTML parser reads them: case-insensitively', () => {
+  const problems = checkPill('<ok-status-pill hideIcon Tone="info"></ok-status-pill>');
+  assert.equal(problems.length, 1, JSON.stringify(problems));
+  assert.match(problems[0], /'hideicon'/i);
+});
+
+test('an event only the baked shell component dispatches is refused; DOM and known events are not', () => {
+  const problems = checkPill(
+    '<ok-status-pill @click=${this.handler} @ok-dismiss=${this.handler} @ok-retry=${this.handler}></ok-status-pill>',
+  );
+  assert.equal(problems.length, 1, JSON.stringify(problems));
+  assert.match(problems[0], /ok-status-pill/);
+  assert.match(problems[0], /'ok-retry'/);
+});
+
+test('events are case-sensitive: a known event under another case is not the known one', () => {
+  // lit keeps the case of `@event` names (it reads them from the raw strings), and so does
+  // `addEventListener`: `@OK-retry` never fires. It is not new API either — neither version has it.
+  const problems = checkPill('<ok-status-pill @OK-retry=${this.handler}></ok-status-pill>');
+  assert.deepEqual(problems, []);
+});
+
+test('attributes of the module\'s own, a state and an attribute:false property are not blamed on the floor', () => {
+  // `data-testid`, `class`: no OutfitKit has them as properties. `hover` is a @state (no attribute),
+  // `rows` is `attribute: false` — neither is reachable as an attribute in ANY version.
+  const problems = checkPill(
+    '<ok-status-pill data-testid="pill" class="x" hover="1" rows="2" maxwidth="1"></ok-status-pill>',
+  );
+  assert.deepEqual(problems, []);
+});
+
+test('new attributes and events of a component the shell does NOT define are fine', () => {
+  const problems = checkPill('<ok-lightbox zoom @ok-zoom=${this.handler}></ok-lightbox>');
+  assert.deepEqual(problems, []);
+});
+
+test('quoted values and expressions do not confuse which tag an attribute belongs to', () => {
+  // A `>` inside a quoted value does not close the tag, `=>` inside an expression is never read,
+  // and an attribute after a closed shell tag belongs to the next tag, not to the pill.
+  const problems = checkPill(
+    '<ok-status-pill label="a > b" .x=${() => 1} pulse></ok-status-pill><div pulse max-width="1"></div>',
+  );
+  assert.equal(problems.length, 1, JSON.stringify(problems));
+  assert.match(problems[0], /'pulse'/);
+});
+
+test('a shell component whose bundle one side lacks is not judged on attributes (nothing to compare)', () => {
+  const floorDir = FLOOR_BUNDLES();
+  rmSync(join(floorDir, 'dist', 'ok-status-pill.js'));
+  const { problems } = checkSharedOutfitkitApi({
+    moduleDir: moduleWithUi({ 'components/x/x.ts': RENDERS('<ok-status-pill pulse></ok-status-pill>') }),
+    bakedDir: BAKED_BUNDLES(),
+    floorDir,
+  });
+  assert.deepEqual(problems, []);
 });
 
 // --- The gate itself (`checkOutfitkitFloor`) ------------------------------------------------------
