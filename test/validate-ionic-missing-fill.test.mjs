@@ -306,7 +306,7 @@ test('the grandfathered list may only SHRINK', () => {
   // that adds a line has to raise them, which is what makes the addition visible in review.
   const total = MISSING_FILL_GRANDFATHERED.reduce((n, [, , count]) => n + count, 0);
   assert.ok(
-    MISSING_FILL_GRANDFATHERED.length <= 4 && total <= 18,
+    MISSING_FILL_GRANDFATHERED.length <= 3 && total <= 14,
     `the list GREW (${MISSING_FILL_GRANDFATHERED.length} files / ${total} controls). Nothing gets added: ` +
       'each module still owing empties its own line (Sale de ERPlora/pm#479).',
   );
@@ -334,6 +334,14 @@ test('taxes#73 fixed the rules form: `erp-taxes-rules.ts` is not in the list and
 test('appointments#221 boxed its series panel and list toolbar: appointments is not in the list and stays out', () => {
   assert.deepEqual(
     MISSING_FILL_GRANDFATHERED.filter(([id]) => id === 'appointments'),
+    [],
+    'every control of the module carries its box: an allowance there is a free pass for the regression',
+  );
+});
+
+test('printing#50 boxed the add-printer form, the paper width and the printer role: printing is not in the list and stays out', () => {
+  assert.deepEqual(
+    MISSING_FILL_GRANDFATHERED.filter(([id]) => id === 'printing'),
     [],
     'every control of the module carries its box: an allowance there is a free pass for the regression',
   );
