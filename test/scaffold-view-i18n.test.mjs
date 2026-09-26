@@ -100,6 +100,12 @@ test('g module: the generated view has no hand-written visible text and every ke
       assert.ok(!src.includes(word), `hand-written Spanish left in the generated view: «${word}»`);
     }
 
+    // The texts follow a language switch without a reload (the shell fires erplora:locale-changed),
+    // and a failed save never paints the server's text — it can carry driver internals (pricing#29).
+    assert.match(src, /addEventListener\('erplora:locale-changed'/, 'the view does not re-render on a language switch');
+    assert.match(src, /private get columns\(\)/, 'the column headers are frozen at construction, not per render');
+    assert.doesNotMatch(src, /formError\s*=[^;]*\.message/, 'the server error text reaches the screen');
+
     // Every key the view asks the catalogue for exists in en AND es, and the catalogue is the
     // module's own (imported, so esbuild inlines it into dist).
     assert.match(src, /import esLocale from '\.\.\/\.\.\/\.\.\/locales\/es\.json'/);
