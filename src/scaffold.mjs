@@ -379,6 +379,7 @@ const VIEW_UI = {
     save: 'Save',
     saving: 'Saving…',
     createFailed: 'Could not save. Check the data and try again.',
+    loadFailed: 'Could not load the list. Try again in a moment.',
   },
   es: {
     colName: 'Nombre',
@@ -390,6 +391,7 @@ const VIEW_UI = {
     save: 'Guardar',
     saving: 'Guardando…',
     createFailed: 'No se pudo guardar. Revisa los datos y vuelve a intentarlo.',
+    loadFailed: 'No se pudo cargar la lista. Vuelve a intentarlo en un momento.',
   },
 };
 
@@ -554,7 +556,8 @@ export class ${klass} extends LitElement {
   // The toolbar «+ Add» of ok-data-table opens the create panel; its form sends with «Save».
   render() {
     return html\`
-      \${this.ctrl?.error ? html\`<p class="err">\${this.ctrl.error}</p>\` : nothing}
+      <!-- ctrl.error is the raw server text (driver internals, pricing#29): show the catalogue message. -->
+      \${this.ctrl?.error ? html\`<p class="err" role="alert">\${t('ui.loadFailed')}</p>\` : nothing}
       <ok-data-table
         .serverSide=\${true}
         .fill=\${true}

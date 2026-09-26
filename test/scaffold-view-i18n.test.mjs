@@ -105,6 +105,9 @@ test('g module: the generated view has no hand-written visible text and every ke
     assert.match(src, /addEventListener\('erplora:locale-changed'/, 'the view does not re-render on a language switch');
     assert.match(src, /private get columns\(\)/, 'the column headers are frozen at construction, not per render');
     assert.doesNotMatch(src, /formError\s*=[^;]*\.message/, 'the server error text reaches the screen');
+    // Same for a failed list load: the controller's `error` is the raw server message (or the SDK's
+    // fixed Spanish fallback), so the view shows its own translated text instead.
+    assert.doesNotMatch(src, /\$\{\s*this\.ctrl\??\.error\s*\}/, 'the list load error paints the server text');
 
     // Every key the view asks the catalogue for exists in en AND es, and the catalogue is the
     // module's own (imported, so esbuild inlines it into dist).
