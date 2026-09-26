@@ -121,3 +121,38 @@ test('the stale-excuse check reads the install loop, not an empty list', () => {
   // Without this, a loop that stops matching turns the check above into green prose.
   assert.ok(ciInstalledPackages().includes('typescript'), 'typescript has been installed since #61');
 });
+
+// A suite that runs in CI can still check nothing there: module-toolkit#352. Three tests against the
+// REAL tables and inventory modules read them from `../../modules-workspace/modules/<id>`, a sibling
+// checkout no runner has, and `t.skip`ped on its absence — `skipped 3` behind a green check on every
+// pull request, so the tables#25 and inventory#32 regressions were caught only on a laptop with the
+// whole workspace. What a test needs from a real module is frozen under `test/fixtures/`; reaching
+// for the sibling workspace from code is what this refuses.
+const SIBLING_WORKSPACE = /['"`]\.\.\/\.\.\/modules-workspace\//;
+
+/** Suites whose CODE (comments ignored) reaches for the sibling `modules-workspace` checkout. */
+function suitesReachingForTheWorkspace(files) {
+  return files.filter((f) =>
+    readFileSync(join(REPO, 'test', f), 'utf8')
+      .split('\n')
+      .some((line) => !/^\s*(\/\/|\*)/.test(line) && SIBLING_WORKSPACE.test(line)),
+  );
+}
+
+test('no suite depends on a sibling modules-workspace checkout CI never has (module-toolkit#352)', () => {
+  assert.deepEqual(
+    suitesReachingForTheWorkspace(SUITES),
+    [],
+    'these suites read a real module from ../../modules-workspace/: on a runner it is absent and ' +
+      'the test skips behind a green check. Freeze what the test needs under test/fixtures/',
+  );
+});
+
+test('the sibling-workspace check catches the shape it exists for (module-toolkit#352)', () => {
+  // Control: the exact line the three skipped tests used, so a regex that stops matching cannot
+  // turn the check above into a green that looks at nothing.
+  // Split in two so this very file does not match its own check.
+  const probe = "const TABLES = fileURLToPath(new URL('../../" + "modules-workspace/modules/tables/', import.meta.url));";
+  assert.ok(SIBLING_WORKSPACE.test(probe));
+  assert.ok(!SIBLING_WORKSPACE.test('// `modules-workspace/` is not a repo and has no workflows'));
+});

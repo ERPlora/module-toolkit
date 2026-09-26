@@ -13,7 +13,7 @@
 // El módulo tiene que ser AUTÓNOMO: trae sus iconos en el zip, y el shell los registra al cargarlo.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -190,14 +190,13 @@ test('bakes manifest icons beyond the top level: settings.icon and widgets.*.ico
   }
 });
 
-// Verification against the REAL inventory module (read-only fixture): its ui/ sources are copied to
-// a temp dir and baked; the 5 icons lost in ERPlora/inventory#32 must be in the result. Skipped when
-// the modules workspace is not checked out next to this repo (e.g. CI).
-test('real inventory module: the 5 action icons of inventory#32 end up baked', (t) => {
-  const inventoryUi = fileURLToPath(
-    new URL('../../modules-workspace/modules/inventory/ui', import.meta.url),
-  );
-  if (!existsSync(inventoryUi)) return t.skip('modules-workspace/modules/inventory not checked out');
+// Verification against the REAL inventory module: the component that declares the 5 action icons
+// lost in ERPlora/inventory#32, frozen byte for byte under test/fixtures/real-modules
+// (ERPlora/inventory@d4e4263), is copied to a temp dir and baked. It used to be read from the sibling
+// modules workspace, which no CI runner has, so it skipped on every pull request
+// (module-toolkit#352). A missing fixture is a FAILURE here, never a skip.
+test('real inventory module: the 5 action icons of inventory#32 end up baked', () => {
+  const inventoryUi = fileURLToPath(new URL('./fixtures/real-modules/inventory/ui', import.meta.url));
   const dir = mkdtempSync(join(tmpdir(), 'erplora-icons-inventory-'));
   mkdirSync(join(dir, 'dist'), { recursive: true });
   cpSync(inventoryUi, join(dir, 'ui'), { recursive: true });

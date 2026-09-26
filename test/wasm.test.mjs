@@ -674,12 +674,13 @@ test('erplora validate REJECTS a manifest routed to a function the binary does n
 
 // --- real module (read-only fixture) --------------------------------------------------------
 
-// Verification against the REAL tables module: its manifest + committed binary are copied to a temp
-// dir (the module repo is never written to). Skipped when the modules workspace is not checked out.
-const TABLES = fileURLToPath(new URL('../../modules-workspace/modules/tables/', import.meta.url));
+// Verification against the REAL tables module: its manifest + committed binary, frozen byte for byte
+// under test/fixtures/real-modules (ERPlora/tables@21a7fbc), are copied to a temp dir. They used to
+// be read from the sibling modules workspace, which no CI runner has, so both tests skipped on every
+// pull request (module-toolkit#352). A missing fixture is a FAILURE here, never a skip.
+const TABLES = fileURLToPath(new URL('./fixtures/real-modules/tables/', import.meta.url));
 
-test('real tables module: the committed binary exports the 9 functions its manifest declares', (t) => {
-  if (!existsSync(join(TABLES, 'dist', 'handler.wasm'))) return t.skip('modules-workspace/modules/tables not checked out');
+test('real tables module: the committed binary exports the 9 functions its manifest declares', () => {
   const dir = mkdtempSync(join(tmpdir(), 'erplora-wasm26-tables-'));
   try {
     const manifest = JSON.parse(readFileSync(join(TABLES, 'module.json'), 'utf8'));
@@ -692,8 +693,7 @@ test('real tables module: the committed binary exports the 9 functions its manif
   }
 });
 
-test('real tables module: a function the binary does not export is caught (tables#25 reproduced)', (t) => {
-  if (!existsSync(join(TABLES, 'dist', 'handler.wasm'))) return t.skip('modules-workspace/modules/tables not checked out');
+test('real tables module: a function the binary does not export is caught (tables#25 reproduced)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'erplora-wasm26-tables-'));
   try {
     const manifest = JSON.parse(readFileSync(join(TABLES, 'module.json'), 'utf8'));
