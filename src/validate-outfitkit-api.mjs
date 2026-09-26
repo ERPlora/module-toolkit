@@ -20,6 +20,14 @@
 // Diffing the two runs is what makes it safe to run on 27 modules: whatever type noise a module
 // already has — an unresolvable `lit` on a CI runner, a sloppy cast — shows up in BOTH programs and
 // cancels out, so it can neither block nor hide anything.
+//
+// **Attributes and events on shell components (module-toolkit#348).** `.prop=${…}` is a lit
+// PROPERTY binding and the type check above covers it, but a module can also reach a shell
+// component through a plain HTML attribute (`tone="x"`, `?dot=${…}`, `size=${…}`) or an event it
+// listens to (`@ok-dismiss=${…}`). Neither is visible to `tsc` (a tagged template is opaque to it)
+// and neither survives into the `.d.ts`: lit's `@property({ attribute: 'page-size' })` erases the
+// attribute name, and OutfitKit declares no event map at all. What still carries both is the
+// component's own bundle, `dist/<tag>.js`, which every OutfitKit ships — so that is read instead.
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -265,6 +273,256 @@ function diagnose(moduleDir, files, indexFile, bakedDir, shell) {
   return found;
 }
 
+// --- Attributes and events on shell components — module-toolkit#348 ------------------------------
+//
+// A component's HTML surface (which strings work as an attribute or an event name) never reaches
+// its `.d.ts`, so the only place left to read it is the bundle every OutfitKit build ships,
+// `dist/<tag>.js`. This section judges a module's `html` templates against that surface with the
+// same rule as the type check above: a name the BAKED bundle knows and the FLOOR bundle does not is
+// new API the hub cannot paint.
+
+/** A one-character filler that cannot occur in an HTML tag or attribute name. */
+const MASK_CHAR = '\u0001';
+
+/**
+ * The literal (non-expression) text of a `html\`…\`` template, as absolute offsets into `sf.text`.
+ * Every `${…}` — including its own `=>`, quotes and stray `<`/`>` — is overwritten with same-length
+ * filler so the attribute tokenizer below never has to understand an expression, only skip over it,
+ * exactly like `okPropertyBindings` never looks at `span.expression` either.
+ */
+function maskedTemplateText(sf, tpl) {
+  const start = tpl.getStart(sf);
+  const chars = sf.text.slice(start, tpl.getEnd()).split('');
+  if (ts.isTemplateExpression(tpl)) {
+    const { head, templateSpans } = tpl;
+    templateSpans.forEach((span, i) => {
+      // Each span's `${…}` runs from the `${` that ends the previous literal chunk (the head, or
+      // the previous span's own literal) to the `}` that starts this one's.
+      const from = (i === 0 ? head : templateSpans[i - 1].literal).getEnd() - 2;
+      const to = span.literal.getStart(sf) + 1;
+      for (let p = from; p < to; p++) chars[p - start] = MASK_CHAR;
+    });
+  }
+  return { text: chars.join(''), start };
+}
+
+/**
+ * Attribute/event uses of SHELL `ok-*` tags inside one masked template, as `{ tag, kind, name, pos }`
+ * (`pos` absolute, for both the line number and telling apart two uses on the same line). A small
+ * hand-rolled tokenizer, not a full HTML parser: it only needs tag boundaries and attribute names,
+ * and a real parser would choke on the `\u0001` filler runs standing in for lit expressions anyway.
+ */
+function scanTemplateTags(sf, tpl, shell, uses) {
+  const { text, start } = maskedTemplateText(sf, tpl);
+  const n = text.length;
+  const isNameChar = (ch) => ch !== undefined && ch !== MASK_CHAR && !/[\s"'>/=]/.test(ch);
+  let i = 0;
+  while (i < n) {
+    if (text[i] !== '<') {
+      i++;
+      continue;
+    }
+    if (text.startsWith('<!--', i)) {
+      const close = text.indexOf('-->', i + 4);
+      i = close === -1 ? n : close + 3;
+      continue;
+    }
+    if (text[i + 1] === '/') {
+      const close = text.indexOf('>', i + 2);
+      i = close === -1 ? n : close + 1;
+      continue;
+    }
+    const opened = /^<([A-Za-z][A-Za-z0-9-]*)/.exec(text.slice(i));
+    if (!opened) {
+      i++;
+      continue;
+    }
+    const tag = opened[1].toLowerCase();
+    i += opened[0].length;
+    // Attributes, until the unquoted `>` (or `/>`) that closes the tag: a `>` inside a quoted value
+    // never closes it, and `${…}` was already masked so an `=>` inside it cannot fool this either.
+    while (i < n) {
+      while (i < n && /\s/.test(text[i])) i++;
+      if (i >= n) break;
+      if (text[i] === '>') {
+        i++;
+        break;
+      }
+      if (text[i] === '/' && text[i + 1] === '>') {
+        i += 2;
+        break;
+      }
+      if (text[i] === '/') {
+        i++;
+        continue;
+      }
+      const nameStart = i;
+      while (i < n && isNameChar(text[i])) i++;
+      if (i === nameStart) {
+        i++;
+        continue;
+      }
+      const rawName = text.slice(nameStart, i);
+      let j = i;
+      while (j < n && /\s/.test(text[j])) j++;
+      if (text[j] === '=') {
+        j++;
+        while (j < n && /\s/.test(text[j])) j++;
+        if (text[j] === '"' || text[j] === "'") {
+          const quote = text[j];
+          j++;
+          while (j < n && text[j] !== quote) j++;
+          j++;
+        } else {
+          while (j < n && !/[\s>]/.test(text[j])) j++;
+        }
+      }
+      i = j;
+      if (shell.includes(tag)) {
+        const pos = start + nameStart;
+        if (rawName.startsWith('.')) {
+          // A lit property binding: `okPropertyBindings`/`diagnose` already judge it via the type
+          // checker, against the actual declared property type — nothing to add here.
+        } else if (rawName.startsWith('@')) {
+          uses.push({ tag, kind: 'event', name: rawName.slice(1), pos });
+        } else if (rawName.startsWith('?')) {
+          uses.push({ tag, kind: 'attr', name: rawName.slice(1).toLowerCase(), pos });
+        } else {
+          uses.push({ tag, kind: 'attr', name: rawName.toLowerCase(), pos });
+        }
+      }
+    }
+  }
+}
+
+/** Every attribute/event use of a SHELL tag across all `html\`…\`` templates of one source file. */
+function shellTagUses(sf, shell) {
+  const uses = [];
+  const visit = (node) => {
+    if (ts.isTaggedTemplateExpression(node) && ts.isIdentifier(node.tag) && node.tag.text === 'html') {
+      const tpl = node.template;
+      if (ts.isNoSubstitutionTemplateLiteral(tpl) || ts.isTemplateExpression(tpl)) scanTemplateTags(sf, tpl, shell, uses);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return uses;
+}
+
+/** A string- or template-literal node's own text, or `undefined` for anything else (a variable, …). */
+function staticText(node) {
+  return node && (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) ? node.text : undefined;
+}
+
+/** The identifier name a call is made through: `f(...)` → `f`, `this.emit(...)` → `emit`. */
+function calleeName(expr) {
+  if (ts.isIdentifier(expr)) return expr.text;
+  if (ts.isPropertyAccessExpression(expr) && ts.isIdentifier(expr.name)) return expr.name.text;
+  return undefined;
+}
+
+/**
+ * What one shell component's built bundle (`dist/<tag>.js`, esbuild output) exposes: the attribute
+ * name each `@property` decorator maps to (lowercased, the way an HTML parser reads it — none if
+ * `attribute: false`), and the literal event names it is seen to dispatch (case-sensitive, since lit
+ * and `addEventListener` both keep the case of `@event` names as written).
+ */
+function bundleApi(text, file) {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  const attributes = new Set();
+  const events = new Set();
+  const isDecorateCall = (node) =>
+    ts.isCallExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    /^__decorate/.test(node.expression.text) &&
+    node.arguments.length >= 3 &&
+    ts.isArrayLiteralExpression(node.arguments[0]) &&
+    staticText(node.arguments[2]) !== undefined;
+  const visit = (node) => {
+    if (isDecorateCall(node)) {
+      const name = staticText(node.arguments[2]);
+      for (const decorator of node.arguments[0].elements) {
+        if (!ts.isCallExpression(decorator) || !ts.isIdentifier(decorator.expression)) continue;
+        if (decorator.expression.text !== 'property') continue; // `state()`/`query(…)` give nothing
+        const options = decorator.arguments[0];
+        let attribute = name.toLowerCase();
+        if (options && ts.isObjectLiteralExpression(options)) {
+          const attrProp = options.properties.find(
+            (p) => ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === 'attribute',
+          );
+          if (attrProp?.initializer.kind === ts.SyntaxKind.FalseKeyword) attribute = null;
+          else if (staticText(attrProp?.initializer) !== undefined) attribute = staticText(attrProp.initializer).toLowerCase();
+        }
+        if (attribute) attributes.add(attribute);
+      }
+    } else if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && /^(CustomEvent|Event)$/.test(node.expression.text)) {
+      const name = staticText(node.arguments?.[0]);
+      if (name !== undefined) events.add(name);
+    } else if (ts.isCallExpression(node) && /^(emit|fire|dispatch)/i.test(calleeName(node.expression) ?? '')) {
+      const name = staticText(node.arguments[0]);
+      if (name !== undefined) events.add(name);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return { attributes, events };
+}
+
+/**
+ * `bundleApi` of `<dir>/dist/<tag>.js`, memoized per `(dir, tag)` for the lifetime of one
+ * `checkSharedOutfitkitApi` call — the same tag is read again for every file and every use, and a
+ * hub package the check ran against once during that call never changes underneath it.
+ */
+function cachedBundleApi(dir, tag, cache) {
+  const key = `${dir}\u0000${tag}`;
+  if (cache.has(key)) return cache.get(key);
+  const file = join(dir, 'dist', `${tag}.js`);
+  let result = null;
+  if (existsSync(file)) {
+    try {
+      result = bundleApi(readFileSync(file, 'utf8'), file);
+    } catch {
+      // A bundle esbuild did not produce the expected shape: unreadable, same as missing.
+      result = null;
+    }
+  }
+  cache.set(key, result);
+  return result;
+}
+
+/**
+ * The module's own `ui/**` uses of shell attributes/events that the baked bundle defines and the
+ * floor bundle does not — one problem string per offending use. A tag is judged only when BOTH
+ * bundles exist and parse; there is no "unrelated noise cancels out" diff to fall back on here (as
+ * there is for the type check), so an unreadable side means silence, not a false positive.
+ */
+function attributeAndEventProblems(moduleDir, files, bakedDir, floorDir, shell, cache) {
+  const found = new Map();
+  for (const file of files) {
+    const sf = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const rel = relative(moduleDir, file).split(sep).join('/');
+    for (const use of shellTagUses(sf, shell)) {
+      const baked = cachedBundleApi(bakedDir, use.tag, cache);
+      const floor = cachedBundleApi(floorDir, use.tag, cache);
+      if (!baked || !floor) continue;
+      const bakedKnown = use.kind === 'event' ? baked.events.has(use.name) : baked.attributes.has(use.name);
+      if (!bakedKnown) continue;
+      const floorKnown = use.kind === 'event' ? floor.events.has(use.name) : floor.attributes.has(use.name);
+      if (floorKnown) continue;
+      const line = sf.getLineAndCharacterOfPosition(use.pos).line + 1;
+      // Keyed by the OCCURRENCE (`pos`), not the line: two uses of the same tag/name on one line
+      // (a bare attribute and its `?boolean` twin, say) must not collapse into a single problem.
+      const key = `${rel}:${use.pos}:${use.tag}:${use.kind}:${use.name}`;
+      const message =
+        use.kind === 'event'
+          ? `${rel}:${line} — <${use.tag} @${use.name}>: '${use.name}' is not an event ${use.tag} dispatches on the floor hub`
+          : `${rel}:${line} — <${use.tag} ${use.name}>: '${use.name}' is not an attribute of ${use.tag} on the floor hub`;
+      found.set(key, message);
+    }
+  }
+  return [...found.values()];
+}
+
 /**
  * Type-checks the module's `ui/` against the floor hub's OutfitKit for the SHELL components only.
  *
@@ -281,6 +539,8 @@ export function checkSharedOutfitkitApi({ moduleDir, bakedDir, floorDir, shell =
     const before = diagnose(moduleDir, files, bakedIndex, bakedDir, shell);
     const after = diagnose(moduleDir, files, floorIndex, bakedDir, shell);
     const problems = [...after].filter(([key]) => !before.has(key)).map(([, text]) => text);
+    const bundleCache = new Map();
+    problems.push(...attributeAndEventProblems(moduleDir, files, bakedDir, floorDir, shell, bundleCache));
     return { problems };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
