@@ -246,6 +246,10 @@ export const HUB_OUTFITKIT = [
   // tip `c0fbc3fc`): still 0.1.73 — `@erplora/outfitkit` has published nothing since 0.1.73
   // (2026-09-16T08:18:51Z; the `latest` dist-tag on the npm registry when the tag was cut).
   { hub: '1.1.29', built_at: '2026-09-19T20:46:51Z', outfitkit: '0.1.73' },
+  // v1.1.30 («v1.1.30», tagged 2026-09-26T14:55:47Z, annotated, pointing at the `origin/main`
+  // promotion `ce584178`): 0.1.98 — the newest `@erplora/outfitkit` on npm before the tag
+  // (published 2026-09-26T12:44:10Z; still the `latest` dist-tag when the tag was cut).
+  { hub: '1.1.30', built_at: '2026-09-26T14:55:47Z', outfitkit: '0.1.98' },
 ];
 
 /**
