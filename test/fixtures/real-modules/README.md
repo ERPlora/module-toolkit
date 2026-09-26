@@ -12,3 +12,8 @@ saltaban en silencio (`skipped 3` detrás de un check verde).
 No se refrescan: reproducen el caso que cazó cada regresión. Que el módulo de HOY siga cumpliendo
 lo comprueba el gate de su propio repo (`erplora validate` corre el mismo control de exports; `erplora
 build` hornea los iconos).
+
+**Una copia no puede divergir en silencio de su origen**: `provenance.json` fija el commit y el
+`sha256` de cada fichero y `test/real-module-fixtures.test.mjs` los comprueba en la CI. Para cambiar
+una fixture se vuelve a copiar del repo del módulo y se actualiza `provenance.json` con el commit
+nuevo (`shasum -a 256 <fichero>`); un byte editado a mano pone la CI en rojo.

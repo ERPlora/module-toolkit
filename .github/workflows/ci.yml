@@ -275,6 +275,7 @@ jobs:
           test/dev-collect.test.mjs
           test/dev-emit-dedup-key.test.mjs
           test/icons.test.mjs
+          test/real-module-fixtures.test.mjs
           test/outfitkit-stamp.test.mjs
           test/pack-include.test.mjs
           test/scaffold.test.mjs

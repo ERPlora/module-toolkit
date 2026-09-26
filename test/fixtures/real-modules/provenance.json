@@ -1,0 +1,14 @@
+{
+  "tables/module.json": {
+    "source": "ERPlora/tables@21a7fbc",
+    "sha256": "3e9499ce78b9f2e501c42c27f1aa0241253e11b4b4f0f72bdda175f3df5ef13b"
+  },
+  "tables/dist/handler.wasm": {
+    "source": "ERPlora/tables@21a7fbc",
+    "sha256": "a0e9181c8d18bc33d32b04bdb29e66744fd3bc662ecaa81354081ef8a9cad2dd"
+  },
+  "inventory/ui/components/erp-inventory-products/erp-inventory-products.ts": {
+    "source": "ERPlora/inventory@d4e4263",
+    "sha256": "5ba7310fab07fca23f3cf295dc17467202a771828b576db4042de4ac7e6f30d5"
+  }
+}
