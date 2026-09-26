@@ -29,8 +29,39 @@ function fileDep(fromDir, pkgDir) {
   return `file:${r}`;
 }
 
+// OutfitKit is published on npm: same range the toolkit itself builds with (single source).
+const TOOLKIT_PKG = JSON.parse(readFileSync(join(TOOLKIT_DIR, 'package.json'), 'utf8'));
+const OUTFITKIT_RANGE = TOOLKIT_PKG.dependencies['@erplora/outfitkit'];
+
+// Hub packages not published yet (hub#1371): linked with `file:` only when the folder really
+// exists; otherwise a warning instead of a dangling link that `npm install` accepts silently.
+const LOCAL_HUB_PACKAGES = ['module-sdk', 'module-types'];
+
+// devDependencies of the workspace created by `startproject` (module-toolkit#361).
+export function workspaceDevDependencies(
+  dir,
+  { toolkitDir = TOOLKIT_DIR, hubPackagesDir = HUB_PACKAGES } = {},
+) {
+  const devDependencies = {
+    '@erplora/module-toolkit': fileDep(dir, toolkitDir),
+    '@erplora/outfitkit': OUTFITKIT_RANGE,
+  };
+  const warnings = [];
+  for (const name of LOCAL_HUB_PACKAGES) {
+    const pkgDir = join(hubPackagesDir, name);
+    if (existsSync(join(pkgDir, 'package.json'))) {
+      devDependencies[`@erplora/${name}`] = fileDep(dir, pkgDir);
+    } else {
+      warnings.push({ code: 'local_package_missing', package: `@erplora/${name}`, path: pkgDir });
+    }
+  }
+  devDependencies['@ionic/core'] = '^8.8.0';
+  devDependencies.lit = '^3.2.0';
+  return { devDependencies, warnings };
+}
+
 // ── startproject ────────────────────────────────────────────────────────────────────────────
-export async function startproject(name) {
+export async function startproject(name, deps = {}) {
   if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
     throw new Error('uso: erplora startproject <nombre>  (kebab-case: a-z, 0-9, guiones)');
   }
@@ -39,6 +70,7 @@ export async function startproject(name) {
     throw new Error(`ya existe un proyecto en ${dir}`);
   }
   console.log(`Creando workspace de módulos '${name}' en ${dir}`);
+  const { devDependencies, warnings } = workspaceDevDependencies(dir, deps);
 
   const pkg = {
     name,
@@ -52,14 +84,7 @@ export async function startproject(name) {
       dev: 'erplora dev',
       validate: 'erplora validate',
     },
-    devDependencies: {
-      '@erplora/module-toolkit': fileDep(dir, TOOLKIT_DIR),
-      '@erplora/outfitkit': fileDep(dir, join(HUB_PACKAGES, 'outfitkit')),
-      '@erplora/module-sdk': fileDep(dir, join(HUB_PACKAGES, 'module-sdk')),
-      '@erplora/module-types': fileDep(dir, join(HUB_PACKAGES, 'module-types')),
-      '@ionic/core': '^8.8.0',
-      lit: '^3.2.0',
-    },
+    devDependencies,
   };
   put(join(dir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
 
@@ -102,6 +127,15 @@ export async function startproject(name) {
   erplora g module miprimermodulo
   erplora dev miprimermodulo
   erplora build miprimermodulo`);
+
+  for (const w of warnings) {
+    console.warn(
+      `\n⚠ ${w.package} no está en ${w.path}: NO se ha añadido a package.json.\n` +
+        `  Aún no está publicado en npm (hub#1371): los módulos que lo importen no compilarán.\n` +
+        `  Para usarlo ya, ejecuta startproject con el toolkit de un checkout que tenga ERPlora/hub\n` +
+        `  como carpeta hermana (…/module-toolkit y …/hub).`,
+    );
+  }
 }
 
 // ── generate (g) ──────────────────────────────────────────────────────────────────────────────
