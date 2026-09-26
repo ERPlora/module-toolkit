@@ -306,7 +306,7 @@ test('the grandfathered list may only SHRINK', () => {
   // that adds a line has to raise them, which is what makes the addition visible in review.
   const total = MISSING_FILL_GRANDFATHERED.reduce((n, [, , count]) => n + count, 0);
   assert.ok(
-    MISSING_FILL_GRANDFATHERED.length <= 4 && total <= 18,
+    MISSING_FILL_GRANDFATHERED.length <= 3 && total <= 12,
     `the list GREW (${MISSING_FILL_GRANDFATHERED.length} files / ${total} controls). Nothing gets added: ` +
       'each module still owing empties its own line (Sale de ERPlora/pm#479).',
   );
@@ -328,6 +328,14 @@ test('taxes#73 fixed the rules form: `erp-taxes-rules.ts` is not in the list and
   assert.ok(
     !MISSING_FILL_GRANDFATHERED.some(([id, file]) => id === 'taxes' && file.endsWith('erp-taxes-rules.ts')),
     'the rules form already carries its boxes: an allowance there is a free pass for the regression',
+  );
+});
+
+test('reservations#71 boxed its new-reservation form and day picker: reservations is not in the list and stays out', () => {
+  assert.deepEqual(
+    MISSING_FILL_GRANDFATHERED.filter(([id]) => id === 'reservations'),
+    [],
+    'every control of the module carries its box: an allowance there is a free pass for the regression',
   );
 });
 

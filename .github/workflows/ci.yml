@@ -267,6 +267,8 @@ jobs:
           test/npm-cache-isolation.test.mjs
           test/npm-scratch-dir-is-clean.test.mjs
           test/npm-scratch-install-skips-peer-resolution.test.mjs
+          test/bundle-hub-sdk.test.mjs
+          test/resolve-plugin.test.mjs
           test/install-from-package.test.mjs
           test/npm-publish.test.mjs
           test/check-release-tag.test.mjs
@@ -279,6 +281,7 @@ jobs:
           test/outfitkit-stamp.test.mjs
           test/pack-include.test.mjs
           test/scaffold.test.mjs
+          test/scaffold-view-i18n.test.mjs
           test/startproject-deps.test.mjs
           test/signing.test.mjs
           test/ci-runs-every-suite.test.mjs

@@ -25,7 +25,7 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const WORKFLOW = join(REPO, '.github/workflows/publish.yml');
 
 /** Top-level entries a consumer of the CLI needs; anything else is repository furniture. */
-const SHIPPED_ROOTS = ['bin/', 'src/', 'schemas/', 'contracts/'];
+const SHIPPED_ROOTS = ['bin/', 'src/', 'schemas/', 'contracts/', 'vendor/'];
 const SHIPPED_FILES = ['package.json', 'README.md', 'LICENSE'];
 
 /** A hub on an aura (`<slug>.<aura>.erplora.com`) is a real tenant of the private fleet. */
@@ -80,6 +80,10 @@ test('the tarball ships only what the CLI runs', () => {
   assert.deepEqual(stray, []);
   assert.ok(FILES.includes('bin/erplora.mjs'), 'the `erplora` bin is in the tarball');
   assert.ok(FILES.includes('LICENSE'), 'the licence text travels with the package');
+  // module-toolkit#359: the SDK a generated module imports is on no public registry, so it travels
+  // inside the package (`prepack`), sources only.
+  assert.ok(FILES.includes('vendor/@erplora/module-sdk/src/index.ts'), 'the module SDK is in the tarball');
+  assert.deepEqual(FILES.filter((f) => f.startsWith('vendor/') && /\.test\./.test(f)), [], 'no SDK test ships');
   assert.match(readFileSync(join(PKG, 'bin/erplora.mjs'), 'utf8'), /^#!\/usr\/bin\/env node\n/);
 });
 
@@ -112,6 +116,19 @@ test('the publish workflow checks the tag and the tarball before publishing', ()
   const publish = at(/\n\s+run: npm publish --access public\b/);
   assert.ok(at(/node scripts\/check-release-tag\.mjs "\$RELEASE_TAG"/) < publish);
   assert.ok(at(/node --test test\/npm-publish\.test\.mjs test\/install-from-package\.test\.mjs/) < publish);
+});
+
+// module-toolkit#359. `npm publish` runs `prepack`, which copies the module SDK from a DECLARED hub
+// and stops without one. The job checks no hub out, so it has to bring it the way CI does — the
+// hub's `module-sdk` action, shared with the organization — and declare it before the tarball test.
+test('the publish workflow hands the pack a hub to copy the module SDK from', () => {
+  const wf = readFileSync(WORKFLOW, 'utf8');
+  const sdk = wf.search(/uses: ERPlora\/hub\/\.github\/actions\/module-sdk@develop/);
+  const declared = wf.search(/ERPLORA_HUB_DIR=.*>> "\$GITHUB_ENV"/);
+  const tarballTest = wf.search(/node --test test\/npm-publish\.test\.mjs/);
+  assert.ok(sdk > 0, 'the workflow uses the hub\'s module-sdk action');
+  assert.ok(declared > sdk, 'the workflow declares ERPLORA_HUB_DIR from that action');
+  assert.ok(tarballTest > declared, 'the hub is declared before the tarball is packed');
 });
 
 test('the tag reaches the check through the environment, never spliced into a shell line', () => {

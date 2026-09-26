@@ -353,9 +353,9 @@ const ITEM_EDGE = /<(\/?)ion-item(?=[\s/>])/g;
 export const MISSING_FILL_GRANDFATHERED = [
   // Measured on 2026-09-26 over `origin/main` of the 27 module repos. `taxes` is NOT here: its two
   // (the rate and the operation class of a new rule) are fixed by taxes#75, which merges first.
+  // `reservations` left with reservations#71 (the new-reservation form and the day picker).
   // `appointments` left too: appointments#221 boxed its series panel and its list toolbar.
   ['printing', 'ui/components/erp-printing-settings/erp-printing-settings.ts', 4], // printing#50
-  ['reservations', 'ui/components/erp-reservations-list/erp-reservations-list.ts', 6], // reservations#71
   ['sales', 'ui/components/erp-pos-touch/erp-pos-touch.ts', 5], // sales#414
   ['sales', 'ui/components/erp-sale-refund/erp-sale-refund.ts', 3], // sales#414
 ];
