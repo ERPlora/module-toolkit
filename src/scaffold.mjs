@@ -61,7 +61,7 @@ export function workspaceDevDependencies(
 }
 
 // ── startproject ────────────────────────────────────────────────────────────────────────────
-export async function startproject(name) {
+export async function startproject(name, deps = {}) {
   if (!name || !/^[a-z][a-z0-9-]*$/.test(name)) {
     throw new Error('uso: erplora startproject <nombre>  (kebab-case: a-z, 0-9, guiones)');
   }
@@ -70,7 +70,7 @@ export async function startproject(name) {
     throw new Error(`ya existe un proyecto en ${dir}`);
   }
   console.log(`Creando workspace de módulos '${name}' en ${dir}`);
-  const { devDependencies, warnings } = workspaceDevDependencies(dir);
+  const { devDependencies, warnings } = workspaceDevDependencies(dir, deps);
 
   const pkg = {
     name,

@@ -45,6 +45,7 @@ test('startproject: OutfitKit comes from the registry with the toolkit range (#3
   try {
     await startproject('demo-ws');
     const pkg = JSON.parse(readFileSync(join(root, 'demo-ws', 'package.json'), 'utf8'));
+    assert.match(pkg.devDependencies['@erplora/outfitkit'], /^\^\d+\.\d+\.\d+$/);
     assert.equal(
       pkg.devDependencies['@erplora/outfitkit'],
       toolkitPkg.dependencies['@erplora/outfitkit'],
@@ -107,6 +108,30 @@ test('hub packages present: SDK and types are linked locally, without warnings (
     assert.equal(devDependencies['@erplora/module-toolkit'], 'file:../module-toolkit');
     assert.deepEqual(warnings, []);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// Reviewer of #362: deleting the `console.warn` loop left the four tests above green, so the
+// developer could still get a workspace without the SDK and no word about it.
+test('startproject: warns on the console about every hub package it could not link (#361)', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'erplora-startproject-warn-'));
+  const prev = process.cwd();
+  const original = console.warn;
+  const warned = [];
+  console.warn = (...args) => warned.push(args.join(' '));
+  process.chdir(root);
+  try {
+    await startproject('demo-ws', { hubPackagesDir: join(root, 'no-hub', 'packages') });
+    const pkg = JSON.parse(readFileSync(join(root, 'demo-ws', 'package.json'), 'utf8'));
+    assert.equal(pkg.devDependencies['@erplora/module-sdk'], undefined);
+    assert.equal(pkg.devDependencies['@erplora/module-types'], undefined);
+    assert.equal(warned.length, 2);
+    assert.match(warned[0], /@erplora\/module-sdk/);
+    assert.match(warned[1], /@erplora\/module-types/);
+  } finally {
+    console.warn = original;
+    process.chdir(prev);
     rmSync(root, { recursive: true, force: true });
   }
 });
