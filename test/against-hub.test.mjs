@@ -35,6 +35,7 @@ import {
   DEFAULT_CHANNEL,
   HUB_IMAGE_REPO,
   hubBatteryVars,
+  installPlan,
   parseAgainstHub,
   pullDeniedByAuth,
   resolveImageRef,
@@ -232,6 +233,9 @@ const OK_DOCKER = {
 
 const MODULE = { id: 'demo', name: 'demo', version: '1.0.0' };
 
+// `GET /api/hub/context` of a hub that is up: the tenant its installer seeded (module-toolkit#135).
+const FAKE_CONTEXT = async () => ({ hub_id: '00000000-0000-0000-0000-000000000001' });
+
 test('withHubRuntime: un pull NO AUTORIZADO falla con el comando exacto que hay que poder correr', async () => {
   const { exec, calls } = fakeDocker({
     'docker pull': {
@@ -304,6 +308,7 @@ test('withHubRuntime: el desmontaje ocurre TAMBIÉN cuando falla', async () => {
         exec,
         probe: async () => ({ ok: true, detail: 'UP' }),
         install: async () => {},
+        hubContext: FAKE_CONTEXT,
         ...clock,
       },
       async () => {
@@ -333,6 +338,7 @@ test('withHubRuntime: instala por la PUERTA REAL del runtime y entrega la url al
       exec,
       probe: async () => ({ ok: true, detail: 'UP' }),
       install: async (opts) => { installs.push(opts); },
+      hubContext: FAKE_CONTEXT,
       ...clock,
     },
     async (live) => { seen = live; },
@@ -371,6 +377,7 @@ test('withHubRuntime: el hub llega a su Postgres por LOOPBACK (el runtime exige 
       exec,
       probe: async () => ({ ok: true, detail: 'UP' }),
       install: async () => {},
+      hubContext: FAKE_CONTEXT,
       ...clock,
     },
     async () => {},
@@ -581,6 +588,7 @@ test('withHubRuntime: un hub LENTO pero vivo se espera hasta que responde UP', a
       exec,
       probe: async () => (++probes < 4 ? { ok: false, detail: 'connection refused' } : { ok: true, detail: 'UP' }),
       install: async () => {},
+      hubContext: FAKE_CONTEXT,
       readyTimeoutMs: 180_000,
       readyIntervalMs: 1000,
       ...clock,
@@ -612,6 +620,7 @@ test('withHubRuntime: un SIGINT/SIGTERM mientras corre la batería DESMONTA ante
           exec,
           probe: async () => ({ ok: true, detail: 'UP' }),
           install: async () => {},
+          hubContext: FAKE_CONTEXT,
           signals,
           exit: (c) => { exitCode = c; resolve(); },
           ...clock,
@@ -641,6 +650,7 @@ test('withHubRuntime: al terminar deja de escuchar señales (no cambia el compor
       exec,
       probe: async () => ({ ok: true, detail: 'UP' }),
       install: async () => {},
+      hubContext: FAKE_CONTEXT,
       signals,
       exit: () => { throw new Error('no debería salir'); },
       ...clock,
@@ -648,4 +658,240 @@ test('withHubRuntime: al terminar deja de escuchar señales (no cambia el compor
     async () => {},
   );
   for (const s of ['SIGINT', 'SIGTERM', 'SIGHUP']) assert.equal(signals.listenerCount(s), 0, s);
+});
+
+// ── the catalogue a hub battery needs (module-toolkit#135) ───────────────────────────
+//
+// 🔴 A hub battery tests a CHAIN, not a module on its own. `inventory` declares `depends_on:
+// ["taxes"]` and the runtime REFUSES to install it without `taxes` (`installer::register_module`
+// → `missing_dependency`), so a harness that mounts ONE directory runs ZERO batteries. And a
+// module with no `depends_on` at all still has batteries that need their neighbours:
+// `cash_register/tests/reverse_on_void.hub.test.py` voids a real SALE, so `taxes`+`sales` have to
+// be there. The harness therefore installs the transitive `depends_on` (REQUIRED: a missing one is
+// an error that names it) plus the rest of the sibling catalogue (the workspace layout, and what
+// the gate's `module-neighbours` action lays out), all through the real door, in dependency order.
+
+/** A throwaway workspace: `{ dirName: manifest }` → `{ root, dirOf(name), clean }`. */
+function workspace(modules) {
+  const root = mkdtempSync(join(tmpdir(), 'erplora-catalogue-'));
+  for (const [name, manifest] of Object.entries(modules)) {
+    mkdirSync(join(root, name), { recursive: true });
+    writeFileSync(
+      join(root, name, 'module.json'),
+      typeof manifest === 'string' ? manifest : JSON.stringify({ name, version: '1.0.0', ...manifest }),
+    );
+  }
+  return { root, dirOf: (name) => join(root, name), clean: () => rmSync(root, { recursive: true, force: true }) };
+}
+
+const idsOf = (plan) => plan.order.map((m) => m.id);
+const before = (ids, a, b) => ids.indexOf(a) !== -1 && ids.indexOf(a) < ids.indexOf(b);
+
+test('installPlan: las depends_on TRANSITIVAS se instalan antes que el módulo (inventory → taxes)', () => {
+  const ws = workspace({
+    taxes: { id: 'taxes', depends_on: [] },
+    sales: { id: 'sales', depends_on: ['taxes'] },
+    inventory: { id: 'inventory', depends_on: [{ id: 'sales', min_version: '1.0.0' }] },
+  });
+  try {
+    const manifest = { id: 'inventory', depends_on: [{ id: 'sales', min_version: '1.0.0' }] };
+    const plan = installPlan({ dir: ws.dirOf('inventory'), manifest });
+    const ids = idsOf(plan);
+    assert.ok(before(ids, 'taxes', 'sales'), `taxes antes que sales: ${ids}`);
+    assert.ok(before(ids, 'sales', 'inventory'), `sales antes que inventory: ${ids}`);
+    // The module under test comes from the directory the caller named, not from a lookalike.
+    assert.equal(plan.order.find((m) => m.id === 'inventory').dir, ws.dirOf('inventory'));
+    assert.equal(plan.order.find((m) => m.id === 'taxes').dir, ws.dirOf('taxes'));
+  } finally {
+    ws.clean();
+  }
+});
+
+test('installPlan: una depends_on que NO está al lado es un ERROR que la nombra y dice dónde se buscó', () => {
+  const ws = workspace({ inventory: { id: 'inventory', depends_on: ['sales'] }, sales: { id: 'sales', depends_on: ['taxes'] } });
+  try {
+    assert.throws(
+      () => installPlan({ dir: ws.dirOf('inventory'), manifest: { id: 'inventory', depends_on: ['sales'] } }),
+      (err) => {
+        assert.match(err.message, /`taxes`/);
+        assert.ok(err.message.includes(join(ws.root, 'taxes')), err.message);
+        return true;
+      },
+    );
+  } finally {
+    ws.clean();
+  }
+});
+
+test('installPlan: sin depends_on, el CATÁLOGO hermano se instala igual (cash_register necesita taxes+sales)', () => {
+  const ws = workspace({
+    taxes: { id: 'taxes' },
+    sales: { id: 'sales', depends_on: ['taxes'] },
+    cash_register: { id: 'cash_register', depends_on: [] },
+  });
+  try {
+    const ids = idsOf(installPlan({ dir: ws.dirOf('cash_register'), manifest: { id: 'cash_register', depends_on: [] } }));
+    assert.deepEqual([...ids].sort(), ['cash_register', 'sales', 'taxes']);
+    assert.ok(before(ids, 'taxes', 'sales'), `taxes antes que sales: ${ids}`);
+  } finally {
+    ws.clean();
+  }
+});
+
+test('installPlan: un vecino que depende del módulo bajo prueba va DESPUÉS de él', () => {
+  const ws = workspace({ taxes: { id: 'taxes' }, sales: { id: 'sales', depends_on: ['taxes'] } });
+  try {
+    const ids = idsOf(installPlan({ dir: ws.dirOf('taxes'), manifest: { id: 'taxes' } }));
+    assert.ok(before(ids, 'taxes', 'sales'), `taxes antes que sales: ${ids}`);
+  } finally {
+    ws.clean();
+  }
+});
+
+test('installPlan: los worktrees (`sales-wt-3`), las copias y lo que no es un módulo NO entran', () => {
+  const ws = workspace({
+    taxes: { id: 'taxes' },
+    'sales-wt-3': { id: 'sales', depends_on: ['taxes'] },
+    'cash_register-wt-2': { id: 'cash_register' },
+    cash_register: { id: 'cash_register' },
+    broken: '{ not json',
+  });
+  mkdirSync(join(ws.root, 'docs'));
+  try {
+    const plan = installPlan({ dir: ws.dirOf('cash_register'), manifest: { id: 'cash_register' } });
+    assert.deepEqual([...idsOf(plan)].sort(), ['cash_register', 'taxes']);
+  } finally {
+    ws.clean();
+  }
+});
+
+test('installPlan: un vecino con una dependencia que no hay se SALTA y se dice por qué (no es del módulo)', () => {
+  const ws = workspace({
+    taxes: { id: 'taxes' },
+    kitchen: { id: 'kitchen', depends_on: ['sales'] },
+    cash_register: { id: 'cash_register' },
+  });
+  try {
+    const plan = installPlan({ dir: ws.dirOf('cash_register'), manifest: { id: 'cash_register' } });
+    assert.deepEqual([...idsOf(plan)].sort(), ['cash_register', 'taxes']);
+    assert.equal(plan.skipped.length, 1);
+    assert.equal(plan.skipped[0].id, 'kitchen');
+    assert.match(plan.skipped[0].reason, /sales/);
+  } finally {
+    ws.clean();
+  }
+});
+
+test('installPlan: un ciclo de depends_on es un ERROR, no un orden inventado', () => {
+  const ws = workspace({ a: { id: 'a', depends_on: ['b'] }, b: { id: 'b', depends_on: ['a'] } });
+  try {
+    assert.throws(() => installPlan({ dir: ws.dirOf('a'), manifest: { id: 'a', depends_on: ['b'] } }), /ciclo/);
+  } finally {
+    ws.clean();
+  }
+});
+
+test('withHubRuntime: monta e instala TODO el plan en orden, por la puerta real, bajo el hub_id del runtime', async () => {
+  const ws = workspace({
+    taxes: { id: 'taxes' },
+    sales: { id: 'sales', depends_on: ['taxes'] },
+    inventory: { id: 'inventory', depends_on: ['taxes'] },
+  });
+  const clock = fakeClock();
+  const installs = [];
+  const { exec, calls } = fakeDocker({ ...OK_DOCKER });
+  let seen = null;
+  try {
+    await withHubRuntime(
+      {
+        dir: ws.dirOf('inventory'),
+        manifest: { id: 'inventory', depends_on: ['taxes'] },
+        image: `${HUB_IMAGE_REPO}:stable`,
+        exec,
+        probe: async () => ({ ok: true, detail: 'UP' }),
+        install: async (opts) => { installs.push(opts); },
+        hubContext: FAKE_CONTEXT,
+        ...clock,
+      },
+      async (live) => { seen = live; },
+    );
+  } finally {
+    ws.clean();
+  }
+  const order = installs.map((i) => i.dir.replace('/erplora-staging/', ''));
+  assert.deepEqual([...order].sort(), ['inventory', 'sales', 'taxes']);
+  assert.ok(before(order, 'taxes', 'inventory') && before(order, 'taxes', 'sales'), `orden: ${order}`);
+  const runHub = calls.find((c) => c.startsWith('docker run') && c.includes(HUB_IMAGE_REPO));
+  for (const id of ['taxes', 'sales', 'inventory']) {
+    assert.ok(runHub.includes(`${ws.dirOf(id)}:/erplora-staging/${id}:ro`), `${id} no se monta: ${runHub}`);
+  }
+  // The seeds land under the RUNTIME's hub_id, not under whatever a header says (issue §2): the
+  // install and the battery have to use the one `GET /api/hub/context` answers.
+  assert.equal(seen.hubId, '00000000-0000-0000-0000-000000000001');
+  assert.ok(installs.every((i) => i.hubId === seen.hubId), JSON.stringify(installs));
+});
+
+test('withHubRuntime: si el runtime no dice su hub_id, FALLA antes de instalar nada', async () => {
+  const clock = fakeClock();
+  const { exec, calls } = fakeDocker({ ...OK_DOCKER });
+  let installed = 0;
+  await assert.rejects(
+    withHubRuntime(
+      {
+        dir: '/tmp/demo',
+        manifest: MODULE,
+        image: `${HUB_IMAGE_REPO}:stable`,
+        exec,
+        probe: async () => ({ ok: true, detail: 'UP' }),
+        install: async () => { installed++; },
+        hubContext: async () => ({}),
+        ...clock,
+      },
+      async () => { throw new Error('el cuerpo NO debería ejecutarse sin hub_id'); },
+    ),
+    /hub\/context/,
+  );
+  assert.equal(installed, 0);
+  assert.ok(calls.some((c) => c.startsWith('docker rm -f')), 'y desmonta igual');
+});
+
+// Measured against `hub:stable` on 2026-09-26 with the whole catalogue: `verifactu` (the one module
+// with `static_files`) was REFUSED — `host.module_storage: no se pudo crear media/modules/verifactu:
+// Permission denied` — because the dev disk backend writes under `HUB_MEDIA_DIR`, whose default is
+// relative to a working directory the image's user cannot write. A scratch hub gets a writable one.
+test('withHubRuntime: el hub recibe un HUB_MEDIA_DIR escribible (los static_files de verifactu se instalan)', async () => {
+  const clock = fakeClock();
+  const { exec, calls } = fakeDocker({ ...OK_DOCKER });
+  await withHubRuntime(
+    {
+      dir: '/tmp/demo',
+      manifest: MODULE,
+      image: `${HUB_IMAGE_REPO}:stable`,
+      exec,
+      probe: async () => ({ ok: true, detail: 'UP' }),
+      install: async () => {},
+      hubContext: FAKE_CONTEXT,
+      ...clock,
+    },
+    async () => {},
+  );
+  const runHub = calls.find((c) => c.startsWith('docker run') && c.includes(HUB_IMAGE_REPO));
+  assert.match(runHub, /-e HUB_MEDIA_DIR=\/tmp\/\S+/);
+});
+
+// The module under test is often a WORKTREE (`inventory-wt-9`) sitting next to the published
+// checkout (`inventory`). The run certifies the code the caller named, never the lookalike.
+test('installPlan: desde un worktree, se monta ESE directorio y no el `inventory` de al lado', () => {
+  const ws = workspace({
+    taxes: { id: 'taxes' },
+    inventory: { id: 'inventory', depends_on: ['taxes'] },
+    'inventory-wt-9': { id: 'inventory', depends_on: ['taxes'] },
+  });
+  try {
+    const plan = installPlan({ dir: ws.dirOf('inventory-wt-9'), manifest: { id: 'inventory', depends_on: ['taxes'] } });
+    assert.deepEqual(idsOf(plan), ['taxes', 'inventory']);
+    assert.equal(plan.order.find((m) => m.id === 'inventory').dir, ws.dirOf('inventory-wt-9'));
+  } finally {
+    ws.clean();
+  }
 });

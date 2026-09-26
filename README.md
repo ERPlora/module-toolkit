@@ -811,12 +811,23 @@ Qué hace, en orden, y todo con `docker` de línea de comandos (sin SDK, sin dri
    que funcionar y el `docker login ghcr.io` que falta — `ghcr.io/erplora/hub` es un paquete
    privado, y un fallo mudo aquí es un verde comprado.
 2. Un Postgres efímero (`postgres:18`, el major de producción) en una red propia.
-3. El hub, con `HUB_AUTH=dev` + `HUB_DEV_MODE=1`, el módulo montado **de solo lectura** dentro de su
-   staging (`HUB_MODULE_CACHE`), y el puerto publicado en uno efímero de `127.0.0.1`.
+3. El hub, con `HUB_AUTH=dev` + `HUB_DEV_MODE=1`, un `HUB_MEDIA_DIR` escribible (los `static_files`
+   de `verifactu`), y montados **de solo lectura** dentro de su staging (`HUB_MODULE_CACHE`) el
+   módulo **y su catálogo** (abajo); el puerto, publicado en uno efímero de `127.0.0.1`.
 4. Espera a `/readyz` — el mismo endpoint que vigila el `HEALTHCHECK` de la imagen. Si no llega, el
    error trae la **cola de `docker logs`** del contenedor.
-5. Instala el módulo por `POST /api/modules/install`, la puerta real del runtime: corre su
-   instalador, su `migration_guard` y su validación de manifest.
+5. Lee su `hub_id` de `GET /api/hub/context` —el tenant bajo el que el instalador siembra— e
+   instala **en orden de dependencias** el módulo y su catálogo por `POST /api/modules/install`, la
+   puerta real del runtime: corre su instalador, su `migration_guard` y su validación de manifest.
+
+   **El catálogo** (module-toolkit#135) son los hermanos del directorio del módulo (la forma del
+   workspace, y lo que la action `module-neighbours` deja al lado en el gate): un subdirectorio
+   cuenta si su `module.json` tiene el `id` igual al nombre del directorio, así que los worktrees
+   `*-wt-N` no entran. Las `depends_on` **transitivas** del módulo son obligatorias —si falta una,
+   el error la nombra y dice dónde se buscó, antes de crear ningún contenedor—; el resto de hermanos
+   se instala también, porque una batería prueba una CADENA (`cash_register/reverse_on_void` anula
+   una venta real y necesita `taxes`+`sales` sin declararlos). Un hermano cuya propia dependencia
+   no está al lado se salta y se dice por qué.
 6. Corre las baterías de la familia **hub**, que hablan HTTP con ese runtime.
 7. **Desmonta todo, pase lo que pase** — y solo lo que creó esta corrida, nunca los contenedores de
    otro agente en la misma máquina. Una corrida que muere dejando el hub en pie lo deja con el
@@ -833,18 +844,16 @@ por el mismo motivo medido en module-toolkit#55. Recibe por entorno:
 | Variable | Qué es |
 |---|---|
 | `ERPLORA_HUB_BASE_URL` / `<ID>_HUB_BASE_URL` | la url del runtime vivo |
-| `ERPLORA_HUB_ID` | el `hub_id` con el que el runtime escribe las filas en modo dev (`local`) |
+| `ERPLORA_HUB_ID` | el `hub_id` del runtime (`GET /api/hub/context`), bajo el que están sus seeds |
 | `ERPLORA_HUB_IMAGE` | la referencia exacta contra la que se está probando |
 
 🔴 **Sin `--against-hub`, una batería de esta familia sale como «sin correr», con su motivo — nunca
 como verde.** Es la misma regla que las de Postgres sin contenedor: contarla por buena sería
 certificar el módulo contra un hub que nunca arrancó.
 
-⚠️ **Lo que hoy NO alcanza.** `withHubRuntime` monta UN directorio e instala UN módulo, así que un
-módulo con `depends_on` arranca sin su cadena y sus baterías mueren en `_require_installed` — es
-[module-toolkit#135](https://github.com/ERPlora/module-toolkit/issues/135), **abierta**. Medido
-desde el hub el 01/09 y recomprobado el 03/09: **8 de los 11** módulos que entonces tenían batería
-caían ahí. Por eso la CI del hub arranca su propio kernel en vez de llamar a esta orden (abajo).
+Medido el 26/09 contra `hub:stable` con los 27 módulos de `origin/main` al lado: las 7 baterías
+`hub` de `inventory` (que exige `taxes`) y las 2 de `cash_register` (incluida `reverse_on_void`)
+en verde; antes de module-toolkit#135 `inventory` moría en `missing_dependency` sin correr ninguna.
 
 **Qué prueba esto que la emulación no puede.** El fixture de referencia
 (`test/fixtures/against-hub/kernel_fixture`) está hecho a propósito de cosas que solo el kernel
@@ -859,8 +868,7 @@ llegan ahí — no hay credencial con la que hacer `docker pull` de un paquete p
 
 Pero «no lo engancha el gate del módulo» no es «no lo corre nadie». Desde **ERPlora/hub#1381** estas
 baterías las ejecuta **el hub**, en su `test-hub-modules.yml`, contra un `erplora-server` compilado
-de su propio ref —no contra una imagen publicada— y levantando **un hub por módulo**, que es lo que
-resuelve la cadena `depends_on` que a `--against-hub` le falta. La lista revisada vive en
+de su propio ref —no contra una imagen publicada— y levantando **un hub por módulo** con el catálogo entero instalado. La lista revisada vive en
 `scripts/ci/module-hub-batteries.txt` del hub: hoy **26 baterías de 13 módulos**. Y para que esa
 lista no se quede atrás, la otra mitad del cierre está aquí: `src/check-hub-battery-pairing.mjs`
 (con su action `check-hub-battery-pairing`, module-toolkit#163 ← ERPlora/hub#1439) pone en rojo la
