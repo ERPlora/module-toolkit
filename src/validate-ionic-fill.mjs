@@ -67,20 +67,19 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * allowance (module-toolkit#189; `test/validate-grandfathered-scope.test.mjs` holds that line for
  * every grandfathered list in `src/`).
  *
- * WHERE THE SWEEP IS — 113 dead controls left, in 18 files across 10 modules. It started at 275 in
+ * WHERE THE SWEEP IS — 101 dead controls left, in 17 files across 10 modules. It started at 275 in
  * 45 files across 22 the day the check landed.
  *
  *   done, and out of the list  appointments · cash_register · customers · inventory · kitchen ·
  *                              pricing · printing · staff · tables · tasks · tickets · whatsapp_inbox
- *                              (157 controls, 26 files)
- *   still owing, worst first   taxes 18 · invoice 16 · online_booking 16 · services 16 ·
- *                              schedules 14 · reservations 11 ·
- *                              payment_gateways 8 · invoice_series 6 · payments 5 ·
- *                              cart_checkout 3
+ *                              (157 controls, 26 files; plus taxes' rules screen, 12 controls)
+ *   still owing, worst first   invoice 16 · online_booking 16 · services 16 · schedules 14 ·
+ *                              reservations 11 · payment_gateways 8 · taxes 6 · invoice_series 6 ·
+ *                              payments 5 · cart_checkout 3
  *
  * ⚠️ Four of those modules are RETIRED and nobody is going to pay their debt: `invoice_series`
  * (ADR-0369) and `cart_checkout` / `payments` / `online_booking` (saas migration 0058) — 30 of the
- * 113. Their entries stay while their `ui/` still ships the dead controls, because the rule above is
+ * 101. Their entries stay while their `ui/` still ships the dead controls, because the rule above is
  * measured, not declared; they leave with the repos when those are archived.
  *
  * `sales`, `verifactu` and `flows` were never here: their `fill` sits on `ion-button`, where it paints.
@@ -105,7 +104,6 @@ export const FILL_GRANDFATHERED = [
   ['services', 'ui/components/erp-services-packages/erp-services-packages.ts', 8],
   ['taxes', 'ui/components/erp-taxes-aliases/erp-taxes-aliases.ts', 3],
   ['taxes', 'ui/components/erp-taxes-categories/erp-taxes-categories.ts', 3],
-  ['taxes', 'ui/components/erp-taxes-rules/erp-taxes-rules.ts', 12],
 ];
 
 /** How many offending controls `file` of `moduleId` is allowed to keep in `list`. 0 = none. */
@@ -355,8 +353,9 @@ const ITEM_EDGE = /<(\/?)ion-item(?=[\s/>])/g;
 export const MISSING_FILL_GRANDFATHERED = [
   // Measured on 2026-09-26 over `origin/main` of the 27 module repos. `taxes` is NOT here: its two
   // (the rate and the operation class of a new rule) are fixed by taxes#75, which merges first.
-  // `appointments` left too: appointments#221 boxed its series panel and its list toolbar.
   // `reservations` left with reservations#71 (the new-reservation form and the day picker).
+  ['appointments', 'ui/components/erp-appointments-list/erp-appointments-list.ts', 2], // appointments#221
+  ['appointments', 'ui/components/erp-appointments-series/erp-appointments-series.ts', 4], // appointments#221
   ['printing', 'ui/components/erp-printing-settings/erp-printing-settings.ts', 4], // printing#50
   ['sales', 'ui/components/erp-pos-touch/erp-pos-touch.ts', 5], // sales#414
   ['sales', 'ui/components/erp-sale-refund/erp-sale-refund.ts', 3], // sales#414
