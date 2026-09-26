@@ -129,7 +129,9 @@ test('hub packages present: SDK and types are linked locally, without warnings (
     const projectDir = join(root, 'demo-ws');
     const toolkitDir = join(root, 'module-toolkit');
     const hubPackagesDir = join(root, 'hub', 'packages');
-    for (const d of [toolkitDir, join(hubPackagesDir, 'module-sdk'), join(hubPackagesDir, 'module-types')]) {
+    // A stale packed copy left in the checkout must not beat the live hub sibling (#359).
+    const vendored = ['module-sdk', 'module-types'].map((n) => join(toolkitDir, 'vendor', '@erplora', n));
+    for (const d of [toolkitDir, join(hubPackagesDir, 'module-sdk'), join(hubPackagesDir, 'module-types'), ...vendored]) {
       mkdirSync(d, { recursive: true });
       writeFileSync(join(d, 'package.json'), '{}');
     }
