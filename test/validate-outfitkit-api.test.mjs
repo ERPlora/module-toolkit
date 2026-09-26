@@ -408,6 +408,15 @@ test('quoted values and expressions do not confuse which tag an attribute belong
   assert.match(problems[0], /'pulse'/);
 });
 
+test('a shell tag inside an HTML comment is not judged: commented-out markup never reaches the hub', () => {
+  // Modules keep commented-out markup in their templates (10 of the 27 do today); a `<!-- … -->`
+  // with a shell tag in it must not block a publish for API the hub is never asked to paint.
+  const problems = checkPill(
+    '<!-- <ok-status-pill pulse max-width="1"> --><ok-status-pill tone="info"></ok-status-pill>',
+  );
+  assert.deepEqual(problems, []);
+});
+
 test('a shell component whose bundle one side lacks is not judged on attributes (nothing to compare)', () => {
   const floorDir = FLOOR_BUNDLES();
   rmSync(join(floorDir, 'dist', 'ok-status-pill.js'));
