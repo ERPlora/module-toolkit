@@ -31,9 +31,9 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { dirname, join, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join, relative, sep } from 'node:path';
 import ts from 'typescript';
+import { toolkitOutfitkitDir } from './outfitkit-stamp.mjs';
 
 /**
  * The `ok-*` the hub SHELL defines at boot — the only ones whose hub version decides how a module
@@ -551,10 +551,6 @@ const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 /** Where unpacked OutfitKit packages are kept between runs. */
 export const OUTFITKIT_TYPES_CACHE_ENV = 'ERPLORA_OUTFITKIT_TYPES_CACHE';
-
-function toolkitOutfitkitDir() {
-  return join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '@erplora', 'outfitkit');
-}
 
 /**
  * An unpacked `@erplora/outfitkit@<version>` with its `dist/*.d.ts`: `{ dir }` or `{ error }`.

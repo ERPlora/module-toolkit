@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,4 +83,62 @@ test('installed as the developers page says, `erplora --version` answers with it
   const version = run('npx', ['--no-install', 'erplora', '--version'], { cwd: project });
   assert.equal(version.status, 0, `erplora --version exited ${version.status}:\n${version.stdout}${version.stderr}`);
   assert.equal(version.stdout.trim(), VERSION);
+});
+
+// module-toolkit#333. The second step of the vendor's journey: `erplora g module` and then
+// `erplora build`, from that same install. The generated Web Component imports `lit` and
+// `@erplora/outfitkit` (`/define`, `/ok-data-table`), and the resolver pins both to the copy the
+// TOOLKIT carries — so the package has to carry OutfitKit for real, from the registry, instead of a
+// `devDependencies` `file:` sibling that a consumer never receives. The component is swapped for
+// one without `@erplora/module-sdk`: that package is not published yet (ERPlora/hub#1371), and a
+// build that stops on it would hide whether OutfitKit resolves (the SDK half is module-toolkit#359).
+const OUTFITKIT_ONLY_COMPONENT = `import { LitElement, html } from 'lit';
+import { state } from 'lit/decorators.js';
+import { define } from '@erplora/outfitkit/define';
+import '@erplora/outfitkit/ok-data-table';
+import type { DataTableColumn } from '@erplora/outfitkit';
+
+export class ErpMyModuleItems extends LitElement {
+  @state() private columns: DataTableColumn[] = [{ key: 'name', label: 'Name' }];
+
+  render() {
+    return html\`<ok-data-table .columns=\${this.columns} .rows=\${[]}></ok-data-table>\`;
+  }
+}
+
+define('erp-my-module-items', ErpMyModuleItems);
+`;
+
+test('installed from its package, the toolkit builds a generated module that uses OutfitKit (#333)', () => {
+  const project = join(scratch, 'vendor-build');
+  run('mkdir', ['-p', project]);
+  assert.equal(run('npm', ['init', '-y'], { cwd: project }).status, 0);
+  const install = run(
+    'npm',
+    ['install', '--cache', join(scratch, '.npm-cache'), '--no-audit', '--no-fund', '--loglevel=error', tarball],
+    { cwd: project },
+  );
+  assert.equal(install.status, 0, `npm install of the package failed:\n${install.stderr}`);
+
+  const gen = run('npx', ['--no-install', 'erplora', 'g', 'module', 'my_module'], { cwd: project });
+  assert.equal(gen.status, 0, `erplora g module failed:\n${gen.stdout}${gen.stderr}`);
+  const component = join(project, 'my_module', 'ui', 'components', 'erp-my-module-items', 'erp-my-module-items.ts');
+  assert.match(readFileSync(component, 'utf8'), /@erplora\/outfitkit\/define/, 'the scaffold no longer imports OutfitKit: this test proves nothing');
+  writeFileSync(component, OUTFITKIT_ONLY_COMPONENT);
+
+  const build = run('npx', ['--no-install', 'erplora', 'build', 'my_module'], { cwd: project });
+  assert.equal(build.status, 0, `erplora build failed:\n${build.stdout}${build.stderr}`);
+  const bundle = readFileSync(join(project, 'my_module', 'dist', 'my_module.esm.js'), 'utf8');
+  assert.match(bundle, /ok-data-table/, 'the bundle does not carry the OutfitKit data table');
+
+  // The seal of the OutfitKit baked into the bundle (ERPlora/hub#1024) has to name the copy the
+  // bundler really used. Installed as a dependency, npm hoists that copy next to the toolkit instead
+  // of under it, and a seal looked up only under the toolkit is silently not written — the shell
+  // then cannot warn when it discards a different version.
+  const installed = JSON.parse(
+    readFileSync(join(project, 'node_modules', '@erplora', 'outfitkit', 'package.json'), 'utf8'),
+  ).version;
+  const stamp = join(project, 'my_module', 'dist', 'outfitkit.json');
+  assert.ok(existsSync(stamp), 'erplora build wrote no dist/outfitkit.json seal');
+  assert.equal(JSON.parse(readFileSync(stamp, 'utf8')).outfitkit, installed);
 });

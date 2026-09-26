@@ -54,6 +54,13 @@ Al compilar, [`src/resolve-plugin.mjs`](src/resolve-plugin.mjs) intercepta todos
 `lit*` y `@erplora/{outfitkit,module-sdk,module-types}*` y los resuelve **siempre desde el
 `node_modules` del toolkit** (vía `import.meta.resolve`, honrando los `exports` maps).
 
+De dónde sale cada una (module-toolkit#333): `lit` y `@erplora/outfitkit` son `dependencies` de
+**registro**, así que quien instala el toolkit desde npm las recibe y un módulo recién generado
+compila con OutfitKit. En este checkout, `@erplora/outfitkit` figura **además** como
+`devDependencies` `file:../outfitkit`, y en la raíz npm hace caso a esa: el desarrollo sigue
+enlazando el OutfitKit compartido, que va por delante de la flota a propósito. `@erplora/module-sdk`
+y `module-types` siguen siendo solo `file:` hasta que el SDK se publique en abierto (hub#1371).
+
 Esto además **deduplica `lit`**: tanto el WC del módulo como el `dist` de `@erplora/outfitkit`
 importan `lit`/`lit/decorators.js`/`lit/directives/*`; sin el plugin esbuild metería **dos copias**
 de Lit en el bundle (decoradores y reactive-controllers rotos). Verificado: el bundle final

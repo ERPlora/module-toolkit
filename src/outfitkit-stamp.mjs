@@ -20,10 +20,35 @@ import { fileURLToPath } from 'node:url';
 /** Nombre del sello dentro de `dist/`. Viaja en el module.zip como `icons.json`. */
 export const OUTFITKIT_STAMP = 'outfitkit.json';
 
-/** Dónde resuelve el toolkit su OutfitKit — la MISMA copia que el bundler acaba de meter. */
-function toolkitOutfitkitDir() {
-  const here = dirname(fileURLToPath(import.meta.url));
-  return join(here, '..', 'node_modules', '@erplora', 'outfitkit');
+/**
+ * Where the toolkit resolves its OutfitKit — the SAME copy the bundler just baked in.
+ *
+ * Resolved the way `erploraResolvePlugin` does (`import.meta.resolve` from the toolkit), not by
+ * guessing `<toolkit>/node_modules`: installed as a dependency, npm hoists OutfitKit NEXT TO the
+ * toolkit, and the guessed path then holds nothing — the seal was silently skipped
+ * (module-toolkit#333). The resolved entry is walked up to the package root that names it.
+ */
+export function toolkitOutfitkitDir() {
+  const fallback = join(dirname(fileURLToPath(import.meta.url)), '..', 'node_modules', '@erplora', 'outfitkit');
+  let dir;
+  try {
+    dir = dirname(fileURLToPath(import.meta.resolve('@erplora/outfitkit/define')));
+  } catch {
+    return fallback;
+  }
+  for (;;) {
+    const pkg = join(dir, 'package.json');
+    if (existsSync(pkg)) {
+      try {
+        if (JSON.parse(readFileSync(pkg, 'utf8')).name === '@erplora/outfitkit') return dir;
+      } catch {
+        // An unreadable package.json on the way up is not OutfitKit's: keep climbing.
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return fallback;
+    dir = parent;
+  }
 }
 
 /**

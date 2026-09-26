@@ -55,6 +55,15 @@ test('the lock mirrors every dependency map of package.json, range for range', (
   }
 });
 
+// A package a CONSUMER gets from the registry while this checkout links the sibling repository
+// (module-toolkit#333: `@erplora/outfitkit` is a `dependencies` range for whoever installs the
+// toolkit, and a `devDependencies` `file:` here, where the shared OutfitKit runs ahead of the
+// fleet on purpose). At the root npm honours the `devDependencies` spec, so the lock carries a
+// link, not a registry node — and the `file:` check below is the one that vouches for it.
+function linkedInThisCheckout(name) {
+  return String(pkg.devDependencies?.[name] ?? '').startsWith('file:');
+}
+
 test('every registry dependency has a resolved node in the lock', () => {
   // The half that bit #167: the root block CAN name a package and the tree still not carry it,
   // which is the `Missing: <pkg> from lock file` that `npm ci` refuses to install through.
@@ -62,6 +71,7 @@ test('every registry dependency has a resolved node in the lock', () => {
   for (const type of DEP_TYPES) {
     for (const [name, range] of Object.entries(pkg[type] ?? {})) {
       if (range.startsWith('file:') || range.startsWith('link:')) continue;
+      if (linkedInThisCheckout(name)) continue;
       const node = lock.packages[`node_modules/${name}`];
       if (!node?.version || !node.resolved) missing.push(`${name}@${range}`);
     }
@@ -76,6 +86,7 @@ test('the locked version satisfies the range package.json asks for', () => {
   for (const type of DEP_TYPES) {
     for (const [name, range] of Object.entries(pkg[type] ?? {})) {
       if (range.startsWith('file:') || range.startsWith('link:')) continue;
+      if (linkedInThisCheckout(name)) continue;
       const locked = lock.packages[`node_modules/${name}`]?.version;
       if (!locked) continue; // already reported by the test above
       const m = /^([\^~]?)(\d+)\.(\d+)\.(\d+)$/.exec(range);
