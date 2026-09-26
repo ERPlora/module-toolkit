@@ -21,20 +21,15 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * Suites CI cannot run, and why. `npm install` is impossible on a runner — three dependencies are
- * `file:` paths into sibling checkouts that do not exist there — so anything reaching for esbuild,
- * lit or the workspace stays a local `node --test`.
+ * `file:` paths into sibling checkouts that do not exist there — so only what reaches for one of
+ * THOSE stays a local `node --test`. Public npm packages are not an excuse: `ci.yml` installs them
+ * one by one, and the last test below fails the day an excuse blames one it already installs
+ * (module-toolkit#148: `wasm.test.mjs` sat here as «needs the Rust toolchain» after #146 had put
+ * Rust on the runner, and nine suites «needed esbuild», a public package).
  */
 const CANNOT_RUN_IN_CI = {
-  'build-entry.test.mjs': 'builds the bundle: needs esbuild',
-  'dev-collect.test.mjs': 'serves the preview: needs esbuild + lit',
-  'dev-emit-dedup-key.test.mjs': 'imports src/dev.mjs for `harnessEntry`: needs esbuild',
-  'icons.test.mjs': 'needs @iconify-json/ion',
-  'outfitkit-stamp.test.mjs': 'needs the @erplora/outfitkit checkout',
-  'pack-include.test.mjs': 'packs a built module: needs esbuild',
-  'pack-outfitkit-floor.test.mjs': 'drives `erplora pack` end to end: needs esbuild + lit',
-  'scaffold.test.mjs': 'scaffolds and builds: needs esbuild + lit',
-  'signing.test.mjs': 'signs a packed module: needs esbuild',
-  'wasm.test.mjs': 'compiles a handler: needs the Rust toolchain',
+  'pack-outfitkit-floor.test.mjs':
+    'its two #201 controls stamp a real @erplora/outfitkit, a `file:` sibling checkout no runner has (#238)',
 };
 
 /** The `test/…` arguments of the `Tests` step, as written. */
@@ -93,4 +88,36 @@ test('every excuse says WHY, not just that there is one', () => {
   for (const [file, reason] of Object.entries(CANNOT_RUN_IN_CI)) {
     assert.ok(reason && reason.length > 10, `${file}: the reason has to be readable, got ${reason}`);
   }
+});
+
+/** The public packages the `for pkg in …` loop of ci.yml installs on the runner. */
+function ciInstalledPackages() {
+  const ci = readFileSync(join(REPO, '.github/workflows/ci.yml'), 'utf8');
+  const loop = /for pkg in ([^;\n]+); do/.exec(ci);
+  assert.ok(loop, 'ci.yml installs its public packages through a `for pkg in …` loop');
+  return loop[1].trim().split(/\s+/);
+}
+
+/** Whether `reason` names `name` as a whole word: `esbuild` yes, `@esbuild/x` or `esbuilder` no. */
+function mentions(reason, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+  return new RegExp(`(^|[^\\w@/-])${escaped}($|[^\\w/-])`).test(reason);
+}
+
+test('no excuse blames something ci.yml already provides (module-toolkit#148)', () => {
+  // The excuse that outlives its reason is the defect #148 found: a suite parked as «needs the
+  // Rust toolchain» on a runner that installs Rust, never run by anyone. The reason is read for
+  // the names of what CI provides; if it names one, the suite belongs in the `Tests` step.
+  const ci = readFileSync(join(REPO, '.github/workflows/ci.yml'), 'utf8');
+  const provided = ciInstalledPackages();
+  if (/sh\.rustup\.rs/.test(ci)) provided.push('Rust', 'cargo');
+  const stale = Object.entries(CANNOT_RUN_IN_CI)
+    .filter(([, reason]) => provided.some((name) => mentions(reason, name)))
+    .map(([file, reason]) => `${file}: «${reason}»`);
+  assert.deepEqual(stale, [], `these excuses blame what ci.yml installs (${provided.join(', ')})`);
+});
+
+test('the stale-excuse check reads the install loop, not an empty list', () => {
+  // Without this, a loop that stops matching turns the check above into green prose.
+  assert.ok(ciInstalledPackages().includes('typescript'), 'typescript has been installed since #61');
 });
