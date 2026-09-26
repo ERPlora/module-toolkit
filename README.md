@@ -349,9 +349,10 @@ un `ion-item`** (una fila de lista: la fila es la superficie, como en los ajuste
 citan controles a propósito.
 
 Mismo trinquete, con su propia lista (`MISSING_FILL_GRANDFATHERED`): medido el 2026-09-26 sobre
-`origin/main` de los 27 módulos, **24 controles en 6 ficheros** de `appointments`, `printing`,
-`reservations` y `sales` (los de `taxes` los arregla taxes#75). Solo encoge; cada módulo tiene su
-issue (appointments#221, printing#50, reservations#71, sales#414) y su PR borra su línea.
+`origin/main` de los 27 módulos, 24 controles en 6 ficheros; hoy quedan **18 en 4 ficheros** de
+`printing`, `reservations` y `sales` (los de `taxes` los arregló taxes#75 y los de `appointments`,
+appointments#221). Solo encoge; cada módulo tiene su issue (printing#50, reservations#71, sales#414)
+y su PR borra su línea.
 
 ## El `color=` que no cruza el shadow root (module-toolkit#273)
 
