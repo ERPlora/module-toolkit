@@ -34,7 +34,9 @@ const TOOLKIT_PKG = JSON.parse(readFileSync(join(TOOLKIT_DIR, 'package.json'), '
 const OUTFITKIT_RANGE = TOOLKIT_PKG.dependencies['@erplora/outfitkit'];
 
 // Hub packages not published yet (hub#1371): linked with `file:` only when the folder really
-// exists; otherwise a warning instead of a dangling link that `npm install` accepts silently.
+// exists — the sibling hub checkout, or else the copy the npm package carries in `vendor/`
+// (module-toolkit#359); otherwise a warning instead of a dangling link that `npm install` accepts
+// silently.
 const LOCAL_HUB_PACKAGES = ['module-sdk', 'module-types'];
 
 // devDependencies of the workspace created by `startproject` (module-toolkit#361).
@@ -48,11 +50,13 @@ export function workspaceDevDependencies(
   };
   const warnings = [];
   for (const name of LOCAL_HUB_PACKAGES) {
-    const pkgDir = join(hubPackagesDir, name);
-    if (existsSync(join(pkgDir, 'package.json'))) {
+    const pkgDir = [join(hubPackagesDir, name), join(toolkitDir, 'vendor', '@erplora', name)].find((d) =>
+      existsSync(join(d, 'package.json')),
+    );
+    if (pkgDir) {
       devDependencies[`@erplora/${name}`] = fileDep(dir, pkgDir);
     } else {
-      warnings.push({ code: 'local_package_missing', package: `@erplora/${name}`, path: pkgDir });
+      warnings.push({ code: 'local_package_missing', package: `@erplora/${name}`, path: join(hubPackagesDir, name) });
     }
   }
   devDependencies['@ionic/core'] = '^8.8.0';

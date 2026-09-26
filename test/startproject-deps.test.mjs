@@ -82,6 +82,42 @@ test('toolkit installed from npm: no dangling SDK/types links, a warning per mis
         ['local_package_missing', '@erplora/module-types'],
       ],
     );
+    // The warning names where the package was looked for, so the person knows what to clone.
+    assert.deepEqual(
+      warnings.map((w) => w.path),
+      [resolve(toolkitDir, '../hub/packages/module-sdk'), resolve(toolkitDir, '../hub/packages/module-types')],
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// module-toolkit#359: the npm package carries the SDK in `vendor/` (prepack), so a toolkit installed
+// from npm HAS it — the workspace links that copy (editor types, vitest) and must not warn that
+// modules «will not compile», which would now be false.
+test('toolkit from npm carrying the SDK: the workspace links its copy, without warnings (#359)', () => {
+  const root = mkdtempSync(join(tmpdir(), 'erplora-startproject-vendored-'));
+  try {
+    const projectDir = join(root, 'demo-ws');
+    const toolkitDir = join(root, 'global', 'node_modules', '@erplora', 'module-toolkit');
+    mkdirSync(toolkitDir, { recursive: true });
+    writeFileSync(join(toolkitDir, 'package.json'), '{}');
+    for (const name of ['module-sdk', 'module-types']) {
+      mkdirSync(join(toolkitDir, 'vendor', '@erplora', name), { recursive: true });
+      writeFileSync(join(toolkitDir, 'vendor', '@erplora', name, 'package.json'), '{}');
+    }
+
+    const { devDependencies, warnings } = workspaceDevDependencies(projectDir, {
+      toolkitDir,
+      hubPackagesDir: resolve(toolkitDir, '../hub/packages'),
+    });
+
+    for (const name of ['module-sdk', 'module-types']) {
+      const spec = devDependencies[`@erplora/${name}`];
+      assert.ok(spec, `@erplora/${name} is not linked`);
+      assert.equal(resolve(projectDir, spec.slice('file:'.length)), join(toolkitDir, 'vendor', '@erplora', name));
+    }
+    assert.deepEqual(warnings, []);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
