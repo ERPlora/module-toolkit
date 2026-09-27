@@ -41,12 +41,12 @@ const KINDS = {
  * gate until it is deleted — the two-line PR that deletes it goes first, the module's behind it.
  */
 export const MONEY_FILTERS_GRANDFATHERED = [
-  ['invoice', 'ui/components/erp-invoice-list/erp-invoice-list.ts', 1],
   ['verifactu', 'ui/components/erp-verifactu-records/erp-verifactu-records.ts', 1],
-  // `sales`, `payments`, `cash_register`, `customers`, `kitchen`, `cart_checkout`, `inventory` and
-  // `services` left with pm#501: their «Total», «Amount», «Opening / Expected / Counted», «Spent»,
-  // kitchen «Total», carts/orders «Total», products «Price» and services «Price» filters are declared
-  // in `moneyFilters`, carts «Items» and products «Stock» in `quantityFilters`.
+  // `sales`, `payments`, `cash_register`, `customers`, `kitchen`, `cart_checkout`, `inventory`,
+  // `services` and `invoice` left with pm#501: their «Total», «Amount», «Opening / Expected /
+  // Counted», «Spent», kitchen «Total», carts/orders «Total», products «Price», services «Price» and
+  // invoices «Total» filters are declared in `moneyFilters`, carts «Items» and products «Stock» in
+  // `quantityFilters`.
 ];
 
 /** A test file is not a screen: fixtures of a module's own guards quote bad columns on purpose. */
