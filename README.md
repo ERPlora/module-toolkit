@@ -435,7 +435,7 @@ del fichero o la forma abreviada) → error con la línea, la columna y el códi
 **Trinquete** (`MONEY_FILTERS_GRANDFATHERED`): medido sobre `origin/main` de los 27 repos el
 2026-09-27, **15 columnas en 11 ficheros de 10 módulos** —las diez listas que convierten con una copia
 LOCAL de la receta de verifactu#137— se toleran; salen con ERPlora/pm#501, cada módulo borrando antes
-su línea. Hoy quedan **13 columnas en 9 ficheros de 8 módulos**: `sales` y `payments` ya salieron (pm#501).
+su línea. Hoy quedan **10 columnas en 8 ficheros de 7 módulos**: `sales`, `payments` y `cash_register` ya salieron (pm#501).
 
 ## El suelo de core que el módulo pide (module-toolkit#201)
 
