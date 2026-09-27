@@ -103,9 +103,8 @@ export const FILTER_OPS_GRANDFATHERED = [
   ['cart_checkout', 'cart_checkout.carts.list', 'session_token'],
   ['cart_checkout', 'cart_checkout.orders.list', 'order_number'],
   ['cart_checkout', 'cart_checkout.orders.list', 'payment_method'],
-  // cash_register — 2
+  // cash_register — 1 (`difference` became a money range in ERPlora/cash_register#107)
   ['cash_register', 'cash_register.sessions.list', 'session_number'],
-  ['cash_register', 'cash_register.sessions.list', 'difference'],
   // inventory — 1
   ['inventory', 'inventory.products.low_stock', 'sku'],
   // invoice — 1
