@@ -70,3 +70,37 @@ test('only the hub packages fall back: a missing lit or OutfitKit stays an error
     assert.throws(() => resolvePinned(spec, { resolve: notInstalled, vendorRoot: root }), { code: 'ERR_MODULE_NOT_FOUND' });
   }
 });
+
+// ── `sdkDir`: the SDK the module gate hands over (module-toolkit#389) ──────────────────────────
+// `build --check` rebuilds a bundle with hub develop's SDK to compare it with the committed one. If
+// that directory does not hold the package, falling back to whatever SDK the toolkit has installed
+// would compare against ANOTHER SDK in silence — the check would vouch for a bundle nobody rebuilt
+// with develop. It has to be a resolution error instead.
+
+/** The `onResolve` callback the plugin registers, driven without esbuild. */
+async function resolveWith(sdkDir, spec) {
+  const { erploraResolvePlugin } = await import('../src/resolve-plugin.mjs');
+  let callback;
+  erploraResolvePlugin({ sdkDir }).setup({ onResolve: (_opts, cb) => { callback = cb; } });
+  return callback({ path: spec });
+}
+
+test('the SDK handed over is the one resolved, never the installed one', async () => {
+  const sdk = join(vendorRoot('handed-over'), 'module-sdk');
+  const res = await resolveWith(sdk, '@erplora/module-sdk');
+  assert.equal(res.path, join(sdk, 'src', 'index.ts'));
+});
+
+test('the module-types a handed-over SDK bakes is its SIBLING, not the SDK itself nor the installed one (rv-393)', async () => {
+  const root = vendorRoot('handed-over-types');
+  const res = await resolveWith(join(root, 'module-sdk'), '@erplora/module-types');
+  assert.equal(res.path, join(root, 'module-types', 'src', 'index.ts'));
+});
+
+test('a handed-over directory without the SDK is an error, not a fallback to the installed SDK', async () => {
+  const empty = join(scratch, 'no-sdk-here');
+  mkdirSync(empty, { recursive: true });
+  const res = await resolveWith(empty, '@erplora/module-sdk');
+  assert.equal(res.path, undefined, `it resolved ${res.path} although the SDK it was told to use is not there`);
+  assert.equal(res.errors?.length, 1);
+});

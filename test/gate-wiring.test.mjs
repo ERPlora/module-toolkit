@@ -356,3 +356,49 @@ test('the action unpacks the keys into RUNNER_TEMP, drops them on exit, and runs
   assert.match(NEIGHBOURS, /base64 -d \| tar xz -C "\$keys"/);
   assert.match(NEIGHBOURS, /src\/module-neighbours\.mjs/);
 });
+
+// ── The committed bundle is rebuilt with develop's SDK and compared (#389) ─────────────────────
+// `validate` says WHICH `ui/` produced the bundle and `test` runs the `.test.ts` against develop's
+// SDK, but nothing compared the SHIPPED bytes with a rebuild: a dist baked with an old SDK merged
+// green. The script that does it is exercised for real in check-dist-reproducible-script.test.mjs;
+// what only this file can see is that the gate CALLS it, with the module and the SDK it was given.
+
+/** The body of the step with the given `name:`, up to the next step. */
+function stepNamed(yaml, name) {
+  const lines = yaml.split('\n');
+  const at = lines.findIndex((l) => l.trim() === `- name: ${name}`);
+  assert.notEqual(at, -1, `no step is named «${name}»`);
+  const indent = lines[at].search(/\S/);
+  const out = [lines[at]];
+  for (let i = at + 1; i < lines.length; i += 1) {
+    const l = lines[i];
+    if (l.trim() && l.search(/\S/) <= indent) break;
+    out.push(l);
+  }
+  return { body: out.join('\n'), at };
+}
+
+const DIST_STEP = 'erplora build --check (the committed bundle is what develop’s SDK builds)';
+
+test('validate-module rebuilds the bundle with the SDK it was given and compares it', () => {
+  const { body } = stepNamed(VALIDATE, DIST_STEP);
+  assert.match(
+    body,
+    /bash "\$ACTION_PATH\/\.\.\/\.\.\/scripts\/check-dist-reproducible\.sh" "\$\{\{ inputs\.path \}\}" "\$\{\{ inputs\.module-sdk-path \}\}"/,
+    'the step must run the toolkit script on the module with the SDK the gate handed over',
+  );
+  assert.match(body, /ACTION_PATH:\s*\$\{\{\s*github\.action_path\s*\}\}/, 'the script is found from the action path');
+  assert.doesNotMatch(body, /^\s*if:/m, 'it runs on every module: a switch is how a check stops running');
+  assert.doesNotMatch(body, /continue-on-error/, 'a stale bundle has to stop the gate, not annotate it');
+});
+
+test('the bundle check runs once the validator is installed and has passed', () => {
+  const dist = stepNamed(VALIDATE, DIST_STEP).at;
+  const validate = stepNamed(VALIDATE, 'erplora validate').at;
+  assert.ok(dist > validate, 'after `erplora validate`: it needs ERPLORA_TOOLKIT, and a bundle that fails CSP is not worth rebuilding');
+});
+
+test('the script the gate calls exists and is the one guarded by its own test', () => {
+  const script = readFileSync(join(REPO, '.github/scripts/check-dist-reproducible.sh'), 'utf8');
+  assert.match(script, /bin\/erplora\.mjs" build "\$mod" --check --sdk "\$sdk"/);
+});

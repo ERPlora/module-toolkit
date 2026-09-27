@@ -18,19 +18,22 @@ import { fileURLToPath } from 'node:url';
 const VENDORED = /^@erplora\/(module-sdk|module-types)($|\/.*)/;
 const VENDOR_ROOT = fileURLToPath(new URL('../vendor/@erplora/', import.meta.url));
 
+/** The file `<dir>` builds from for the subpath `sub` (`''` for the package's own entry). */
+function packageFile(dir, sub) {
+  const manifest = join(dir, 'package.json');
+  if (!existsSync(manifest)) return null;
+  if (sub) return join(dir, sub.slice(1));
+  const { main, types } = JSON.parse(readFileSync(manifest, 'utf8'));
+  return join(dir, main ?? types ?? 'index.js');
+}
+
 /**
  * The copy of a hub package shipped inside the toolkit, or null when there is none (a checkout of
  * the monorepo, where the devDependency link is what resolves).
  */
 function vendoredPath(spec, vendorRoot) {
   const m = VENDORED.exec(spec);
-  if (!m) return null;
-  const dir = join(vendorRoot, m[1]);
-  const manifest = join(dir, 'package.json');
-  if (!existsSync(manifest)) return null;
-  if (m[2]) return join(dir, m[2].slice(1));
-  const { main, types } = JSON.parse(readFileSync(manifest, 'utf8'));
-  return join(dir, main ?? types ?? 'index.js');
+  return m ? packageFile(join(vendorRoot, m[1]), m[2]) : null;
 }
 
 function defaultResolve(spec) {
@@ -61,12 +64,32 @@ export function resolvePinned(spec, { resolve = defaultResolve, vendorRoot = VEN
 // (subpaths de lit y de outfitkit: `/define`, `/ok-data-table`, `/directives/*`).
 const PINNED = /^(lit($|\/)|@lit\/|@erplora\/(outfitkit|module-sdk|module-types)($|\/))/;
 
-export function erploraResolvePlugin() {
+/**
+ * The file a hub package specifier builds from inside a GIVEN `packages/module-sdk` directory (its
+ * `module-types` sibling included). This is how `build --check` rebuilds against the SDK the module
+ * gate hands over, not the one the toolkit has installed (module-toolkit#389). Throws when that
+ * directory does not hold the package: falling back to the installed copy would compare against
+ * another SDK in silence.
+ */
+function fromSdkDir(spec, sdkDir) {
+  const m = VENDORED.exec(spec);
+  const dir = m[1] === 'module-sdk' ? sdkDir : join(sdkDir, '..', 'module-types');
+  const file = packageFile(dir, m[2]);
+  if (!file) throw new Error(`no ${join(dir, 'package.json')} for '${spec}'`);
+  return file;
+}
+
+/**
+ * @param {{sdkDir?: string}} [options] `sdkDir`: bake THIS `@erplora/module-sdk` (and its
+ *   `module-types` sibling) instead of the toolkit's installed one.
+ */
+export function erploraResolvePlugin({ sdkDir } = {}) {
   return {
     name: 'erplora-resolve',
     setup(build) {
       build.onResolve({ filter: PINNED }, (args) => {
         try {
+          if (sdkDir && VENDORED.test(args.path)) return { path: fromSdkDir(args.path, sdkDir) };
           return { path: resolvePinned(args.path) };
         } catch (err) {
           return {

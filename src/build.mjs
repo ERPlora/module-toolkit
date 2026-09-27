@@ -9,21 +9,19 @@
 //
 // Mismo contrato de salida que el antiguo @erplora/module-cli (dist/<id>.esm.js) para no tocar
 // module-loader/sync-modules.
-import { build as esbuild } from 'esbuild';
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync, statSync } from 'node:fs';
-import { resolve, join, extname } from 'node:path';
+import { readFileSync, mkdirSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 import { assertCspSafe } from './validate.mjs';
-import { erploraResolvePlugin } from './resolve-plugin.mjs';
 import { generateIcons } from './icons.mjs';
 import { stampOutfitkit, OUTFITKIT_STAMP } from './outfitkit-stamp.mjs';
-import { bundleStampFile, checkBundleProvenance, normalizeBundlePaths, stampBundle } from './bundle-freshness.mjs';
+import { bundleStampFile, checkBundleProvenance, stampBundle } from './bundle-freshness.mjs';
+import { bundleWebComponent, resolveEntry } from './bundle-web-component.mjs';
 import { buildWasmHandler } from './wasm.mjs';
 import { assertSdkFresh } from './sdk-freshness.mjs';
 
-// Flags clásicos de decoradores para los `@state()/@property()` de Lit (igual que Vite).
-const TSCONFIG_RAW = {
-  compilerOptions: { experimentalDecorators: true, useDefineForClassFields: false },
-};
+// The bundling recipe is shared with `build --check` (module-toolkit#389); re-exported here, where
+// callers (and test/build-entry.test.mjs) have always found it.
+export { bundleWebComponent, resolveEntry };
 
 export async function build(moduleDir, { wasm = {}, sdk = {} } = {}) {
   const dir = resolve(process.cwd(), moduleDir);
@@ -60,34 +58,7 @@ export async function build(moduleDir, { wasm = {}, sdk = {} } = {}) {
     console.log(`✓ wasm ${id}: ${handler.file} al día (no se recompila)`);
   }
 
-  const common = {
-    bundle: true,
-    format: 'esm',
-    target: 'es2022',
-    outfile,
-    minify: false,
-    legalComments: 'none',
-    tsconfigRaw: TSCONFIG_RAW,
-    plugins: [erploraResolvePlugin()],
-  };
-
-  const entry = resolveEntry(dir);
-  if (entry.entryPoints) {
-    await esbuild({ ...common, entryPoints: entry.entryPoints });
-  } else {
-    // Entry sintético (varios componentes): se importan todos por efecto secundario (auto-define).
-    await esbuild({
-      ...common,
-      stdin: { contents: entry.contents, resolveDir: entry.resolveDir, sourcefile: `${id}.entry.ts`, loader: 'ts' },
-    });
-  }
-
-  // module-toolkit#93 (causa raíz): esbuild anota la ruta de cada entrada como comentario, RELATIVA
-  // al working dir del PROCESO. Construir desde otro sitio (el checkout del toolkit, un worktree de
-  // la flota) horneaba rutas ABSOLUTAS en el artefacto publicado — `verifactu` publicó 8 apuntando
-  // al scratchpad de otro agente. Normalizarlas hace que el bundle salga IGUAL desde cualquier
-  // máquina, que es lo que la comprobación de procedencia exige aguas abajo.
-  writeFileSync(outfile, normalizeBundlePaths(readFileSync(outfile, 'utf8'), dir), 'utf8');
+  await bundleWebComponent(dir, id, outfile);
 
   const code = readFileSync(outfile, 'utf8');
   assertCspSafe(code, `${id} bundle`);
@@ -121,39 +92,4 @@ export async function build(moduleDir, { wasm = {}, sdk = {} } = {}) {
       : `⚠ outfitkit ${id}: sin versión resoluble — el bundle va SIN sello y el shell no podrá avisar de una deriva`,
   );
   return outfile;
-}
-
-// Resuelve el/los entry(s) del WC. Prioridad: `src/*.js` (legacy) → `ui/components/**/*.ts` (Lit).
-// Exportada para fijar en un test QUÉ entra en el artefacto publicado (test/build-entry.test.mjs).
-export function resolveEntry(dir) {
-  const srcDir = join(dir, 'src');
-  if (existsSync(srcDir)) {
-    const f = readdirSync(srcDir).find((n) => n.endsWith('.js'));
-    if (f) return { entryPoints: [join(srcDir, f)] };
-  }
-
-  const compDir = join(dir, 'ui', 'components');
-  if (existsSync(compDir)) {
-    const ts = collectTs(compDir);
-    if (ts.length === 1) return { entryPoints: [ts[0]] };
-    if (ts.length > 1) {
-      const contents = ts.map((p) => `import ${JSON.stringify(p)};`).join('\n');
-      return { contents, resolveDir: dir };
-    }
-  }
-
-  throw new Error(`No encuentro entry de WC en ${dir} (ni src/*.js ni ui/components/**/*.ts)`);
-}
-
-function collectTs(p) {
-  const out = [];
-  for (const name of readdirSync(p)) {
-    if (name === 'node_modules' || name === 'dist' || name.startsWith('.')) continue;
-    const full = join(p, name);
-    if (statSync(full).isDirectory()) out.push(...collectTs(full));
-    // Fuera del artefacto publicado: los tests (TDD) viven junto al componente, pero arrastran
-    // vitest —y con él un `new Function()`— que la CSP estricta del Hub bloquea.
-    else if (extname(full) === '.ts' && !name.endsWith('.d.ts') && !/\.(test|spec)\.ts$/.test(name)) out.push(full);
-  }
-  return out;
 }

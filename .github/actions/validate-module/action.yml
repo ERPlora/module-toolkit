@@ -179,6 +179,23 @@ runs:
         if [ "${{ inputs.pg }}" = "true" ]; then flags+=(--pg); fi
         node "$ERPLORA_TOOLKIT/bin/erplora.mjs" validate "${{ inputs.path }}" "${flags[@]}"
 
+    # ── The committed bundle is what hub develop's SDK builds (module-toolkit#389) ───────────────
+    #
+    # `validate` says WHICH `ui/` produced `dist/` and `test` runs the `.test.ts` against develop's
+    # SDK, but the bundle is published AS COMMITTED and nothing rebuilt it: a dist baked with an old
+    # SDK merged green while its tests passed against the new one (on 2026-09-27 four rebuilds took
+    # the list controller back to filtering money in cents). This rebuilds it aside with the SDK
+    # this gate already has on disk and fails on the first differing byte. Measured on the 27
+    # modules against develop@e986d28: 11 reproduce byte for byte, the rest were baked with an old
+    # SDK and are exactly what this step exists to stop. No switch: it runs on every module.
+    - name: erplora build --check (the committed bundle is what develop’s SDK builds)
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        bash "$ACTION_PATH/../../scripts/check-dist-reproducible.sh" "${{ inputs.path }}" "${{ inputs.module-sdk-path }}"
+
     # ── The module's OWN batteries (module-toolkit#50, widened by #55) ───────────────────────────
     #
     # Modules carry batteries — contract checks and real-Postgres checks — that until #50 NOBODY
