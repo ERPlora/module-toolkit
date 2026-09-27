@@ -342,3 +342,39 @@ test('validate() refuses a module with an undeclared money range, and not once i
     good.clean();
   }
 });
+
+test(
+  'validate() PRINTS the ratchet warnings: a manifest that only reuses a grandfathered id is told, not blocked',
+  { skip: !MONEY_FILTERS_GRANDFATHERED.length && 'the list is empty: the ratchet retired with ERPlora/pm#501' },
+  async () => {
+    // A module with no `ui/` that reuses a published id inherits the id's lines; they point at files
+    // it never had (module-toolkit#189): a WARNING, not a failure — and it only reaches the author
+    // if `validate()` prints it.
+    const [id, file] = MONEY_FILTERS_GRANDFATHERED[0];
+    const manifest = { id, name: 'Demo', version: '1.0.0' };
+    const m = mod({ 'module.json': JSON.stringify(manifest) }, id);
+    const printed = [];
+    const warn = console.warn;
+    console.warn = (...a) => printed.push(a.join(' '));
+    try {
+      writeContractsFile(m.dir, manifest);
+      await validate(m.dir);
+    } finally {
+      console.warn = warn;
+      m.clean();
+    }
+    assert.ok(
+      printed.some((l) => l.includes(file) && l.includes('MONEY_FILTERS_GRANDFATHERED')),
+      `the ratchet warning was not printed:\n${printed.join('\n')}`,
+    );
+  },
+);
+
+test('a range column whose key is not a string literal has no column to name: not judged', () => {
+  const src = component({
+    extra: "const TOTAL = 'total';",
+    columns:
+      "      { key: TOTAL, filterable: true, filterType: 'range', format: (r) => erplora().formatMoney(r.total) },",
+  });
+  assert.deepEqual(undeclaredRangeFilters(src), []);
+});
