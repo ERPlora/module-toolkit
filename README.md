@@ -416,6 +416,27 @@ multilínea que un grep de una línea no veía— y `sales`) se toleraban; `kitc
 (techo 3/3); cada módulo lo arregla en su repo
 y borra antes su línea. La premisa está anclada a `@ionic/core` en `test/validate-ionic-class.test.mjs`.
 
+## El filtro «desde / hasta» sobre un importe que la lista no declara (module-toolkit#375)
+
+`src/validate-money-filters.mjs`. El dinero viaja en la unidad mínima (ADR-0123) y la cantidad en
+punto fijo 10⁶ (ADR-0147), pero la persona teclea «12» pensando en euros. Desde hub#2271 el
+controlador de listas del SDK escala él solo los bordes de un filtro de rango, **solo** para las
+columnas que la pantalla nombra en `createListController(…, { moneyFilters, quantityFilters })`. Una
+columna con `filterType: 'range'` que pinta dinero y no está ahí compara «12» contra 12 céntimos:
+«desde 12» deja pasar un tique de 0,12 € y «hasta 50» esconde uno de 1 €.
+
+La puerta mira cada fichero de `ui/` (sin tests): una columna con rango cuyo propio texto pinta dinero
+(`formatMoney(`, `formatMinor(`, `<ok-money`) o cantidad (`formatQuantity(`) —directamente o a través
+de un helper **del mismo fichero**, como el `money(v)` de invoice o el `this.fmt(n)` de caja— y cuya
+`key` no está en el `moneyFilters`/`quantityFilters` de ese mismo fichero (lista literal, una `const`
+del fichero o la forma abreviada) → error con la línea, la columna y el código
+`money_range_filter_undeclared` / `quantity_range_filter_undeclared`.
+
+**Trinquete** (`MONEY_FILTERS_GRANDFATHERED`): medido sobre `origin/main` de los 27 repos el
+2026-09-27, **15 columnas en 11 ficheros de 10 módulos** —las diez listas que convierten con una copia
+LOCAL de la receta de verifactu#137— se toleran; salen con ERPlora/pm#501, cada módulo borrando antes
+su línea.
+
 ## El suelo de core que el módulo pide (module-toolkit#201)
 
 Los `ok-*` con los que se pinta un módulo son **los del shell**, no los que lleva su bundle: el shell
