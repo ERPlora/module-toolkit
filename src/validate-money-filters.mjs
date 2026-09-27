@@ -48,10 +48,10 @@ export const MONEY_FILTERS_GRANDFATHERED = [
   ['inventory', 'ui/components/erp-inventory-products/erp-inventory-products.ts', 2],
   ['invoice', 'ui/components/erp-invoice-list/erp-invoice-list.ts', 1],
   ['kitchen', 'ui/components/erp-kitchen-orders-active/erp-kitchen-orders-active.ts', 1],
-  ['payments', 'ui/components/erp-payments-list/erp-payments-list.ts', 1],
   ['services', 'ui/components/erp-services-list/erp-services-list.ts', 1],
   ['verifactu', 'ui/components/erp-verifactu-records/erp-verifactu-records.ts', 1],
-  // `sales` left with pm#501: its «Total» filter is declared in `moneyFilters`.
+  // `sales` and `payments` left with pm#501: their «Total» and «Amount» filters are declared in
+  // `moneyFilters`.
 ];
 
 /** A test file is not a screen: fixtures of a module's own guards quote bad columns on purpose. */
