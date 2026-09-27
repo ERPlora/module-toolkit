@@ -23,6 +23,7 @@ import { checkMigrations } from './validate-migrations.mjs';
 import { checkMigrationGuard } from './validate-migration-guard.mjs';
 import { checkIonicFill, checkIonicMissingFill } from './validate-ionic-fill.mjs';
 import { checkIonicColor } from './validate-ionic-color.mjs';
+import { checkMoneyFilters } from './validate-money-filters.mjs';
 import { checkIonicClass } from './validate-ionic-class.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 import { checkContracts } from './contracts.mjs';
@@ -427,6 +428,20 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
     throw new Error(
       'controles Ionic SIN `fill` fuera de una fila de lista: salen sin caja en el hub (ERPlora/pm#479):\n  - ' +
         ionicMissingFill.errors.join('\n  - '),
+    );
+  }
+
+  // module-toolkit#375: a «from / to» filter over an amount the SDK is not told about. Since hub#2271
+  // `createListController` scales the edges of the columns named in `moneyFilters` /
+  // `quantityFilters`; a range column that paints money and is not named there compares «12» typed
+  // by the person with 12 cents. Ratchet like `fill`: what is published lives in
+  // `MONEY_FILTERS_GRANDFATHERED` and only shrinks (ERPlora/pm#501).
+  const moneyFilters = checkMoneyFilters(dir, manifest);
+  for (const w of moneyFilters.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (moneyFilters.errors.length) {
+    throw new Error(
+      'range filters over an amount not declared to the list controller (module-toolkit#375):\n  - ' +
+        moneyFilters.errors.join('\n  - '),
     );
   }
 

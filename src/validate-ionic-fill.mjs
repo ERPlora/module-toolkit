@@ -209,7 +209,7 @@ function sourceFiles(dir) {
 }
 
 /**
- * The ratchet both doors of this file share: what a file ships TODAY is compared with what `list`
+ * The ratchet both doors of this file share (and `validate-money-filters.mjs`): what a file ships TODAY is compared with what `list`
  * tolerates for it, per FILE and per COUNT, and an entry may not outlive its file.
  *
  * `scan(source)` returns the offending controls of one file; `say` words the four outcomes —
@@ -217,7 +217,7 @@ function sourceFiles(dir) {
  * `looser(file, today, allowed)`. `skip(file)` leaves a file out entirely. Returns `{ errors,
  * warnings }`; a module with no `ui/` (purely declarative) says nothing about its own code.
  */
-function ratchet(dir, manifest, { scan, list, say, skip = () => false }) {
+export function ratchet(dir, manifest, { scan, list, say, skip = () => false }) {
   const errors = [];
   const warnings = [];
   const moduleId = manifest?.id;

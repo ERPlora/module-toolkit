@@ -34,6 +34,7 @@ import {
 } from '../src/validate-ionic-fill.mjs';
 import { checkIonicColor, COLOR_GRANDFATHERED } from '../src/validate-ionic-color.mjs';
 import { checkIonicClass, CLASS_GRANDFATHERED } from '../src/validate-ionic-class.mjs';
+import { checkMoneyFilters, MONEY_FILTERS_GRANDFATHERED } from '../src/validate-money-filters.mjs';
 import { checkMigrationGuard, GRANDFATHERED as MIGRATION_GRANDFATHERED } from '../src/validate-migration-guard.mjs';
 import { checkGateConstraints, GRANDFATHERED as GATE_GRANDFATHERED } from '../src/validate-gate-constraints.mjs';
 
@@ -50,6 +51,7 @@ const DOORS = {
   'validate-ionic-fill.mjs:MISSING_FILL_GRANDFATHERED': { check: checkIonicMissingFill, list: MISSING_FILL_GRANDFATHERED },
   'validate-ionic-color.mjs:COLOR_GRANDFATHERED': { check: checkIonicColor, list: COLOR_GRANDFATHERED },
   'validate-ionic-class.mjs:CLASS_GRANDFATHERED': { check: checkIonicClass, list: CLASS_GRANDFATHERED },
+  'validate-money-filters.mjs:MONEY_FILTERS_GRANDFATHERED': { check: checkMoneyFilters, list: MONEY_FILTERS_GRANDFATHERED },
   'validate-migration-guard.mjs:GRANDFATHERED': { check: checkMigrationGuard, list: MIGRATION_GRANDFATHERED },
   'validate-gate-constraints.mjs:GRANDFATHERED': { check: checkGateConstraints, list: GATE_GRANDFATHERED },
 };
@@ -166,6 +168,7 @@ test('a stale line is never SILENT for the stranger either — it is warned, not
     // warning is still proven on a made-up line.
     ['ionic-missing-fill', { check: (d, m) => checkIonicMissingFill(d, m, MISSING_FILL_SYNTHETIC), list: MISSING_FILL_SYNTHETIC }],
     ['ionic-color', { check: checkIonicColor, list: COLOR_GRANDFATHERED }],
+    ['money-filters', { check: checkMoneyFilters, list: MONEY_FILTERS_GRANDFATHERED }],
   ]) {
     const id = list[0][0];
     const owed = list.filter(([m]) => m === id).length;
