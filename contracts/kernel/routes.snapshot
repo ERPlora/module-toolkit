@@ -104,6 +104,7 @@ POST    /api/hub/whatsapp/connect                      auth:admin
 POST    /api/hub/whatsapp/disconnect/:phone_number_id  auth:admin
 GET     /api/hub/whatsapp/media/:media_id              auth:capability+session
 GET     /api/hub/whatsapp/numbers                      auth:admin
+POST    /api/hub/whatsapp/template-header-samples      auth:admin+capability
 GET     /api/hub/whatsapp/templates                    auth:admin+capability
 POST    /api/hub/whatsapp/templates                    auth:admin+capability
 DELETE  /api/hub/whatsapp/templates/:name              auth:admin+capability
