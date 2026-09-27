@@ -171,6 +171,17 @@ test('an amount formatted by hand in a screen turns it red, naming file and line
   m.clean();
 });
 
+test('the detectors read the WHOLE file: a hit at the end of a long screen is red (rv-taxes-78 K1/K2)', () => {
+  // A real screen runs to thousands of lines; a scan over its head only would stay green.
+  const body = 'const row = (r) => erplora().formatMoney(r.amount_cents);\n'.repeat(2000);
+  const money = mod({ [SCREEN]: `${GOOD_SCREEN}${body}const tail = (c) => (c / 100).toFixed(2);\n` });
+  assert.deepEqual(codes(checkMoneyDisplay({ from: money.from, witnesses: WITNESS })), ['hand_formatted_money']);
+  money.clean();
+  const barrel = mod({ [SCREEN]: `${GOOD_SCREEN}${body}import { formatMinor } from '@erplora/outfitkit';\n` });
+  assert.deepEqual(codes(checkMoneyDisplay({ from: barrel.from, witnesses: WITNESS })), ['outfitkit_barrel_import']);
+  barrel.clean();
+});
+
 test('lib/ and .vue are scanned; ui/test/, *.test.ts and *.d.ts are not', () => {
   const bad = "export const eur = (c) => (c / 100).toFixed(2);\n";
   const m = mod({
