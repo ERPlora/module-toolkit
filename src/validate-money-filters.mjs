@@ -41,15 +41,13 @@ const KINDS = {
  * gate until it is deleted — the two-line PR that deletes it goes first, the module's behind it.
  */
 export const MONEY_FILTERS_GRANDFATHERED = [
-  ['cart_checkout', 'ui/components/erp-cart-checkout-carts/erp-cart-checkout-carts.ts', 2],
-  ['cart_checkout', 'ui/components/erp-cart-checkout-orders/erp-cart-checkout-orders.ts', 1],
   ['inventory', 'ui/components/erp-inventory-products/erp-inventory-products.ts', 2],
   ['invoice', 'ui/components/erp-invoice-list/erp-invoice-list.ts', 1],
   ['services', 'ui/components/erp-services-list/erp-services-list.ts', 1],
   ['verifactu', 'ui/components/erp-verifactu-records/erp-verifactu-records.ts', 1],
-  // `sales`, `payments`, `cash_register`, `customers` and `kitchen` left with pm#501: their «Total»,
-  // «Amount», «Opening / Expected / Counted», «Spent» and kitchen «Total» filters are declared in
-  // `moneyFilters`.
+  // `sales`, `payments`, `cash_register`, `customers`, `kitchen` and `cart_checkout` left with pm#501:
+  // their «Total», «Amount», «Opening / Expected / Counted», «Spent», kitchen «Total» and carts/orders
+  // «Total» filters are declared in `moneyFilters`, carts «Items» in `quantityFilters`.
 ];
 
 /** A test file is not a screen: fixtures of a module's own guards quote bad columns on purpose. */
