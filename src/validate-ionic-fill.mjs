@@ -355,7 +355,8 @@ export const MISSING_FILL_GRANDFATHERED = [
   // (the rate and the operation class of a new rule) are fixed by taxes#75, which merges first.
   // `reservations` left with reservations#71 (the new-reservation form and the day picker).
   // `appointments` left too: appointments#221 boxed its series panel and its list toolbar.
-  ['printing', 'ui/components/erp-printing-settings/erp-printing-settings.ts', 4], // printing#50
+  // `printing` left: printing#50 boxed the IP and port of «Add printer», the paper width and the
+  // role of each printer.
   ['sales', 'ui/components/erp-pos-touch/erp-pos-touch.ts', 5], // sales#414
   ['sales', 'ui/components/erp-sale-refund/erp-sale-refund.ts', 3], // sales#414
 ];
