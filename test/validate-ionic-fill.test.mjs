@@ -233,7 +233,7 @@ test('the grandfathered list may only SHRINK', () => {
   // entries; a PR that adds a line has to raise them, which is what makes the addition visible.
   const total = FILL_GRANDFATHERED.reduce((n, [, , count]) => n + count, 0);
   assert.ok(
-    FILL_GRANDFATHERED.length <= 18 && total <= 113,
+    FILL_GRANDFATHERED.length <= 17 && total <= 101,
     `the list GREW (${FILL_GRANDFATHERED.length} files / ${total} controls). Nothing gets added: it is ` +
       'the sweep of ERPlora/pm that empties it, one module at a time.',
   );

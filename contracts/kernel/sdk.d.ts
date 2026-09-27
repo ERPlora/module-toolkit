@@ -374,6 +374,7 @@ export declare class EventsApi {
     trace(id: string): Promise<EventTrace>;
 }
 export declare const WHATSAPP_TEMPLATES_BASE_PATH = "/api/hub/whatsapp/templates";
+export declare const WHATSAPP_TEMPLATE_HEADER_SAMPLES_PATH = "/api/hub/whatsapp/template-header-samples";
 export interface WhatsappTemplate {
     name: string;
     language: string;
@@ -391,13 +392,23 @@ export interface WhatsappTemplateInput {
     name: string;
     language: string;
     category?: string;
+    header_format?: 'TEXT' | WhatsappHeaderSampleFormat;
+    header_handle?: string;
     [field: string]: unknown;
+}
+export type WhatsappHeaderSampleFormat = 'IMAGE' | 'VIDEO' | 'DOCUMENT';
+export interface WhatsappTemplateHeaderSample {
+    header_handle: string;
+    format: WhatsappHeaderSampleFormat;
+    mime_type: string;
+    size: number;
 }
 export declare class WhatsappTemplatesApi {
     private readonly send;
     constructor(send: (req: CoreRequest) => Promise<unknown>);
     list(): Promise<WhatsappTemplateList>;
     register(template: WhatsappTemplateInput): Promise<WhatsappTemplate>;
+    uploadHeaderSample(file: Blob): Promise<WhatsappTemplateHeaderSample>;
     remove(name: string): Promise<void>;
 }
 export declare const WHATSAPP_MEDIA_BASE_PATH = "/api/hub/whatsapp/media";

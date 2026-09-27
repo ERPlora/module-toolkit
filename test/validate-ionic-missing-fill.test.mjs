@@ -35,15 +35,20 @@ function mod(files, id = 'demo') {
 }
 
 /**
- * An entry whose module carries no other line, so a fixture that only writes that file does not make
- * a sibling entry look stale.
+ * The first entry of the list, plus its module's OTHER grandfathered files written at exactly their
+ * allowance — so a fixture that only cares about one file does not make a sibling entry look stale.
+ * Once the list holds no module with a single line (after printing#50 only `sales` is left, with two
+ * files), picking such a module is no longer possible; the siblings stand in for it.
  */
-function soleEntry() {
-  const entry = MISSING_FILL_GRANDFATHERED.find(
-    ([id]) => MISSING_FILL_GRANDFATHERED.filter(([other]) => other === id).length === 1,
+function entryWithSiblings() {
+  const [id, file, count] = MISSING_FILL_GRANDFATHERED[0];
+  const siblings = Object.fromEntries(
+    MISSING_FILL_GRANDFATHERED.filter(([other, f]) => other === id && f !== file).map(([, f, c]) => [
+      f,
+      Array(c).fill(BARE).join('\n'),
+    ]),
   );
-  assert.ok(entry, 'no module with a single grandfathered file left — pick fixtures another way');
-  return entry;
+  return [id, file, count, siblings];
 }
 
 const BARE = '<ion-input label="Name" label-placement="stacked"></ion-input>';
@@ -228,14 +233,14 @@ test('checkIonicMissingFill: `dist/` and `node_modules/` are not source', () => 
 // ── The ratchet: what is already published is tolerated, and the list only shrinks ──
 
 test('a grandfathered file keeps passing with the controls it had — and NOT with one more', () => {
-  const [id, file, count] = soleEntry();
-  const exact = mod({ [file]: Array(count).fill(BARE).join('\n') }, id);
+  const [id, file, count, siblings] = entryWithSiblings();
+  const exact = mod({ ...siblings, [file]: Array(count).fill(BARE).join('\n') }, id);
   try {
     assert.deepEqual(checkIonicMissingFill(exact.dir, exact.manifest).errors, []);
   } finally {
     exact.clean();
   }
-  const more = mod({ [file]: Array(count + 1).fill(BARE).join('\n') }, id);
+  const more = mod({ ...siblings, [file]: Array(count + 1).fill(BARE).join('\n') }, id);
   try {
     const { errors } = checkIonicMissingFill(more.dir, more.manifest);
     assert.equal(errors.length, 1, JSON.stringify(errors));
@@ -246,9 +251,10 @@ test('a grandfathered file keeps passing with the controls it had — and NOT wi
 });
 
 test('the pass is per FILE, not per module: a new component inherits nothing', () => {
-  const [id, file, count] = soleEntry();
+  const [id, file, count, siblings] = entryWithSiblings();
   const m = mod(
     {
+      ...siblings,
       [file]: Array(count).fill(BARE).join('\n'),
       'ui/components/erp-brand-new/erp-brand-new.ts': BARE,
     },
@@ -264,8 +270,8 @@ test('the pass is per FILE, not per module: a new component inherits nothing', (
 });
 
 test('FAILS: the file is clean but keeps its entry — the allowance covers nothing', () => {
-  const [id, file] = soleEntry();
-  const m = mod({ [file]: BOXED }, id);
+  const [id, file, , siblings] = entryWithSiblings();
+  const m = mod({ ...siblings, [file]: BOXED }, id);
   try {
     const { errors } = checkIonicMissingFill(m.dir, m.manifest);
     assert.equal(errors.length, 1, JSON.stringify(errors));
@@ -277,8 +283,8 @@ test('FAILS: the file is clean but keeps its entry — the allowance covers noth
 });
 
 test('FAILS: the entry points at a file that no longer exists (in a module that ships components)', () => {
-  const [id, file] = soleEntry();
-  const m = mod({ 'ui/components/erp-renamed/erp-renamed.ts': BOXED }, id);
+  const [id, file, , siblings] = entryWithSiblings();
+  const m = mod({ ...siblings, 'ui/components/erp-renamed/erp-renamed.ts': BOXED }, id);
   try {
     const { errors } = checkIonicMissingFill(m.dir, m.manifest);
     const stale = errors.filter((e) => e.includes(file));
@@ -306,7 +312,7 @@ test('the grandfathered list may only SHRINK', () => {
   // that adds a line has to raise them, which is what makes the addition visible in review.
   const total = MISSING_FILL_GRANDFATHERED.reduce((n, [, , count]) => n + count, 0);
   assert.ok(
-    MISSING_FILL_GRANDFATHERED.length <= 1 && total <= 4,
+    MISSING_FILL_GRANDFATHERED.length <= 2 && total <= 8,
     `the list GREW (${MISSING_FILL_GRANDFATHERED.length} files / ${total} controls). Nothing gets added: ` +
       'each module still owing empties its own line (Sale de ERPlora/pm#479).',
   );
@@ -331,9 +337,9 @@ test('taxes#73 fixed the rules form: `erp-taxes-rules.ts` is not in the list and
   );
 });
 
-test('appointments#221 boxed its series panel and list toolbar: appointments is not in the list and stays out', () => {
+test('printing#50 boxed the add-printer form, the paper width and the printer role: printing is not in the list and stays out', () => {
   assert.deepEqual(
-    MISSING_FILL_GRANDFATHERED.filter(([id]) => id === 'appointments'),
+    MISSING_FILL_GRANDFATHERED.filter(([id]) => id === 'printing'),
     [],
     'every control of the module carries its box: an allowance there is a free pass for the regression',
   );
@@ -347,9 +353,9 @@ test('reservations#71 boxed its new-reservation form and day picker: reservation
   );
 });
 
-test('sales#414 boxed the customer details over the simplified ceiling and the refund form: sales is not in the list and stays out', () => {
+test('appointments#221 boxed its series panel and list toolbar: appointments is not in the list and stays out', () => {
   assert.deepEqual(
-    MISSING_FILL_GRANDFATHERED.filter(([id]) => id === 'sales'),
+    MISSING_FILL_GRANDFATHERED.filter(([id]) => id === 'appointments'),
     [],
     'every control of the module carries its box: an allowance there is a free pass for the regression',
   );
