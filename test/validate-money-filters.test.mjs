@@ -295,11 +295,11 @@ test('the grandfathered list may only SHRINK', () => {
   // Measured on 2026-09-27 over `origin/main` of the 27 module repos: the ten lists that convert the
   // edges with a LOCAL copy of the recipe (verifactu#137) instead of the SDK. They leave with
   // ERPlora/pm#501, one file at a time; a PR that adds a line has to raise these ceilings. Each
-  // module that leaves lowers them: `sales`, `payments` and `cash_register` left with pm#501 (their
-  // «Total», «Amount» and «Opening / Expected / Counted» filters are declared).
+  // module that leaves lowers them: `sales`, `payments`, `cash_register` and `customers` left with
+  // pm#501 (their «Total», «Amount», «Opening / Expected / Counted» and «Spent» filters are declared).
   const total = MONEY_FILTERS_GRANDFATHERED.reduce((n, [, , count]) => n + count, 0);
   assert.ok(
-    MONEY_FILTERS_GRANDFATHERED.length <= 8 && total <= 10,
+    MONEY_FILTERS_GRANDFATHERED.length <= 7 && total <= 9,
     `the list GREW (${MONEY_FILTERS_GRANDFATHERED.length} files / ${total} columns). Nothing gets added: ` +
       'each module still owing empties its own line (ERPlora/pm#501).',
   );
