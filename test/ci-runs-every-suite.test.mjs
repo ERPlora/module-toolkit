@@ -27,9 +27,10 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
  * (module-toolkit#148: `wasm.test.mjs` sat here as «needs the Rust toolchain» after #146 had put
  * Rust on the runner, and nine suites «needed esbuild», a public package).
  */
-// `pack-outfitkit-floor` sat here until #389 put `@erplora/outfitkit` in ci.yml's install loop: the
-// npm release (a `^` range, so the newest) is ahead of the fleet, and its two #201 controls run.
-const CANNOT_RUN_IN_CI = {};
+const CANNOT_RUN_IN_CI = {
+  'pack-outfitkit-floor.test.mjs':
+    'its #201 controls run `erplora pack`, which shells out to the `zip`/`unzip` binaries the self-hosted runner does not have (#389)',
+};
 
 /** The `test/…` arguments of the `Tests` step, as written. */
 function ciPatterns() {
@@ -165,4 +166,27 @@ test('ci.yml installs EVERY runtime dependency of the toolkit (module-toolkit#38
   const installed = ciInstalledPackages();
   const missing = Object.keys(pkg.dependencies).filter((name) => !installed.includes(name));
   assert.deepEqual(missing, [], `ci.yml does not install: ${missing.join(', ')}`);
+});
+
+// The self-hosted runner (ci-runner-1*) is a bare Ubuntu with no `zip`/`unzip`, and `erplora pack`
+// shells out to `zip`. #389 moved `pack-outfitkit-floor` into the `Tests` step once its OutfitKit was
+// installable, and it went red on «spawnSync zip ENOENT» — its excuse had named the wrong reason. A
+// suite that needs those binaries stays out until ci.yml provides them.
+const NEEDS_ZIP = /(['"])(?:un)?zip\1|\(\s*['"]pack['"]/;
+
+test('no suite in the `Tests` step needs the zip binaries the runner lacks', () => {
+  const ci = readFileSync(join(REPO, '.github/workflows/ci.yml'), 'utf8');
+  if (/\b(apt-get|apt) install[^\n]*\bzip\b/.test(ci)) return;
+  const patterns = ciPatterns();
+  const offenders = SUITES.filter((f) => f !== 'ci-runs-every-suite.test.mjs' && patterns.some((p) => matches(p, f))).filter((f) =>
+    NEEDS_ZIP.test(readFileSync(join(REPO, 'test', f), 'utf8')),
+  );
+  assert.deepEqual(offenders, [], 'these suites run `pack`/`zip`/`unzip`, which ci-runner-1* does not have');
+});
+
+test('the zip detector recognises the calls it is there to catch', () => {
+  // Control: without it a regex that stops matching turns the check above into green prose.
+  assert.ok(NEEDS_ZIP.test("const res = erplora('pack', dir);"));
+  assert.ok(NEEDS_ZIP.test("execFileSync('unzip', ['-p', zip])"));
+  assert.ok(!NEEDS_ZIP.test("spawnSync('npm', ['pack'])"));
 });

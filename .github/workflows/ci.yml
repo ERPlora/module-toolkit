@@ -15,9 +15,10 @@
 # SCOPE. `npm install` is still impossible on a runner (three dependencies are `file:` paths into
 # sibling checkouts that do not exist), but every PUBLIC package the suites need is installed one
 # by one below, so build, dev, icons, pack, scaffold, signing and wasm now run here too
-# (module-toolkit#148). `pack-outfitkit-floor` was the last suite left out, for want of a real
-# `@erplora/outfitkit`; #389 installs it from npm, so no suite is excused today, and
-# `test/ci-runs-every-suite.test.mjs` fails if an excuse ever blames a package this file installs.
+# (module-toolkit#148). The only suite left out is `pack-outfitkit-floor`: its #201 controls run
+# `erplora pack`, which needs the `zip`/`unzip` binaries the self-hosted runner lacks (#389 found it,
+# once the OutfitKit it used to be blamed on was installed); `test/ci-runs-every-suite.test.mjs`
+# names it with that reason and fails if an excuse ever blames a package this file installs.
 #
 # The file list is EXPLICIT rather than a `validate-*` glob: `manifest-schema`,
 # `canonical-mirrors` (module-toolkit#30/#40), `hub-mirror` (#61), `sync-hub-mirrors` (#115),
@@ -225,8 +226,8 @@ jobs:
           mkdir -p node_modules/@erplora
           ln -sfn "$deps/node_modules/@erplora/outfitkit" node_modules/@erplora/outfitkit
           # The whole Lit family, not only `lit`: the resolve plugin pins every `lit*`/`@lit/*` specifier
-          # to the toolkit's own copy, including the ones `lit` imports inside the bundle
-          # (`pack-outfitkit-floor` bakes a real Lit component, module-toolkit#389).
+          # to the toolkit's own copy, including the ones `lit` imports inside the bundle. `lit` is a
+          # runtime dependency, so the suites may bake a real Lit component (module-toolkit#389).
           mkdir -p node_modules/@lit
           for dir in "$deps"/node_modules/lit "$deps"/node_modules/lit-* "$deps"/node_modules/@lit/*; do
             ln -sfn "$dir" "node_modules/${dir#"$deps"/node_modules/}"
@@ -284,7 +285,6 @@ jobs:
           test/dist-reproducible.test.mjs
           test/bundle-web-component.test.mjs
           test/check-dist-reproducible-script.test.mjs
-          test/pack-outfitkit-floor.test.mjs
           test/resolve-plugin.test.mjs
           test/install-from-package.test.mjs
           test/npm-publish.test.mjs
