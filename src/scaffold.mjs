@@ -34,7 +34,9 @@ const TOOLKIT_PKG = JSON.parse(readFileSync(join(TOOLKIT_DIR, 'package.json'), '
 const OUTFITKIT_RANGE = TOOLKIT_PKG.dependencies['@erplora/outfitkit'];
 
 // Hub packages not published yet (hub#1371): linked with `file:` only when the folder really
-// exists; otherwise a warning instead of a dangling link that `npm install` accepts silently.
+// exists — the sibling hub checkout, or else the copy the npm package carries in `vendor/`
+// (module-toolkit#359); otherwise a warning instead of a dangling link that `npm install` accepts
+// silently.
 const LOCAL_HUB_PACKAGES = ['module-sdk', 'module-types'];
 
 // devDependencies of the workspace created by `startproject` (module-toolkit#361).
@@ -48,11 +50,13 @@ export function workspaceDevDependencies(
   };
   const warnings = [];
   for (const name of LOCAL_HUB_PACKAGES) {
-    const pkgDir = join(hubPackagesDir, name);
-    if (existsSync(join(pkgDir, 'package.json'))) {
+    const pkgDir = [join(hubPackagesDir, name), join(toolkitDir, 'vendor', '@erplora', name)].find((d) =>
+      existsSync(join(d, 'package.json')),
+    );
+    if (pkgDir) {
       devDependencies[`@erplora/${name}`] = fileDep(dir, pkgDir);
     } else {
-      warnings.push({ code: 'local_package_missing', package: `@erplora/${name}`, path: pkgDir });
+      warnings.push({ code: 'local_package_missing', package: `@erplora/${name}`, path: join(hubPackagesDir, name) });
     }
   }
   devDependencies['@ionic/core'] = '^8.8.0';
@@ -183,6 +187,9 @@ function genModule(id) {
   put(join(dir, 'queries', `${entity}_get.sql`), getQuery(id, entity));
   put(join(dir, 'commands', `${entity}_create.sql`), createCommand(id, entity));
   put(join(dir, 'ui', 'components', comp, `${comp}.ts`), viewComponent(id, entity, comp));
+  for (const lang of Object.keys(VIEW_UI)) {
+    put(join(dir, 'locales', `${lang}.json`), JSON.stringify(moduleLocale(lang, id, entity), null, 2) + '\n');
+  }
   put(join(dir, 'fixtures', `${id}.${entity}.list.json`), fixtureRows(entity));
   put(
     join(dir, 'tsconfig.json'),
@@ -225,6 +232,7 @@ function genView(id, view) {
   const comp = `erp-${id.replace(/_/g, '-')}-${view.replace(/_/g, '-')}`;
   console.log(`Generando vista '${comp}' en módulo '${id}'`);
   put(join(dir, 'ui', 'components', comp, `${comp}.ts`), viewComponent(id, view, comp));
+  mergeViewLocales(dir);
   put(join(dir, 'fixtures', `${id}.${view}.list.json`), fixtureRows(view));
   console.log(`\nAñade la vista a navigation[] en modules/${id}/module.json si quieres que aparezca en el menú:
   { "id": "${view}", "label": "${cap(view)}", "icon": "list", "component": "${comp}" }`);
@@ -360,6 +368,60 @@ VALUES (:id, :hub_id, :name, :code, :amount, :current_user_id, :current_user_id)
 `;
 }
 
+// The view's visible text, in the module catalogue (ADR-0055): English is the source, Spanish its
+// translation. «Add» belongs to the toolbar button ok-data-table paints itself; the button that
+// sends the create form says «Save», like every other create panel of the product
+// (module-toolkit#366 — pricing#50, customers#96, staff#74 had to be fixed by hand).
+const VIEW_UI = {
+  en: {
+    colName: 'Name',
+    colCode: 'Code',
+    colAmount: 'Amount',
+    searchPlaceholder: 'Search…',
+    loading: 'Loading…',
+    empty: 'No records yet.',
+    save: 'Save',
+    saving: 'Saving…',
+    createFailed: 'Could not save. Check the data and try again.',
+    loadFailed: 'Could not load the list. Try again in a moment.',
+  },
+  es: {
+    colName: 'Nombre',
+    colCode: 'Código',
+    colAmount: 'Importe',
+    searchPlaceholder: 'Buscar…',
+    loading: 'Cargando…',
+    empty: 'Todavía no hay registros.',
+    save: 'Guardar',
+    saving: 'Guardando…',
+    createFailed: 'No se pudo guardar. Revisa los datos y vuelve a intentarlo.',
+    loadFailed: 'No se pudo cargar la lista. Vuelve a intentarlo en un momento.',
+  },
+};
+
+/** `locales/<lang>.json` of a new module: its name, its menu entry and the view's strings. */
+function moduleLocale(lang, id, entity) {
+  return { name: cap(id), navigation: { [entity]: { label: cap(entity) } }, ui: { ...VIEW_UI[lang] } };
+}
+
+/**
+ * Brings the view's keys into the module catalogue: creates `locales/<lang>.json` when missing and
+ * only ADDS the keys it lacks — a translation the developer already wrote is never overwritten.
+ */
+function mergeViewLocales(dir) {
+  for (const lang of Object.keys(VIEW_UI)) {
+    const path = join(dir, 'locales', `${lang}.json`);
+    const catalog = existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
+    const ui = catalog.ui && typeof catalog.ui === 'object' ? catalog.ui : {};
+    const missing = Object.keys(VIEW_UI[lang]).filter((k) => !(k in ui));
+    if (existsSync(path) && missing.length === 0) continue;
+    catalog.ui = { ...ui, ...Object.fromEntries(missing.map((k) => [k, VIEW_UI[lang][k]])) };
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(catalog, null, 2) + '\n');
+    console.log(`  ✓ ${relative(process.cwd(), path)} (+${missing.length} ui keys)`);
+  }
+}
+
 function viewComponent(id, entity, comp) {
   const klass = comp
     .split('-')
@@ -367,22 +429,31 @@ function viewComponent(id, entity, comp) {
     .join('');
   return `import { LitElement, html, css, nothing } from 'lit';
 import { state } from 'lit/decorators.js';
-// 'define' por su subpath ligero (no arrastra el barrel de ok-*). 'ok-data-table' se auto-registra.
+// 'define' through its light subpath (does not pull the ok-* barrel). 'ok-data-table' registers itself.
 import { define } from '@erplora/outfitkit/define';
 import '@erplora/outfitkit/ok-data-table';
 import type { DataTableColumn } from '@erplora/outfitkit';
 import { createListController } from '@erplora/module-sdk';
 import type { ListController, ListClient, ListParams, ListPage } from '@erplora/module-sdk';
+// The module's i18n catalogue (ADR-0055): esbuild inlines these JSON files into the bundle. Every
+// visible string goes through \`erplora().t(CATALOG, 'ui.key')\` (active language, fallback en → key).
+import esLocale from '../../../locales/es.json';
+import enLocale from '../../../locales/en.json';
 
-// Web Component del módulo '${id}' (Lit). Mini-app: NO toca la BD; llama al SDK
-// (erplora.query/queryPage/command/on). El cliente se obtiene de globalThis.erplora
-// (lo inyecta el shell del Hub; en 'erplora dev' lo inyecta un cliente mock con fixtures).
+const CATALOG: Record<string, unknown> = { es: esLocale, en: enLocale };
+
+// Web Component of the '${id}' module (Lit). A mini-app: it never touches the database, it calls the
+// SDK (erplora.query/queryPage/command/on). The client lives in globalThis.erplora (the Hub shell
+// injects it; under 'erplora dev' a mock client backed by the fixtures does).
 
 interface ErploraClientLike extends ListClient {
   query<T = unknown>(name: string, params?: Record<string, unknown>): Promise<T>;
   queryPage<R = unknown>(name: string, params: ListParams): Promise<ListPage<R>>;
   command<T = unknown>(name: string, payload?: Record<string, unknown>): Promise<T>;
   on(event: string, cb: (payload: unknown) => void): () => void;
+  /** Module i18n (ADR-0055): active language + translation from the catalogue. */
+  locale: string;
+  t(catalog: Record<string, unknown>, key: string, params?: Record<string, unknown>): string;
 }
 
 interface Item {
@@ -394,17 +465,20 @@ interface Item {
 
 function erplora(): ErploraClientLike {
   const c = (globalThis as { erplora?: ErploraClientLike }).erplora;
-  if (!c) throw new Error('erplora SDK no inicializado por el shell');
+  if (!c) throw new Error('erplora SDK not initialised by the shell');
   return c;
 }
 
+const t = (key: string): string => erplora().t(CATALOG, key);
+
 export class ${klass} extends LitElement {
   static styles = css\`
-    :host { display:block; font-family: system-ui, sans-serif; color: var(--ion-text-color, #1c1b18); }
-    header { display:flex; gap:.5rem; align-items:center; margin-bottom:.75rem; }
-    h2 { margin:0; font-size:1.15rem; flex:1; }
-    .form { display:flex; gap:.5rem; flex-wrap:wrap; align-items:end; margin:.5rem 0 1rem; }
-    .err { color:#d9480f; font-weight:600; }
+    :host { display:flex; flex-direction:column; height:100%; min-height:0; font-family: system-ui, sans-serif; color: var(--ion-text-color, #1c1b18); }
+    ok-data-table { flex:1 1 auto; min-height:0; }
+    /* The create form lives in the table's side panel (narrow): the fields go STACKED. */
+    .form { display:flex; flex-direction:column; gap:.7rem; }
+    .form ion-button { align-self:flex-end; }
+    .err { color:var(--ion-color-danger, #c5000f); font-weight:600; margin:0; }
   \`;
 
   @state() private newName = '';
@@ -414,19 +488,34 @@ export class ${klass} extends LitElement {
 
   private ctrl!: ListController<Item>;
 
-  private columns: DataTableColumn[] = [
-    { key: 'name', header: 'Nombre', sortable: true, filterable: true, filterType: 'text' },
-    { key: 'code', header: 'Código', sortable: true, filterable: true, filterType: 'text' },
-    {
-      key: 'amount',
-      header: 'Importe',
-      align: 'right',
-      sortable: true,
-      filterable: true,
-      filterType: 'range',
-      format: (r) => Number(r.amount).toFixed(2),
-    },
-  ];
+  // A getter, not a field: the headers follow the active language on every render (ADR-0055).
+  private get columns(): DataTableColumn[] {
+    return [
+      { key: 'name', header: t('ui.colName'), sortable: true, filterable: true, filterType: 'text' },
+      { key: 'code', header: t('ui.colCode'), sortable: true, filterable: true, filterType: 'text' },
+      {
+        key: 'amount',
+        header: t('ui.colAmount'),
+        align: 'right',
+        sortable: true,
+        filterable: true,
+        filterType: 'range',
+        format: (r) => Number(r.amount).toFixed(2),
+      },
+    ];
+  }
+
+  private readonly onLocaleChange = (): void => this.requestUpdate();
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    window.addEventListener('erplora:locale-changed', this.onLocaleChange);
+  }
+
+  disconnectedCallback(): void {
+    window.removeEventListener('erplora:locale-changed', this.onLocaleChange);
+    super.disconnectedCallback();
+  }
 
   async firstUpdated(): Promise<void> {
     this.ctrl = createListController<Item>(
@@ -436,6 +525,10 @@ export class ${klass} extends LitElement {
       { pageSize: 50, sort: 'name', dir: 'asc' },
     );
     await this.ctrl.load();
+  }
+
+  private dataTable(): { close(): void } | null {
+    return this.renderRoot.querySelector('ok-data-table') as { close(): void } | null;
   }
 
   private async create(ev: Event): Promise<void> {
@@ -451,49 +544,58 @@ export class ${klass} extends LitElement {
       });
       this.newName = '';
       this.newCode = '';
+      this.dataTable()?.close(); // the create panel closes itself once the row exists
       await this.ctrl.load();
     } catch (e) {
-      this.formError = e instanceof Error ? e.message : 'No se pudo crear';
+      // Never the server text on screen: it can carry driver internals («db: sqlx: …», pricing#29).
+      // Map the stable error codes of your commands to their own keys when you add them.
+      console.error('${id}.${entity}.create failed', e);
+      this.formError = t('ui.createFailed');
     } finally {
       this.saving = false;
     }
   }
 
+  // The view title is painted by the shell's top bar (from locales → navigation): not repeated here.
+  // The toolbar «+ Add» of ok-data-table opens the create panel; its form sends with «Save».
   render() {
     return html\`
-      <div>
-        <header><h2>${cap(entity)}</h2></header>
-        <form class="form" @submit=\${(e: Event) => this.create(e)}>
-          <ion-input placeholder="Nombre" .value=\${this.newName}
-            @ionInput=\${(e: Event) => (this.newName = (e.target as HTMLInputElement).value)}></ion-input>
-          <ion-input placeholder="Código" .value=\${this.newCode}
-            @ionInput=\${(e: Event) => (this.newCode = (e.target as HTMLInputElement).value)}></ion-input>
-          <ion-button type="submit" size="small" ?disabled=\${this.saving || !this.newName}>
-            \${this.saving ? 'Guardando…' : 'Añadir'}
-          </ion-button>
+      <!-- ctrl.error is the raw server text (driver internals, pricing#29): show the catalogue message. -->
+      \${this.ctrl?.error ? html\`<p class="err" role="alert">\${t('ui.loadFailed')}</p>\` : nothing}
+      <ok-data-table
+        .serverSide=\${true}
+        .fill=\${true}
+        .addable=\${true}
+        .columns=\${this.columns}
+        .rows=\${this.ctrl?.rows ?? []}
+        .total=\${this.ctrl?.total ?? 0}
+        .page=\${this.ctrl?.state.page ?? 0}
+        .pageSize=\${this.ctrl?.state.pageSize ?? 50}
+        .sort=\${this.ctrl?.state.sort}
+        .sortDir=\${this.ctrl?.state.dir ?? 'asc'}
+        .searchable=\${true}
+        .searchPlaceholder=\${t('ui.searchPlaceholder')}
+        .emptyMessage=\${this.ctrl?.loading ? t('ui.loading') : t('ui.empty')}
+        @pageChange=\${(e: CustomEvent<number>) => this.ctrl.setPage(e.detail)}
+        @pageSizeChange=\${(e: CustomEvent<number>) => this.ctrl.setPageSize(e.detail)}
+        @sortChange=\${(e: CustomEvent<{ sort: string; dir: 'asc' | 'desc' }>) =>
+          this.ctrl.setSort(e.detail.sort, e.detail.dir)}
+        @searchChange=\${(e: CustomEvent<string>) => this.ctrl.setSearch(e.detail)}
+        @filterChange=\${(e: CustomEvent<{ col: string; value: unknown }>) =>
+          this.ctrl.setFilter(e.detail.col, e.detail.value)}
+      >
+        <!-- Projected ALWAYS (even with the panel closed): otherwise «+» would open an empty panel. -->
+        <form slot="create" class="form" @submit=\${(e: Event) => this.create(e)}>
+          <ion-input mode="md" fill="outline" label-placement="floating" label=\${t('ui.colName')}
+            .value=\${this.newName}
+            @ionInput=\${(e: Event) => (this.newName = String((e.target as HTMLInputElement).value ?? ''))}></ion-input>
+          <ion-input mode="md" fill="outline" label-placement="floating" label=\${t('ui.colCode')}
+            .value=\${this.newCode}
+            @ionInput=\${(e: Event) => (this.newCode = String((e.target as HTMLInputElement).value ?? ''))}></ion-input>
+          \${this.formError ? html\`<p class="err" role="alert">\${this.formError}</p>\` : nothing}
+          <ion-button type="submit" ?disabled=\${this.saving || !this.newName.trim()}>\${this.saving ? t('ui.saving') : t('ui.save')}</ion-button>
         </form>
-        \${this.formError ? html\`<p class="err">\${this.formError}</p>\` : nothing}
-        \${this.ctrl?.error ? html\`<p class="err">\${this.ctrl.error}</p>\` : nothing}
-        <ok-data-table
-          .serverSide=\${true}
-          .columns=\${this.columns}
-          .rows=\${this.ctrl?.rows ?? []}
-          .total=\${this.ctrl?.total ?? 0}
-          .page=\${this.ctrl?.state.page ?? 0}
-          .pageSize=\${this.ctrl?.state.pageSize ?? 50}
-          .sort=\${this.ctrl?.state.sort}
-          .sortDir=\${this.ctrl?.state.dir ?? 'asc'}
-          .searchable=\${true}
-          .searchPlaceholder=\${'Buscar…'}
-          .emptyMessage=\${this.ctrl?.loading ? 'Cargando…' : 'Sin datos.'}
-          @pageChange=\${(e: CustomEvent<number>) => this.ctrl.setPage(e.detail)}
-          @sortChange=\${(e: CustomEvent<{ sort: string; dir: 'asc' | 'desc' }>) =>
-            this.ctrl.setSort(e.detail.sort, e.detail.dir)}
-          @searchChange=\${(e: CustomEvent<string>) => this.ctrl.setSearch(e.detail)}
-          @filterChange=\${(e: CustomEvent<{ col: string; value: unknown }>) =>
-            this.ctrl.setFilter(e.detail.col, e.detail.value)}
-        ></ok-data-table>
-      </div>
+      </ok-data-table>
     \`;
   }
 }
@@ -547,6 +649,7 @@ workspace creado con \`erplora startproject\`.
 - \`module.json\` — manifest (queries/commands/navigation/permissions).
 - \`ui/components/${comp}/${comp}.ts\` — el Web Component (Lit) que usa \`ok-data-table\`.
 - \`queries/\`, \`commands/\`, \`migrations/\` — SQL declarativo (Postgres).
+- \`locales/en.json\`, \`locales/es.json\` — textos del módulo (nombre, menú y \`ui.*\` de las vistas): inglés fuente + español.
 - \`fixtures/\` — datos mock que usa \`erplora dev\` para previsualizar sin backend.
 - \`dist/${id}.esm.js\` — artefacto que va en el \`module.zip\` (lo genera \`erplora build\`).
 
