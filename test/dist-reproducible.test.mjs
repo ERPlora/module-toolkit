@@ -208,6 +208,10 @@ test('`erplora build <dir> --check --sdk <dir>`: exit 1 with the code on an old 
     const green = spawnSync(process.execPath, [CLI, 'build', fresh.mod, '--check', '--sdk', fresh.sdks.develop], { encoding: 'utf8' });
     assert.equal(green.status, 0, green.stdout + green.stderr);
     assert.match(green.stdout, /✓ dist demo: dist\/demo\.esm\.js/);
+
+    // The `--sdk=<dir>` spelling is the same flag (rv-393): it has to hand over the SAME SDK.
+    const equals = spawnSync(process.execPath, [CLI, 'build', fresh.mod, '--check', `--sdk=${fresh.sdks.develop}`], { encoding: 'utf8' });
+    assert.equal(equals.status, 0, equals.stdout + equals.stderr);
   } finally {
     rmSync(stale.root, { recursive: true, force: true });
     rmSync(fresh.root, { recursive: true, force: true });

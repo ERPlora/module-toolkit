@@ -91,6 +91,12 @@ test('the SDK handed over is the one resolved, never the installed one', async (
   assert.equal(res.path, join(sdk, 'src', 'index.ts'));
 });
 
+test('the module-types a handed-over SDK bakes is its SIBLING, not the SDK itself nor the installed one (rv-393)', async () => {
+  const root = vendorRoot('handed-over-types');
+  const res = await resolveWith(join(root, 'module-sdk'), '@erplora/module-types');
+  assert.equal(res.path, join(root, 'module-types', 'src', 'index.ts'));
+});
+
 test('a handed-over directory without the SDK is an error, not a fallback to the installed SDK', async () => {
   const empty = join(scratch, 'no-sdk-here');
   mkdirSync(empty, { recursive: true });
