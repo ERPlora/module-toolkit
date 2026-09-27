@@ -91,8 +91,10 @@ export function checkSdkFreshness(sdkDir, { developSha, env = process.env, git =
     return { ...base, develop, status: 'fresh' };
   }
   const count = git(hubDir, ['rev-list', '--count', `HEAD..${develop}`, '--', ...SDK_HUB_PATHS]);
+  // The bytes differ: only the history tells behind from ahead, so without it nothing is claimed.
+  if (!count.ok) return { ...base, develop, status: 'unverifiable', reason: 'sdk_history_unreadable' };
   const behind = Number(count.out) || 0;
-  if (!count.ok || behind === 0) return { ...base, develop, status: 'fresh' };
+  if (behind === 0) return { ...base, develop, status: 'fresh' };
   return { ...base, develop, behind, status: 'behind' };
 }
 

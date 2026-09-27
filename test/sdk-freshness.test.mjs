@@ -216,6 +216,43 @@ test('when develop cannot be read the build is not blocked, but the result says 
   }
 });
 
+test('when the SDK history cannot be counted it says so, it never claims up to date', () => {
+  // The bytes differ from develop's, so only `rev-list` can tell behind from ahead; if it fails
+  // (a shallow clone, a broken object store) the answer is «unverifiable», not «fresh» — `build`
+  // would otherwise print «✓ up to date» about an SDK nobody compared.
+  const f = hubFixture();
+  try {
+    git(f.hub, 'checkout', '-q', 'stale');
+    const failingRevList = (dir, args) => {
+      if (args[0] === 'rev-list') return { ok: false, out: '' };
+      const res = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+      return { ok: res.status === 0, out: (res.stdout ?? '').trim() };
+    };
+    const result = checkSdkFreshness(f.sdkDir, { developSha: f.fix, env: NO_ENV, git: failingRevList });
+    assert.equal(result.status, 'unverifiable');
+    assert.equal(result.reason, 'sdk_history_unreadable');
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
+test('a local develop with commits of its own is not fast-forwarded: detach onto origin/develop', () => {
+  // `merge --ff-only` would just fail on a diverged develop; the command has to be one that works.
+  const f = hubFixture();
+  try {
+    git(f.hub, 'branch', '-f', 'stale', f.base);
+    git(f.hub, 'reset', '-q', '--hard', f.base);
+    write(f.hub, 'crates/runtime/src/lib.rs', '// local develop work\n');
+    commitAll(f.hub, 'local develop work');
+    let error;
+    assert.throws(() => assertSdkFresh({ sdkDir: f.sdkDir, developSha: f.fix, env: NO_ENV }), (e) => (error = e, true));
+    assert.equal(error.fix, `git -C '${f.hub}' fetch origin develop && git -C '${f.hub}' switch --detach origin/develop`);
+    assert.ok(error.message.includes(`git -C '${f.hub}' switch develop`), 'it says how to get develop back');
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});
+
 test('ERPLORA_HUB_DEVELOP_SHA injects develop when no option does', () => {
   const f = hubFixture();
   try {
