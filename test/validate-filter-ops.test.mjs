@@ -558,7 +558,7 @@ test('the grandfathered list may only SHRINK', () => {
   // line a new lying filter could be excused by appending one entry and every test stayed green
   // (same contract as `FILL_GRANDFATHERED` and the migration guard's `GRANDFATHERED`).
   assert.ok(
-    FILTER_OPS_GRANDFATHERED.length <= 32,
+    FILTER_OPS_GRANDFATHERED.length <= 31,
     `the list GREW (${FILTER_OPS_GRANDFATHERED.length}). Nothing gets added: a filter that needs a ` +
       'line here is a filter that lies, and it gets fixed, not excused (ERPlora/pm#244).',
   );
