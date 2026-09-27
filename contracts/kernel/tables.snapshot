@@ -421,6 +421,7 @@ hub_settings.value text NOT NULL
 hub_trusted_device.device_id text NOT NULL
 hub_trusted_device.hub_id text NOT NULL
 hub_trusted_device.label text NOT NULL
+hub_trusted_device.last_seen_at text NOT NULL
 hub_trusted_device.mode text NOT NULL
 hub_trusted_device.mode_set_at text NOT NULL
 hub_trusted_device.mode_set_by text NOT NULL
