@@ -27,10 +27,9 @@ const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
  * (module-toolkit#148: `wasm.test.mjs` sat here as «needs the Rust toolchain» after #146 had put
  * Rust on the runner, and nine suites «needed esbuild», a public package).
  */
-const CANNOT_RUN_IN_CI = {
-  'pack-outfitkit-floor.test.mjs':
-    'its two #201 controls stamp a real @erplora/outfitkit, a `file:` sibling checkout no runner has (#238)',
-};
+// `pack-outfitkit-floor` sat here until #389 put `@erplora/outfitkit` in ci.yml's install loop: the
+// npm release (a `^` range, so the newest) is ahead of the fleet, and its two #201 controls run.
+const CANNOT_RUN_IN_CI = {};
 
 /** The `test/…` arguments of the `Tests` step, as written. */
 function ciPatterns() {

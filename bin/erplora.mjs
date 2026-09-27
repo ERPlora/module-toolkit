@@ -5,6 +5,8 @@
 //   erplora g view|command|query <id> <name>   genera piezas dentro de un módulo
 //   erplora dev <dir>          preview con transport mock, CSP-safe
 //   erplora build <dir>        compila el WC a dist/<id>.esm.js
+//                              `--check [--sdk <dir>]` rebuilds aside and compares with the
+//                              committed dist/, never writing it (module-toolkit#389)
 //   erplora validate <dir> [--pg]  valida manifest + CSP del bundle + contratos (ADR-0127);
 //                              con --pg, PREPARA cada SQL contra un Postgres efímero (#32)
 //   erplora test <dir>         corre las baterías propias del módulo (contrato + Postgres + hub) y
@@ -38,6 +40,17 @@ if (argv[0] === '--version' || argv[0] === '-v') {
 // `--against-hub [<imagen|digest>]` is the ONE flag that takes a value, and a value does not start
 // with `--`: left in, it would land in `rest` and be read as the module directory (module-toolkit
 // #110). It is consumed first, once, so the split below keeps meaning what it always meant.
+// `--sdk <dir>` (`build --check`, module-toolkit#389) takes a value too, consumed the same way.
+let sdkDir;
+const sdkAt = argv.findIndex((a) => a === '--sdk' || a.startsWith('--sdk='));
+if (sdkAt !== -1) {
+  const [flag, value] = argv.splice(sdkAt, argv[sdkAt] === '--sdk' ? 2 : 1);
+  sdkDir = flag === '--sdk' ? value : flag.slice('--sdk='.length);
+  if (!sdkDir) {
+    console.error('✗ --sdk needs the directory of @erplora/module-sdk');
+    process.exit(1);
+  }
+}
 const againstHub = parseAgainstHub(argv, { positionals: true });
 // Flags are separated from positional args so `erplora validate <dir> --pg` works in any order.
 const flags = new Set(againstHub.positionals.filter((a) => a.startsWith('--')));
@@ -61,6 +74,7 @@ const usage = () => {
   g command|query <id> <nombre>  añade un command/query SQL a un módulo
   dev <dir>                      preview del módulo con datos mock (CSP-safe)
   build <dir>                    compila el WebComponent → dist/<id>.esm.js
+  build <dir> --check [--sdk <d>] rebuilds aside and fails if dist/<id>.esm.js differs
   validate <dir> [--pg]          valida el manifest + CSP del bundle + contratos (ADR-0127);
                                  con --pg, además PREPARA cada SQL contra un Postgres efímero
   test <dir> [--list] [--against-hub [<imagen|digest>]]
@@ -111,6 +125,18 @@ try {
     }
     case 'build':
       need(rest[0], 'falta la ruta del módulo');
+      if (flags.has('--check')) {
+        // module-toolkit#389: rebuild into a scratch dir and compare with the committed bundle;
+        // dist/ is never written. The module gate runs it with develop's SDK in `--sdk`.
+        const { assertDistReproducible } = await import('../src/dist-reproducible.mjs');
+        const result = await assertDistReproducible(target(rest[0]), { sdkDir: sdkDir && resolve(sdkDir) });
+        console.log(
+          result.status === 'no_web_component'
+            ? `✓ dist ${result.id}: no Web Component, no bundle to compare`
+            : `✓ dist ${result.id}: ${result.file} is exactly what a rebuild gives`,
+        );
+        break;
+      }
       await (await import('../src/build.mjs')).build(target(rest[0]));
       break;
     case 'validate':
