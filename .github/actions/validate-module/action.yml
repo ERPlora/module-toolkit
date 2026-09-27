@@ -320,6 +320,11 @@ runs:
         done
         ln -sfn "$deps/node_modules/@ionic/core" "$mod/node_modules/@ionic/core"
         ln -sfn "$deps/node_modules/@erplora/outfitkit" "$mod/node_modules/@erplora/outfitkit"
+        # The toolkit itself, for the shared guards a module's test imports instead of carrying a copy
+        # (`@erplora/module-toolkit/money-display-guard`, ERPlora/pm#505). It is the checkout this
+        # action runs from — the same `@main` that runs `erplora test` — so the guard and the gate
+        # can never be two versions. Dependency-free by contract: nothing to install behind it.
+        ln -sfn "$ERPLORA_TOOLKIT" "$mod/node_modules/@erplora/module-toolkit"
         # ── The fifth package, the one npm cannot give (ERPlora/hub#1097) ────────────────────────
         #
         # A DIRECTORY, not a tarball: `@erplora/module-sdk` declares `"main": "src/index.ts"` and is

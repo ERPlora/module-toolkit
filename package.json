@@ -15,6 +15,14 @@
   "bin": {
     "erplora": "bin/erplora.mjs"
   },
+  "exports": {
+    "./money-display-guard": {
+      "types": "./src/money-display-guard.d.mts",
+      "default": "./src/money-display-guard.mjs"
+    },
+    "./package.json": "./package.json",
+    "./*": "./*"
+  },
   "files": [
     "bin",
     "src",

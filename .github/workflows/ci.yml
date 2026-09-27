@@ -258,6 +258,7 @@ jobs:
           test/run-cargo.test.mjs
           test/against-hub.test.mjs
           test/gate-wiring.test.mjs
+          test/money-display-guard.test.mjs
           test/check-hub-battery-pairing.test.mjs
           test/module-neighbours.test.mjs
           test/gate-infra-annotations.test.mjs
