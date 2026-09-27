@@ -357,8 +357,8 @@ export const MISSING_FILL_GRANDFATHERED = [
   // `appointments` left too: appointments#221 boxed its series panel and its list toolbar.
   // `printing` left: printing#50 boxed the IP and port of «Add printer», the paper width and the
   // role of each printer.
-  ['sales', 'ui/components/erp-pos-touch/erp-pos-touch.ts', 5], // sales#414
-  ['sales', 'ui/components/erp-sale-refund/erp-sale-refund.ts', 3], // sales#414
+  // `sales` left with sales#414 (the customer details over the simplified ceiling and the refund
+  // form): the list is EMPTY and stays so — every control of the 27 modules carries its box.
 ];
 
 /**
@@ -407,12 +407,13 @@ export function controlsWithoutFill(source) {
 
 /**
  * The door: every control of the module's `ui/` that asks for no box outside a list row. Returns
- * `{ errors, warnings }`; a module with no `ui/` (purely declarative) says nothing.
+ * `{ errors, warnings }`; a module with no `ui/` (purely declarative) says nothing. `list` is the
+ * grandfathered list to judge against — the real one unless a test proves the ratchet on its own.
  */
-export function checkIonicMissingFill(dir, manifest) {
+export function checkIonicMissingFill(dir, manifest, list = MISSING_FILL_GRANDFATHERED) {
   return ratchet(dir, manifest, {
     scan: controlsWithoutFill,
-    list: MISSING_FILL_GRANDFATHERED,
+    list,
     skip: (file) => TEST_FILE.test(file),
     say: {
       over: (file, bare, allowed) =>

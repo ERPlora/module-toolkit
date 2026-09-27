@@ -39,6 +39,9 @@ import { checkGateConstraints, GRANDFATHERED as GATE_GRANDFATHERED } from '../sr
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), '..', 'src');
 
+/** A stand-in for `MISSING_FILL_GRANDFATHERED`, empty since sales#414 (see the stale-line test). */
+const MISSING_FILL_SYNTHETIC = [['demo', 'ui/components/erp-demo-old/erp-demo-old.ts', 3]];
+
 /** Every door that carries a grandfathered list, by the `<file>:<export>` it is declared as. */
 const DOORS = {
   'validate-filter-ops.mjs:FILTER_OPS_GRANDFATHERED': { check: checkFilterOps, list: FILTER_OPS_GRANDFATHERED },
@@ -159,7 +162,9 @@ test('a stale line is never SILENT for the stranger either — it is warned, not
   for (const [name, { check, list }] of [
     ['filter-ops', { check: checkFilterOps, list: FILTER_OPS_GRANDFATHERED }],
     ['ionic-fill', { check: checkIonicFill, list: FILL_GRANDFATHERED }],
-    ['ionic-missing-fill', { check: checkIonicMissingFill, list: MISSING_FILL_GRANDFATHERED }],
+    // Its real list is empty since sales#414; the door takes the list as a parameter, so the
+    // warning is still proven on a made-up line.
+    ['ionic-missing-fill', { check: (d, m) => checkIonicMissingFill(d, m, MISSING_FILL_SYNTHETIC), list: MISSING_FILL_SYNTHETIC }],
     ['ionic-color', { check: checkIonicColor, list: COLOR_GRANDFATHERED }],
   ]) {
     const id = list[0][0];
