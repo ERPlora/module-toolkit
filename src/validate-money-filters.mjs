@@ -43,15 +43,14 @@ const KINDS = {
 export const MONEY_FILTERS_GRANDFATHERED = [
   ['cart_checkout', 'ui/components/erp-cart-checkout-carts/erp-cart-checkout-carts.ts', 2],
   ['cart_checkout', 'ui/components/erp-cart-checkout-orders/erp-cart-checkout-orders.ts', 1],
-  ['cash_register', 'ui/components/erp-cashregister-dashboard/erp-cashregister-dashboard.ts', 3],
   ['customers', 'ui/components/erp-customers-list/erp-customers-list.ts', 1],
   ['inventory', 'ui/components/erp-inventory-products/erp-inventory-products.ts', 2],
   ['invoice', 'ui/components/erp-invoice-list/erp-invoice-list.ts', 1],
   ['kitchen', 'ui/components/erp-kitchen-orders-active/erp-kitchen-orders-active.ts', 1],
   ['services', 'ui/components/erp-services-list/erp-services-list.ts', 1],
   ['verifactu', 'ui/components/erp-verifactu-records/erp-verifactu-records.ts', 1],
-  // `sales` and `payments` left with pm#501: their «Total» and «Amount» filters are declared in
-  // `moneyFilters`.
+  // `sales`, `payments` and `cash_register` left with pm#501: their «Total», «Amount» and
+  // «Opening / Expected / Counted» filters are declared in `moneyFilters`.
 ];
 
 /** A test file is not a screen: fixtures of a module's own guards quote bad columns on purpose. */
