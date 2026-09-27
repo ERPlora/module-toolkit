@@ -97,11 +97,12 @@ test('barrel: type-only, entry points and comments pass', () => {
 });
 
 test('barrel: a statement without semicolons does not swallow the next import', () => {
-  // Without the tempered span the first `import` ran on to the `from` of the next line and read a
-  // type-only import of the barrel as a value one.
-  const src = "import { a } from './a'\nimport type { T } from '@erplora/outfitkit'\nexport const x = 1\n";
+  // A statement with no quote and no `;` before the next line (`export const x = 1`) let the span
+  // run on to the `from` of a type-only import of the barrel and read it as a value export. The
+  // span may not cross another import/export keyword.
+  const src = "export const x = 1\nimport type { T } from '@erplora/outfitkit'\n";
   assert.deepEqual(barrelValueImports(src), []);
-  const bad = "import { a } from './a'\nimport { formatMinor } from '@erplora/outfitkit'\n";
+  const bad = "export const x = 1\nimport { formatMinor } from '@erplora/outfitkit'\n";
   assert.equal(barrelValueImports(bad).length, 1);
 });
 
@@ -129,7 +130,9 @@ test('an exception covers ONE occurrence of its line, not every copy (X1)', () =
 
 const SCREEN = 'components/erp-demo-list/erp-demo-list.ts';
 const OK_IMPORTS = "import type { DataTableColumn } from '@erplora/outfitkit';\nimport '@erplora/outfitkit/ok-data-table';\n";
-const GOOD_SCREEN = `${OK_IMPORTS}const price = (r) => erplora().formatMoney(r.price_cents);\n`;
+// The comment is part of the fixture: what a comment says (an old barrel import, an old `toFixed`)
+// is not code, and the tree scan must read the same stripped code as the detectors.
+const GOOD_SCREEN = `${OK_IMPORTS}/* was: import { formatMinor } from '@erplora/outfitkit'; (c / 100).toFixed(2) */\n// import '@erplora/outfitkit';\nconst price = (r) => erplora().formatMoney(r.price_cents);\n`;
 
 function mod(files) {
   const dir = mkdtempSync(join(tmpdir(), 'erplora-money-guard-'));
