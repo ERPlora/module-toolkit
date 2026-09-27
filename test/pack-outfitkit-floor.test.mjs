@@ -31,6 +31,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { newestKnownHub } from '../src/validate-outfitkit-floor.mjs';
 import { stampOutfitkit } from '../src/outfitkit-stamp.mjs';
+import { resolvedSdkDir } from '../src/sdk-freshness.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = join(ROOT, 'bin', 'erplora.mjs');
@@ -78,8 +79,23 @@ function packableModule({ staleStamp, compatibility }) {
   return { dir, id, manifest };
 }
 
+/**
+ * develop's sha for the SDK check of `build` (module-toolkit#387): the HEAD of the hub checkout the
+ * SDK resolves to, so these packs judge the OutfitKit floor and not where `../hub` was left, and
+ * never ask a remote.
+ */
+function hubHeadEnv() {
+  const sdk = resolvedSdkDir();
+  if (!sdk) return {};
+  const head = spawnSync('git', ['-C', sdk, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  return head.status === 0 ? { ERPLORA_HUB_DEVELOP_SHA: head.stdout.trim() } : {};
+}
+
 function erplora(command, dir) {
-  const res = spawnSync(process.execPath, [CLI, command, dir], { encoding: 'utf8' });
+  const res = spawnSync(process.execPath, [CLI, command, dir], {
+    encoding: 'utf8',
+    env: { ...process.env, ...hubHeadEnv() },
+  });
   return { ...res, out: `${res.stdout}\n${res.stderr}` };
 }
 
