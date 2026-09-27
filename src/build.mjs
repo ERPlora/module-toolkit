@@ -18,16 +18,31 @@ import { generateIcons } from './icons.mjs';
 import { stampOutfitkit, OUTFITKIT_STAMP } from './outfitkit-stamp.mjs';
 import { bundleStampFile, checkBundleProvenance, normalizeBundlePaths, stampBundle } from './bundle-freshness.mjs';
 import { buildWasmHandler } from './wasm.mjs';
+import { assertSdkFresh } from './sdk-freshness.mjs';
 
 // Flags clásicos de decoradores para los `@state()/@property()` de Lit (igual que Vite).
 const TSCONFIG_RAW = {
   compilerOptions: { experimentalDecorators: true, useDefineForClassFields: false },
 };
 
-export async function build(moduleDir, { wasm = {} } = {}) {
+export async function build(moduleDir, { wasm = {}, sdk = {} } = {}) {
   const dir = resolve(process.cwd(), moduleDir);
   const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
   const id = manifest.id;
+
+  // module-toolkit#387: the SDK resolves into the shared `../hub` checkout, whatever branch it is
+  // on, and the bundle is published as committed. Behind develop → THROWS with the command that
+  // updates it, before anything in dist/ is rewritten. `sdk` injects the SDK dir and develop's sha
+  // in tests; in production both resolve themselves.
+  const sdkCheck = assertSdkFresh(sdk);
+  if (sdkCheck.status === 'fresh') {
+    console.log(`✓ module-sdk ${id}: ${sdkCheck.branch}@${sdkCheck.head.slice(0, 7)} up to date with hub develop (${sdkCheck.develop.slice(0, 7)})`);
+  } else if (sdkCheck.status === 'unverifiable') {
+    console.warn(
+      `⚠ module-sdk ${id}: could not compare ${sdkCheck.hubDir} with hub develop (${sdkCheck.reason}) — ` +
+        'if that checkout is behind, this bundle ships an old SDK',
+    );
+  }
 
   const outfile = join(dir, 'dist', `${id}.esm.js`);
   mkdirSync(join(dir, 'dist'), { recursive: true });

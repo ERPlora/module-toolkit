@@ -269,6 +269,7 @@ jobs:
           test/npm-scratch-dir-is-clean.test.mjs
           test/npm-scratch-install-skips-peer-resolution.test.mjs
           test/bundle-hub-sdk.test.mjs
+          test/sdk-freshness.test.mjs
           test/resolve-plugin.test.mjs
           test/install-from-package.test.mjs
           test/npm-publish.test.mjs

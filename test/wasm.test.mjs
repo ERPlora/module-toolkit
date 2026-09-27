@@ -604,6 +604,12 @@ test('git: source and binary committed together → fresh however the local mtim
 
 // --- wiring: `erplora build` and `erplora validate` -----------------------------------------
 
+/**
+ * No module SDK for these builds: the check that it is not behind hub develop (module-toolkit#387,
+ * test/sdk-freshness.test.mjs) would otherwise judge the local `../hub` and ask its `origin`.
+ */
+const NO_SDK = { sdkDir: null };
+
 /** Fixture that survives the full `build`/`validate` pipeline: WC entry + one portable SQL file. */
 function cliFixture({ functions = ['open_session'], exports = functions, wasmAgeMs = 18 * DAY } = {}) {
   const { dir, manifest } = moduleFixture({ functions, exports, wasmAgeMs, sourceAgeMs: 0 });
@@ -620,7 +626,7 @@ test('erplora build recompiles the stale handler as part of the build (module-to
   try {
     const { build } = await import('../src/build.mjs');
     const runCargo = fakeCargo(['open_session', 'split_session']);
-    await build(dir, { wasm: { toolchain: AVAILABLE, runCargo } });
+    await build(dir, { wasm: { toolchain: AVAILABLE, runCargo }, sdk: NO_SDK });
     assert.equal(runCargo.calls.length, 1, 'build must compile the handler');
     assert.deepEqual(
       readWasmExports(readFileSync(join(dir, 'dist', 'handler.wasm'))).map((e) => e.name),
@@ -637,7 +643,7 @@ test('erplora build fails instead of bundling a WC over a stale handler it canno
   const { dir } = cliFixture();
   try {
     const { build } = await import('../src/build.mjs');
-    await assert.rejects(() => build(dir, { wasm: { toolchain: UNAVAILABLE } }), /desfasado/i);
+    await assert.rejects(() => build(dir, { wasm: { toolchain: UNAVAILABLE }, sdk: NO_SDK }), /desfasado/i);
   } finally {
     clean(dir);
   }
