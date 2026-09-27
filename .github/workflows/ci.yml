@@ -203,7 +203,7 @@ jobs:
           # a peer family bumps major on the registry — vitest 5.0.0 took the whole module CI down on
           # 2026-09-03 (module-toolkit#171). A throwaway prefix with an explicit package list needs no
           # peer resolution. Guard: test/npm-scratch-install-skips-peer-resolution.test.mjs
-          for pkg in typescript @ionic/core ajv esbuild @iconify/utils @iconify-json/ion @erplora/outfitkit; do
+          for pkg in typescript @ionic/core ajv esbuild @iconify/utils @iconify-json/ion @erplora/outfitkit lit; do
             want=$(node -p "require('./package.json').dependencies['$pkg']")
             npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error --legacy-peer-deps "$pkg@$want"
           done
@@ -224,6 +224,13 @@ jobs:
           # resolves is the one the bundle was sealed with, so its CLI test needs one resolvable here.
           mkdir -p node_modules/@erplora
           ln -sfn "$deps/node_modules/@erplora/outfitkit" node_modules/@erplora/outfitkit
+          # The whole Lit family, not only `lit`: the resolve plugin pins every `lit*`/`@lit/*` specifier
+          # to the toolkit's own copy, including the ones `lit` imports inside the bundle
+          # (`pack-outfitkit-floor` bakes a real Lit component, module-toolkit#389).
+          mkdir -p node_modules/@lit
+          for dir in "$deps"/node_modules/lit "$deps"/node_modules/lit-* "$deps"/node_modules/@lit/*; do
+            ln -sfn "$dir" "node_modules/${dir#"$deps"/node_modules/}"
+          done
 
       - name: Start the scratch Postgres
         env:

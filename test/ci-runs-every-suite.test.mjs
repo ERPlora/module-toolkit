@@ -155,3 +155,14 @@ test('the sibling-workspace check catches the shape it exists for (module-toolki
   assert.ok(SIBLING_WORKSPACE.test(probe));
   assert.ok(!SIBLING_WORKSPACE.test('// `modules-workspace/` is not a repo and has no workflows'));
 });
+
+test('ci.yml installs EVERY runtime dependency of the toolkit (module-toolkit#389)', () => {
+  // `dependencies` is what `npm install @erplora/module-toolkit` gives a user, so it is what the
+  // suites are entitled to import. Leaving one out does not fail on the laptop, where a full install
+  // has it: it fails on CI — #389 moved `pack-outfitkit-floor` into the `Tests` step and its Lit
+  // fixture died on «Could not resolve 'lit'», because `lit` was the one dependency never installed.
+  const pkg = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8'));
+  const installed = ciInstalledPackages();
+  const missing = Object.keys(pkg.dependencies).filter((name) => !installed.includes(name));
+  assert.deepEqual(missing, [], `ci.yml does not install: ${missing.join(', ')}`);
+});
