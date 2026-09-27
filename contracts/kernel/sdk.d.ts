@@ -50,6 +50,7 @@ export declare function buildListParams(p: ListParams): Record<string, unknown>;
 export type ListPage<T = unknown> = Page<T>;
 export interface ListClient {
     queryPage<R = unknown>(name: string, params: ListParams): Promise<Page<R>>;
+    readonly currencyDecimals?: number;
 }
 export interface ListControllerOptions {
     pageSize?: number;
@@ -57,6 +58,8 @@ export interface ListControllerOptions {
     dir?: 'asc' | 'desc';
     filters?: Record<string, unknown>;
     context?: Record<string, unknown>;
+    moneyFilters?: readonly string[];
+    quantityFilters?: readonly string[];
 }
 export interface ListControllerState {
     page: number;
@@ -77,7 +80,10 @@ export declare class ListController<T = Record<string, unknown>> {
     error: string;
     readonly state: ListControllerState;
     private seq;
+    private readonly moneyFilters;
+    private readonly quantityFilters;
     constructor(client: ListClient, queryName: string, onChange?: () => void, opts?: ListControllerOptions);
+    private wireFilters;
     get pageCount(): number;
     load(): Promise<void>;
     setPage(page: number): void;
