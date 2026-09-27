@@ -362,10 +362,11 @@ un `ion-item`** (una fila de lista: la fila es la superficie, como en los ajuste
 citan controles a propósito.
 
 Mismo trinquete, con su propia lista (`MISSING_FILL_GRANDFATHERED`): medido el 2026-09-26 sobre
-`origin/main` de los 27 módulos, 24 controles en 6 ficheros; hoy quedan **8 en 2 ficheros** de
-`sales` (los de `taxes` los arregló taxes#75; los de `appointments`, appointments#221; los de
-`reservations`, reservations#71, y los de `printing`, printing#50). Solo encoge; `sales` tiene su
-issue (sales#414) y su PR borra sus líneas.
+`origin/main` de los 27 módulos, 24 controles en 6 ficheros; hoy está **VACÍA** (`taxes` lo arregló
+taxes#75; `appointments`, appointments#221; `reservations`, reservations#71; `printing`, printing#50,
+y `sales`, sales#414). Su techo es 0/0: ningún módulo vuelve a entrar. Los tests del trinquete lo
+prueban sobre una lista inventada que `checkIonicMissingFill(dir, manifest, list)` recibe como
+tercer parámetro.
 
 ## El `color=` que no cruza el shadow root (module-toolkit#273)
 

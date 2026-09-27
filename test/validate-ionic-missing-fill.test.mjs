@@ -35,15 +35,25 @@ function mod(files, id = 'demo') {
 }
 
 /**
- * The first entry of the list, plus its module's OTHER grandfathered files written at exactly their
- * allowance — so a fixture that only cares about one file does not make a sibling entry look stale.
- * Once the list holds no module with a single line (after printing#50 only `sales` is left, with two
- * files), picking such a module is no longer possible; the siblings stand in for it.
+ * A made-up list for the ratchet tests. The real one (`MISSING_FILL_GRANDFATHERED`) empties as the
+ * modules fix their files (sales#414 took the last lines), and a ratchet test that reads its first
+ * entry would then test nothing; the door takes the list as a parameter so the mechanism is proven
+ * on its own, whatever the real list holds that day. Two files of one module, so a fixture about one
+ * of them has to write its sibling too — or the sibling looks stale.
+ */
+const SYNTHETIC = [
+  ['demo', 'ui/components/erp-demo-old/erp-demo-old.ts', 3],
+  ['demo', 'ui/components/erp-demo-older/erp-demo-older.ts', 2],
+];
+
+/**
+ * The first entry of `SYNTHETIC`, plus its module's OTHER files written at exactly their allowance —
+ * so a fixture that only cares about one file does not make a sibling entry look stale.
  */
 function entryWithSiblings() {
-  const [id, file, count] = MISSING_FILL_GRANDFATHERED[0];
+  const [id, file, count] = SYNTHETIC[0];
   const siblings = Object.fromEntries(
-    MISSING_FILL_GRANDFATHERED.filter(([other, f]) => other === id && f !== file).map(([, f, c]) => [
+    SYNTHETIC.filter(([other, f]) => other === id && f !== file).map(([, f, c]) => [
       f,
       Array(c).fill(BARE).join('\n'),
     ]),
@@ -236,13 +246,13 @@ test('a grandfathered file keeps passing with the controls it had — and NOT wi
   const [id, file, count, siblings] = entryWithSiblings();
   const exact = mod({ ...siblings, [file]: Array(count).fill(BARE).join('\n') }, id);
   try {
-    assert.deepEqual(checkIonicMissingFill(exact.dir, exact.manifest).errors, []);
+    assert.deepEqual(checkIonicMissingFill(exact.dir, exact.manifest, SYNTHETIC).errors, []);
   } finally {
     exact.clean();
   }
   const more = mod({ ...siblings, [file]: Array(count + 1).fill(BARE).join('\n') }, id);
   try {
-    const { errors } = checkIonicMissingFill(more.dir, more.manifest);
+    const { errors } = checkIonicMissingFill(more.dir, more.manifest, SYNTHETIC);
     assert.equal(errors.length, 1, JSON.stringify(errors));
     assert.match(errors[0], new RegExp(`${count} venían de antes`));
   } finally {
@@ -261,7 +271,7 @@ test('the pass is per FILE, not per module: a new component inherits nothing', (
     id,
   );
   try {
-    const { errors } = checkIonicMissingFill(m.dir, m.manifest);
+    const { errors } = checkIonicMissingFill(m.dir, m.manifest, SYNTHETIC);
     assert.equal(errors.length, 1, JSON.stringify(errors));
     assert.match(errors[0], /erp-brand-new/);
   } finally {
@@ -273,7 +283,7 @@ test('FAILS: the file is clean but keeps its entry — the allowance covers noth
   const [id, file, , siblings] = entryWithSiblings();
   const m = mod({ ...siblings, [file]: BOXED }, id);
   try {
-    const { errors } = checkIonicMissingFill(m.dir, m.manifest);
+    const { errors } = checkIonicMissingFill(m.dir, m.manifest, SYNTHETIC);
     assert.equal(errors.length, 1, JSON.stringify(errors));
     assert.match(errors[0], /MISSING_FILL_GRANDFATHERED/, 'the error names the list to edit');
     assert.match(errors[0], /pm#479/);
@@ -286,7 +296,7 @@ test('FAILS: the entry points at a file that no longer exists (in a module that 
   const [id, file, , siblings] = entryWithSiblings();
   const m = mod({ ...siblings, 'ui/components/erp-renamed/erp-renamed.ts': BOXED }, id);
   try {
-    const { errors } = checkIonicMissingFill(m.dir, m.manifest);
+    const { errors } = checkIonicMissingFill(m.dir, m.manifest, SYNTHETIC);
     const stale = errors.filter((e) => e.includes(file));
     assert.equal(stale.length, 1, JSON.stringify(errors));
     assert.match(stale[0], /MISSING_FILL_GRANDFATHERED/);
@@ -296,10 +306,10 @@ test('FAILS: the entry points at a file that no longer exists (in a module that 
 });
 
 test('WARNS (does not fail): the file is cleaner than its allowance, but not clean yet', () => {
-  const [id, file, count] = MISSING_FILL_GRANDFATHERED.find(([, , c]) => c > 1);
+  const [id, file, count] = SYNTHETIC.find(([, , c]) => c > 1);
   const m = mod({ [file]: Array(count - 1).fill(BARE).join('\n') }, id);
   try {
-    const { errors, warnings } = checkIonicMissingFill(m.dir, m.manifest);
+    const { errors, warnings } = checkIonicMissingFill(m.dir, m.manifest, SYNTHETIC);
     assert.deepEqual(errors.filter((e) => e.includes(file)), []);
     assert.equal(warnings.filter((w) => w.includes(file)).length, 1, JSON.stringify(warnings));
   } finally {
@@ -312,7 +322,7 @@ test('the grandfathered list may only SHRINK', () => {
   // that adds a line has to raise them, which is what makes the addition visible in review.
   const total = MISSING_FILL_GRANDFATHERED.reduce((n, [, , count]) => n + count, 0);
   assert.ok(
-    MISSING_FILL_GRANDFATHERED.length <= 2 && total <= 8,
+    MISSING_FILL_GRANDFATHERED.length <= 0 && total <= 0,
     `the list GREW (${MISSING_FILL_GRANDFATHERED.length} files / ${total} controls). Nothing gets added: ` +
       'each module still owing empties its own line (Sale de ERPlora/pm#479).',
   );
@@ -359,6 +369,26 @@ test('appointments#221 boxed its series panel and list toolbar: appointments is 
     [],
     'every control of the module carries its box: an allowance there is a free pass for the regression',
   );
+});
+
+test('sales#414 boxed the customer details over the simplified ceiling and the refund form: sales is not in the list and stays out', () => {
+  assert.deepEqual(
+    MISSING_FILL_GRANDFATHERED.filter(([id]) => id === 'sales'),
+    [],
+    'every control of the module carries its box: an allowance there is a free pass for the regression',
+  );
+});
+
+test('with no list given, the door judges against MISSING_FILL_GRANDFATHERED: the bare controls sales had are REJECTED now', () => {
+  // The default is the real list, not the synthetic one: the check `erplora validate` runs.
+  const m = mod({ 'ui/components/erp-pos-touch/erp-pos-touch.ts': Array(5).fill(BARE).join('\n') }, 'sales');
+  try {
+    const { errors } = checkIonicMissingFill(m.dir, m.manifest);
+    assert.equal(errors.length, 1, JSON.stringify(errors));
+    assert.match(errors[0], /erp-pos-touch\.ts: 5 control/);
+  } finally {
+    m.clean();
+  }
 });
 
 // ── Through the REAL door: the function proves nothing if `erplora validate` does not run it ──
