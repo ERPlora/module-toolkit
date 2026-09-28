@@ -27,6 +27,7 @@ export interface FormatMoneyOptions {
     maximumFractionDigits?: number;
 }
 export declare function dataTableLabels(locale?: string): Record<string, string>;
+export declare function dataTableShowsLoadError(): boolean;
 export interface RangeFilter {
     from?: unknown;
     to?: unknown;
