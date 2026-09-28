@@ -24,6 +24,12 @@ const SIGN = /[-+\u2212]/;
 const SIGNS = /[-+\u2212]/g;
 /** Accounting brackets: a spreadsheet's negative. Cleaned away like a symbol, they flip the sign. */
 const BRACKET = /[()]/;
+/** Currency signs (`€`, `$`, `¥`…): cleaned when no currency is given, else only the hub's own. */
+const CURRENCY_SIGNS = /\p{Sc}/gu;
+/** All that may stay around the digits once the currency is out: spaces and apostrophes, the
+ *  direction marks Intl prints (he, ar), the sign, a separator with nothing after it. Any other
+ *  letter or character (`1.5k`, `5½`, `12%`) is not an amount (module-toolkit#396). */
+const AFFIX_FILLER = new RegExp(`^[${SPACING}\\p{Cf}.,+\\-\\u2212]*$`, 'u');
 
 const NOT_AN_AMOUNT = Object.freeze({ ok: false, code: 'not_an_amount' });
 
@@ -31,6 +37,39 @@ function checkDecimals(decimals) {
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 4) {
     throw new RangeError(`money_input_decimals_invalid: ${String(decimals)}`);
   }
+}
+
+/**
+ * The words that may sit next to the digits: what the screen prints for `currency` in `locale`
+ * (`formatMoney`, hub#1090) and in English, its narrow symbol and its ISO code, lower-cased. Like
+ * Odoo's monetary field: only the record's currency is cleaned, so «1.5k» and «12abc» are not an
+ * amount instead of 1,50 and 12. No currency → no words at all.
+ */
+function currencyWords(currency, locale) {
+  if (currency === undefined) return [];
+  if (typeof currency !== 'string' || !/^[A-Za-z]{3}$/.test(currency)) {
+    throw new RangeError(`money_input_currency_invalid: ${String(currency)}`);
+  }
+  const words = new Set([currency.toLowerCase()]);
+  // English's too: the keyboard types `¥` where ja prints `￥`, and `CA$` where fr-CA prints `$`.
+  for (const lang of [locale || 'en', 'en']) {
+    for (const currencyDisplay of ['symbol', 'narrowSymbol']) {
+      const part = new Intl.NumberFormat(lang, { style: 'currency', currency, currencyDisplay })
+        .formatToParts(1)
+        .find((p) => p.type === 'currency');
+      if (part) words.add(part.value.toLowerCase());
+    }
+  }
+  // Longest first: `$` taken out of `CA$` would leave `CA` behind.
+  return [...words].sort((a, b) => b.length - a.length);
+}
+
+/** Only the currency (its words, or any currency sign when none is given) and filler around the digits. */
+function isCurrencyOnly(affixes, words) {
+  let rest = affixes.toLowerCase();
+  if (!words.length) rest = rest.replace(CURRENCY_SIGNS, ' ');
+  for (const word of words) rest = rest.split(word).join(' ');
+  return AFFIX_FILLER.test(rest);
 }
 
 /** The integer part split by its grouping characters is a real grouping: 1–3 digits first (not
@@ -100,15 +139,22 @@ function intDigits(intPart) {
  *   followed by exactly three digits in a currency without three decimals (`1.250`), with the two
  *   readings in minor units so the message can show both.
  *
- * Both separators are read, always; symbols, currency codes, spaces, NBSP/NNBSP/thin space and
- * apostrophes are cleaned away; the sign is ONE `-`, `−` or `+` before the first digit — two signs, a
- * sign after the digits or accounting brackets `(12)` are refused, not guessed.
+ * Both separators are read, always; spaces, NBSP/NNBSP/thin space and apostrophes are cleaned away,
+ * and so is `options.currency` — what the screen prints for it in `options.locale` and in English,
+ * its narrow symbol and its ISO code (`kr`, `US$`, `CHF`, `€`). With no currency, any currency sign
+ * (`\p{Sc}`) is cleaned and no letter. Anything else next to the digits (`1.5k`, `12abc`, `5½`, `12%`,
+ * `$12` in a euro hub, `EUR 12` without a currency) is not an amount (module-toolkit#396). The sign
+ * is ONE `-`, `−` or `+` before the first digit — two signs, a sign after the digits or accounting
+ * brackets `(12)` are refused, not guessed.
  *
  * @param {unknown} typed
  * @param {number} decimals the currency's scale (`erplora().currencyDecimals`), 0–4
+ * @param {{ currency?: string, locale?: string }} [options] the hub's `erplora().currency` (ISO 4217)
+ *   and `erplora().locale`; no locale → `en`
  */
-export function parseMoneyInput(typed, decimals) {
+export function parseMoneyInput(typed, decimals, options = {}) {
   checkDecimals(decimals);
+  const words = currencyWords(options.currency, options.locale);
   if (typeof typed === 'number') return parseNumber(typed, decimals);
   const raw = String(typed ?? '').trim();
   if (!raw) return { ok: true, minor: null };
@@ -124,6 +170,7 @@ export function parseMoneyInput(typed, decimals) {
 
   const signs = prefix.match(SIGNS) ?? [];
   if (signs.length > 1 || SIGN.test(suffix) || BRACKET.test(prefix + suffix)) return NOT_AN_AMOUNT;
+  if (!isCurrencyOnly(`${prefix} ${suffix}`, words)) return NOT_AN_AMOUNT;
   const negative = signs.length === 1 && MINUS.test(signs[0]);
 
   const split = splitCore(core, decimals);
@@ -185,8 +232,9 @@ export function formatMoneyInput(minor, decimals, locale) {
  * @param {string} typed
  * @param {number} decimals
  * @param {string} [locale]
+ * @param {string} [currency] the hub currency, whose words are cleaned (see `parseMoneyInput`)
  */
-export function normaliseMoneyInput(typed, decimals, locale) {
-  const parsed = parseMoneyInput(typed, decimals);
+export function normaliseMoneyInput(typed, decimals, locale, currency) {
+  const parsed = parseMoneyInput(typed, decimals, { currency, locale });
   return parsed.ok && parsed.minor !== null ? formatMoneyInput(parsed.minor, decimals, locale) : typed;
 }
