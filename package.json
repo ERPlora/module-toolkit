@@ -36,7 +36,7 @@
     "!vendor/**/*.tmp"
   ],
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/*.test.mjs",
     "prepack": "node scripts/bundle-hub-sdk.mjs",
     "sync-mirrors": "node scripts/sync-hub-mirrors.mjs",
     "sync-schema": "npm run --silent sync-mirrors",
