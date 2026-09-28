@@ -33,8 +33,14 @@
 //
 // Rule 3 is the last-resort net (349 of the 579 filters are painted by no screen). It never fires in
 // the `like` direction, for the reason measured above.
+//
+// RULE 4 LOOKS THE OTHER WAY (module-toolkit#382). Rules 1-3 walk `list.filters`, so a box a screen
+// OFFERS (`filterable: true`) over a column the manifest never declared was never looked at — and
+// the kernel answers it with `422 unknown_filter`: the person types in the box and the list fails.
+// Swept on 2026-09-28 over the 27 modules: 49 list screens, 204 offered boxes, 0 refused — two of
+// them only once the screen's own rename is read (`created_at → erp_date`, `zone → zone_id`).
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { migrationFiles } from './validate-migrations.mjs';
 
 /** What the manifest must declare for each kind of box a table paints, and why. */
@@ -145,7 +151,9 @@ export const FILTER_OPS_GRANDFATHERED = [
 
 /**
  * Every list screen a component source declares, as `{ query, columns }`, where each column is
- * `{ key, filterTypes }` — EVERY box that column can paint, in source order, without repeats.
+ * `{ key, filterTypes, filterable, sentAs }` — EVERY box that column can paint, in source order,
+ * without repeats; whether the table actually offers a filter control for it; and the name its value
+ * reaches the list under (`sentAs`, see `filterRoutes`).
  *
  * `createListController(erplora(), '<query>', …)` is the one way a screen binds itself to a
  * paginated list, so a table written tomorrow cannot be born outside this gate without anybody
@@ -180,6 +188,7 @@ export function listScreens(source) {
     .filter((q) => q != null);
   if (queries.length === 0) return [];
 
+  const routes = filterRoutes(source, code);
   const columns = [];
   for (const m of code.matchAll(/\bkey\s*:\s*'/g)) {
     const quote = m.index + m[0].length - 1;
@@ -187,14 +196,73 @@ export function listScreens(source) {
     if (key == null) continue;
     const body = enclosingObject(code, m.index);
     if (body == null) continue; // a `key:` outside any object literal declares no column
+    const chunk = code.slice(body.from, body.to);
     const filterTypes = [];
-    for (const f of code.slice(body.from, body.to).matchAll(/\bfilterType\s*:\s*'/g)) {
+    for (const f of chunk.matchAll(/\bfilterType\s*:\s*'/g)) {
       const value = readString(source, body.from + f.index + f[0].length - 1);
       if (value != null && !filterTypes.includes(value)) filterTypes.push(value);
     }
-    columns.push({ key, filterTypes });
+    // `ok-data-table` draws a filter control ONLY for `filterable: true` (a missing `filterType`
+    // makes it a text box). Swept over the 27 modules on 2026-09-28 the flag is only ever written
+    // as the literal, so that is what counts as an offered box (module-toolkit#382).
+    const filterable = /\bfilterable\s*:\s*true\b/.test(chunk);
+    const sentAs = routes.has(key) ? routes.get(key) : key;
+    columns.push({ key, filterTypes, filterable, sentAs });
   }
   return queries.map((query) => ({ query, columns }));
+}
+
+/**
+ * `column -> name on the wire | null` for every column the screen's own `filterChange` handler
+ * treats by name, instead of handing `detail.col` straight to `setFilter`.
+ *
+ * Swept over the 27 modules on 2026-09-28 (module-toolkit#382), a handler that looks at the column
+ * name does one of two things:
+ *
+ *   · it RENAMES it — `e.detail.col === 'created_at' ? 'erp_date' : e.detail.col` (sales),
+ *     `detail.col === 'zone' ? 'zone_id' : detail.col` (tables). The list receives `erp_date`, so
+ *     that is the name the list has to accept, not the column's.
+ *   · it takes it BY HAND — `if (e.detail.col === 'is_active') return this.applyStatusFilter(…)`
+ *     (inventory). What reaches the wire cannot be read from here: `null`, and the column is not
+ *     judged. Missing a lie is the safe direction; accusing a working screen is not.
+ *
+ * A column compared in both ways, or renamed to two names, is `null` as well. A ternary is a rename
+ * only when it hands the column back (`? 'target' : …col`); anything else that compares the name —
+ * `col === 'total' ? 'end' : 'start'` to align a cell, `col !== 'zone'` — is `null` too: judging
+ * the box under `end` would refuse a list that declares `total` correctly. The comparison is read
+ * with the name on either side (`'key' === …col`).
+ */
+function filterRoutes(source, code) {
+  const routes = new Map();
+  const note = (key, target) => {
+    if (key == null) return;
+    if (!routes.has(key)) routes.set(key, target);
+    else if (routes.get(key) !== target) routes.set(key, null);
+  };
+  const quoted = (at) => readString(source, at);
+  const COL = String.raw`(?:[\w$]+\s*\??\.\s*)*col\b`;
+  /** What `…` after the comparison makes of the column: its new name, or `null` when unreadable. */
+  const target = (after, negated) => {
+    if (negated) return null;
+    const ternary = /^\s*\?\s*'/.exec(code.slice(after));
+    if (!ternary) return null;
+    const open = after + ternary[0].length - 1;
+    const renamed = quoted(open);
+    if (renamed == null) return null;
+    const handsBack = new RegExp(String.raw`^\s*:\s*${COL}`).test(code.slice(open + renamed.length + 2));
+    return handsBack ? renamed : null;
+  };
+  // `…col === 'key'` / `…col !== 'key'`.
+  for (const m of code.matchAll(/\bcol\s*(!|=)==?\s*'/g)) {
+    const open = m.index + m[0].length - 1;
+    const key = quoted(open);
+    if (key != null) note(key, target(open + key.length + 2, m[1] === '!'));
+  }
+  // `'key' === …col` / `'key' !== …col`.
+  for (const m of code.matchAll(new RegExp(String.raw`'[^'\n]*'\s*(!|=)==?\s*${COL}`, 'g'))) {
+    note(quoted(m.index), target(m.index + m[0].length, m[1] === '!'));
+  }
+  return routes;
 }
 
 /**
@@ -397,9 +465,15 @@ function sourceFiles(dir) {
  * gate that reads only the first arm blesses the other one unseen. It is the same for a column two
  * SCREENS paint differently: the manifest has ONE `op`, so if the two boxes disagree about what
  * they need, one of them is lying to the user whichever screen he is on.
+ *
+ * `offered` is the same map restricted to the columns the table really draws a control for
+ * (`filterable: true`), with the implicit `text` box when no `filterType` is written, and keyed by
+ * the name the value reaches the runtime under — `f_<name>` (module-toolkit#382). A column the
+ * screen takes by hand (`sentAs: null`) is left out: its wire cannot be read.
  */
 function paintedBoxes(dir) {
   const painted = new Map();
+  const offered = new Map();
 
   for (const abs of sourceFiles(join(dir, 'ui'))) {
     let screens;
@@ -413,7 +487,17 @@ function paintedBoxes(dir) {
     const file = relative(dir, abs).split(sep).join('/');
     if (!painted.has(query)) painted.set(query, new Map());
     const forQuery = painted.get(query);
-    for (const { key, filterTypes } of columns) {
+    for (const { key, filterTypes, filterable, sentAs } of columns) {
+      if (filterable && sentAs != null) {
+        if (!offered.has(query)) offered.set(query, new Map());
+        const forOffer = offered.get(query);
+        if (!forOffer.has(sentAs)) forOffer.set(sentAs, []);
+        for (const filterType of filterTypes.length ? filterTypes : ['text']) {
+          if (!forOffer.get(sentAs).some((b) => b.filterType === filterType)) {
+            forOffer.get(sentAs).push({ filterType, screen: file, column: key });
+          }
+        }
+      }
       if (!forQuery.has(key)) forQuery.set(key, []);
       const boxes = forQuery.get(key);
       for (const filterType of filterTypes) {
@@ -422,7 +506,7 @@ function paintedBoxes(dir) {
       }
     }
   }
-  return painted;
+  return { painted, offered };
 }
 
 /** `column -> Set<declared type>` over every postgres migration this manifest declares. */
@@ -445,6 +529,44 @@ function moduleColumnTypes(dir, manifest) {
   return types;
 }
 
+/** Boxes whose value travels as a `{from, to}` pair — `f_<col>_from` / `f_<col>_to` on the wire. */
+const TWO_BOUNDS = new Set(['range', 'daterange']);
+
+/**
+ * Every `:name` bind the query's base SQL reads, inline or from its `.sql` file — the third source
+ * of `accepted_params` in the runtime. Comments and string bodies are not binds; a `::type` cast
+ * reads as a bind named after the type, which no box ever sends as `f_<col>`. An unreadable or multi-statement `sql` yields nothing: then only `list.filters` counts,
+ * which can only make this gate ask for a declaration, never let a refused box through.
+ */
+function sqlBinds(dir, value) {
+  const items = Array.isArray(value) ? value : value == null ? [] : [value];
+  const out = new Set();
+  for (const raw of items) {
+    if (typeof raw !== 'string') continue;
+    let sql = raw.trim();
+    if (/\.sql$/i.test(sql)) {
+      const path = isAbsolute(sql) ? sql : join(dir, sql);
+      try {
+        sql = readFileSync(path, 'utf8');
+      } catch {
+        continue; // a missing file is `validate`'s own finding
+      }
+    }
+    const code = sql
+      .replace(/--[^\n]*/g, ' ')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/'(?:[^']|'')*'/g, "''");
+    for (const m of code.matchAll(/:([A-Za-z_]\w*)/g)) out.add(m[1]);
+  }
+  return out;
+}
+
+/** The property names of a query's JSON Schema — the fourth source of `accepted_params`. */
+function schemaProperties(schema) {
+  const props = schema && typeof schema === 'object' ? schema.properties : null;
+  return props && typeof props === 'object' ? Object.keys(props) : [];
+}
+
 /**
  * The whole door: every filter of this manifest whose box does not mean what it looks like.
  * Returns `{ errors, warnings }` — the shape the other `erplora validate` checks use.
@@ -456,7 +578,7 @@ export function checkFilterOps(dir, manifest) {
   if (!moduleId) return { errors, warnings };
 
   const queries = manifest?.queries;
-  const painted = paintedBoxes(dir);
+  const { painted, offered } = paintedBoxes(dir);
   const types = moduleColumnTypes(dir, manifest);
 
   /** `query|column -> message`, so a filter is reported once however many rules see it. */
@@ -565,6 +687,45 @@ export function checkFilterOps(dir, manifest) {
               'valor ENTERO, así que teclear «Ana» no encuentra «Ana García» y la lista vuelve ' +
               "vacía sin error. Declárala `op: 'like'` (ADR-0125).",
           );
+        }
+      }
+    }
+  }
+
+  // ── 4 · every box a screen offers has to be a parameter the list ACCEPTS (module-toolkit#382) ─
+  // The rules above walk `list.filters`, so a box over a column the manifest never declared was
+  // never looked at. The SDK sends it anyway (`buildListParams` flattens every filter to `f_<col>`,
+  // or `f_<col>_from`/`_to` for two bounds) and the kernel refuses what the list does not accept —
+  // `422 unknown_filter` (hub#1182) — so the person types in the box and the list FAILS instead of
+  // filtering. «Accepts» is the runtime's own `accepted_params` (hub/crates/runtime/src/queries.rs):
+  // a declared filter, a bind of the base SQL, or a property of the query's schema.
+  if (queries && typeof queries === 'object') {
+    for (const [query, columns] of offered) {
+      // Not declared (the contracts gate's finding), or not a paged list: not this rule's to judge.
+      const spec = queries[query];
+      const list = spec?.list;
+      if (!list || typeof list !== 'object') continue;
+      const filters = list.filters && typeof list.filters === 'object' ? list.filters : {};
+      let extra = null; // binds + schema properties, read only when a box needs them
+      for (const [column, boxes] of columns) {
+        if (Object.hasOwn(filters, column)) continue; // declared: rules 1-3 judge its op
+        extra ??= new Set([...sqlBinds(dir, spec.sql), ...schemaProperties(spec.schema)]);
+        for (const box of boxes) {
+          const wire = TWO_BOUNDS.has(box.filterType) ? [`f_${column}_from`, `f_${column}_to`] : [`f_${column}`];
+          const refused = wire.filter((name) => !extra.has(name));
+          if (refused.length === 0) continue;
+          const renamed = box.column === column ? '' : ` (la pantalla lo manda como \`${column}\`)`;
+          report(
+            query,
+            column,
+            `${box.screen} ofrece un filtro sobre \`${box.column}\`${renamed} (\`filterable: true\`, caja ` +
+              `\`${box.filterType}\`), pero \`${query}\` no lo admite: no está en \`list.filters\` y la ` +
+              `lista no acepta ${refused.map((n) => `\`${n}\``).join(' ni ')}. En el hub la persona ` +
+              'teclea en esa caja y la lista, en vez de filtrar, falla con `422 unknown_filter`. O ' +
+              `declara \`list.filters.${column}\` con el \`op\` de su caja (ADR-0125), o quita ` +
+              '`filterable` de la columna (module-toolkit#382).',
+          );
+          break;
         }
       }
     }

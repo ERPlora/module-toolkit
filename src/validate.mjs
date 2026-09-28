@@ -310,11 +310,14 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
   // FALSOS POSITIVOS. Trinquete: los 40 filtros ya publicados que incumplían avisan
   // (`FILTER_OPS_GRANDFATHERED`, ERPlora/pm#244; `reservations` arregló sus 6 en reservations#46,
   // quedan 34) y la lista solo encoge — un test le fija el techo; uno nuevo es error.
+  // module-toolkit#382: y toda caja que la tabla OFRECE (`filterable: true`) tiene que ser un
+  // parámetro que la lista admite — si no, el kernel responde `422 unknown_filter` al teclear.
   const filterOps = checkFilterOps(dir, manifest);
   for (const w of filterOps.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (filterOps.errors.length) {
     throw new Error(
-      'la caja de filtro no significa lo que parece (ADR-0125, module-toolkit#183):\n  - ' +
+      'la caja de filtro no significa lo que parece o su lista no la admite (ADR-0125, ' +
+        'module-toolkit#183, module-toolkit#382):\n  - ' +
         filterOps.errors.join('\n  - '),
     );
   }
