@@ -17,6 +17,9 @@ export interface ErploraTransport {
 export interface MediaFetchOptions {
     signal?: AbortSignal;
 }
+export interface CommandOptions {
+    resolvesOutcome?: boolean;
+}
 export interface Notification {
     type: 'success' | 'error' | 'info' | 'warning';
     message: string;
@@ -501,8 +504,8 @@ export declare class ErploraClient {
     queryPage<T = unknown>(name: string, params?: ListParams): Promise<Page<T>>;
     queryAll<T = unknown>(name: string, params?: ListParams): Promise<T[]>;
     queryAllOptional<T = unknown>(name: string, params?: ListParams): Promise<T[] | undefined>;
-    command<T = unknown>(name: string, payload?: Record<string, unknown>): Promise<T>;
-    commandOptional<T = unknown>(name: string, payload?: Record<string, unknown>): Promise<T | undefined>;
+    command<T = unknown>(name: string, payload?: Record<string, unknown>, opts?: CommandOptions): Promise<T>;
+    commandOptional<T = unknown>(name: string, payload?: Record<string, unknown>, opts?: CommandOptions): Promise<T | undefined>;
     on(event: string, cb: (payload: unknown) => void): () => void;
     onEvent(event: string, cb: (payload: unknown, meta: EventMeta) => void): () => void;
     hasPermission(perm: string): boolean;
