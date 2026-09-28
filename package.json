@@ -20,6 +20,10 @@
       "types": "./src/money-display-guard.d.mts",
       "default": "./src/money-display-guard.mjs"
     },
+    "./money-input": {
+      "types": "./src/money-input.d.mts",
+      "default": "./src/money-input.mjs"
+    },
     "./package.json": "./package.json",
     "./*": "./*"
   },
