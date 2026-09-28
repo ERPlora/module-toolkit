@@ -11,13 +11,18 @@ What it asserts is deliberately made of things a scratch-Postgres emulation cann
   · `:new_id` and `:hub_id` are injected BY THE RUNTIME (`system_params`) — the SQL never receives
     them from the payload, and a hand-written harness that binds them itself proves nothing;
   · a `BIGINT` comes back over HTTP as a JSON **string**, because that is what the runtime does;
-  · rows are scoped by `hub_id`: the same query under another `X-Hub-Id` sees NOTHING.
+  · rows are scoped by `hub_id`: the same query under another `X-Hub-Id` sees NOTHING;
+  · `ERPLORA_HUB_PSQL` opens THE database the runtime writes to: the rows the commands just wrote
+    are read back through it (module-toolkit#405). The hub's own runner hands over the same
+    variable, so a battery that needs SQL never has to guess where the database is.
 
 It refuses to skip. Without a hub it FAILS, because a battery that excuses itself is the green that
 proves nothing this whole toolkit exists to remove.
 """
 import json
 import os
+import shlex
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -79,6 +84,32 @@ status, body = call(
 )
 if status == 200:
     failures.append(f"el runtime ACEPTÓ un payload que su schema prohíbe: {body}")
+
+# 5 · the SQL session the harness hands over is the database the runtime WROTE TO: the two rows
+#     step 1 created through `/api/command` are there, under the runtime's own `hub_id`.
+psql = shlex.split(os.environ.get("ERPLORA_HUB_PSQL", ""))
+if not psql:
+    failures.append("ERPLORA_HUB_PSQL vacía: el arnés no entregó la sesión SQL de la BD del hub")
+else:
+    hub_literal = HUB.replace("'", "''")
+    read = subprocess.run(
+        psql
+        + [
+            "-tAc",
+            "SELECT string_agg(name, ',' ORDER BY name COLLATE \"C\") FROM kernel_fixture_item "
+            f"WHERE hub_id = '{hub_literal}' AND deleted_at IS NULL",
+        ],
+        capture_output=True,
+        text=True,
+        stdin=subprocess.DEVNULL,
+    )
+    if read.returncode != 0:
+        failures.append(f"ERPLORA_HUB_PSQL no abre la BD del hub (exit {read.returncode}): {read.stderr.strip()}")
+    elif read.stdout.strip() != "cortado,espresso":
+        failures.append(
+            "ERPLORA_HUB_PSQL no apunta a la BD donde escribe el hub: esperaba 'cortado,espresso' "
+            f"bajo {HUB!r}, leyó {read.stdout.strip()!r}"
+        )
 
 if failures:
     print(f"✗ totals.hub: {len(failures)} fallo(s)")

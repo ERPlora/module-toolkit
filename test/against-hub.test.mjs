@@ -35,6 +35,7 @@ import {
   DEFAULT_CHANNEL,
   HUB_IMAGE_REPO,
   hubBatteryVars,
+  hubPsqlCommand,
   installPlan,
   parseAgainstHub,
   pullDeniedByAuth,
@@ -131,6 +132,42 @@ test('hubBatteryVars: la puerta genérica y la derivada del id del módulo', () 
   assert.equal(vars.SALES_HUB_BASE_URL, 'http://127.0.0.1:54321');
   assert.equal(vars.ERPLORA_HUB_ID, 'local');
   assert.equal(vars.ERPLORA_HUB_IMAGE, 'ghcr.io/erplora/hub:stable');
+});
+
+// module-toolkit#405: a battery that has to hold a transaction open in the hub's database (the
+// voucher race of services#130) used to GUESS where that database was — `docker ps` for the
+// container publishing the hub's port, which exists under `--against-hub` and not in the hub's CI.
+// Both harnesses now hand it over under ONE name: `ERPLORA_HUB_PSQL`.
+test('hubBatteryVars: ERPLORA_HUB_PSQL lleva la sesión SQL del hub, y vacía si nadie la dio', () => {
+  const psql = 'docker exec -i erplora-ah-pg-x psql -U postgres -v ON_ERROR_STOP=1 -d postgres';
+  assert.equal(hubBatteryVars('sales', { baseUrl: 'http://h', psql }).ERPLORA_HUB_PSQL, psql);
+  // Present and EMPTY, never absent: a battery reads «no SQL session here» and fails loudly
+  // instead of falling back to a guess.
+  const without = hubBatteryVars('sales', { baseUrl: 'http://h' });
+  assert.ok(Object.hasOwn(without, 'ERPLORA_HUB_PSQL'), 'la variable tiene que existir siempre');
+  assert.equal(without.ERPLORA_HUB_PSQL, '');
+});
+
+// The SAME shape the hub's runner builds (`scripts/ci/run-module-hub-batteries.sh`): its default
+// admin command `docker exec -i <pg> psql -U <user> -v ON_ERROR_STOP=1` plus `-d <scratch db>`. A
+// battery splits it on whitespace and appends its own psql flags (`-tAc <sql>`, or stdin).
+test('hubPsqlCommand: docker exec -i <contenedor> psql -U <usuario> -v ON_ERROR_STOP=1 -d <bd>', () => {
+  assert.equal(
+    hubPsqlCommand({ container: 'erplora-ah-pg-demo-1', database: 'postgres' }),
+    'docker exec -i erplora-ah-pg-demo-1 psql -U postgres -v ON_ERROR_STOP=1 -d postgres',
+  );
+  assert.equal(
+    hubPsqlCommand({ container: 'pg', user: 'erplora', database: 'hubbat_sales_1' }),
+    'docker exec -i pg psql -U erplora -v ON_ERROR_STOP=1 -d hubbat_sales_1',
+  );
+  // `-i` is not decoration: without it `docker exec` drops stdin and a psql session fed a
+  // `BEGIN; …` script (the open transaction of a race battery) never receives a line.
+  assert.match(hubPsqlCommand({ container: 'pg', database: 'd' }), /^docker exec -i /);
+});
+
+test('hubPsqlCommand: sin contenedor o sin base de datos NO devuelve un comando a medias', () => {
+  assert.throws(() => hubPsqlCommand({ database: 'postgres' }), /contenedor/);
+  assert.throws(() => hubPsqlCommand({ container: 'pg' }), /base de datos/);
 });
 
 // ── the readiness wait ───────────────────────────────────────────────────────────────
@@ -400,6 +437,36 @@ test('withHubRuntime: el hub llega a su Postgres por LOOPBACK (el runtime exige 
   );
 });
 
+// module-toolkit#405: the SQL session handed to the battery is the database THE HUB WRITES TO —
+// the Postgres container of this run and the database named in the hub's own HUB_DATABASE_URL,
+// derived from the same docker calls, never from a second guess.
+test('withHubRuntime: entrega la sesión SQL de la BD donde escribe ESTE hub (live.psql)', async () => {
+  const clock = fakeClock();
+  const { exec, calls } = fakeDocker({ ...OK_DOCKER });
+  let seen = null;
+  await withHubRuntime(
+    {
+      dir: '/tmp/demo',
+      manifest: MODULE,
+      image: `${HUB_IMAGE_REPO}:stable`,
+      exec,
+      probe: async () => ({ ok: true, detail: 'UP' }),
+      install: async () => {},
+      hubContext: FAKE_CONTEXT,
+      ...clock,
+    },
+    async (live) => { seen = live; },
+  );
+  const runPg = calls.find((c) => c.startsWith('docker run') && c.includes('--name erplora-ah-pg-'));
+  const pg = runPg.match(/--name (erplora-ah-pg-\S+)/)[1];
+  const runHub = calls.find((c) => c.startsWith('docker run') && c.includes(HUB_IMAGE_REPO));
+  const hubDb = new URL(runHub.match(/HUB_DATABASE_URL=(\S+)/)[1]);
+  assert.equal(
+    seen.psql,
+    hubPsqlCommand({ container: pg, user: decodeURIComponent(hubDb.username), database: hubDb.pathname.slice(1) }),
+  );
+});
+
 // ── the new battery family ───────────────────────────────────────────────────────────
 
 /** A throwaway module: `{ relative path → contents }`. */
@@ -470,6 +537,24 @@ test('runBatteries: sin `--against-hub` una batería de hub NO se corre y se DIC
     assert.equal(notRun.length, 1);
     assert.match(notRun[0], /totals\.hub\.test\.py/);
     assert.match(notRun[0], /--against-hub/);
+  } finally {
+    m.clean();
+  }
+});
+
+test('runBatteries: la batería recibe ERPLORA_HUB_PSQL del runtime vivo (module-toolkit#405)', () => {
+  const psql = 'docker exec -i erplora-ah-pg-demo psql -U postgres -v ON_ERROR_STOP=1 -d postgres';
+  const m = mod({
+    'tests/totals.hub.test.py':
+      `import os, sys\nsys.exit(0 if os.environ.get("ERPLORA_HUB_PSQL") == ${JSON.stringify(psql)} else 3)\n`,
+  });
+  try {
+    const { results, errors } = runBatteries(m.dir, m.manifest, {
+      container: null,
+      hub: { baseUrl: 'http://127.0.0.1:54321', hubId: 'local', image: 'ghcr.io/erplora/hub:stable', psql },
+    });
+    assert.deepEqual(errors, []);
+    assert.equal(results[0].ran, true, results[0].output);
   } finally {
     m.clean();
   }

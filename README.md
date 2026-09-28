@@ -941,6 +941,38 @@ por el mismo motivo medido en module-toolkit#55. Recibe por entorno:
 | `ERPLORA_HUB_BASE_URL` / `<ID>_HUB_BASE_URL` | la url del runtime vivo |
 | `ERPLORA_HUB_ID` | el `hub_id` del runtime (`GET /api/hub/context`), bajo el que están sus seeds |
 | `ERPLORA_HUB_IMAGE` | la referencia exacta contra la que se está probando |
+| `ERPLORA_HUB_PSQL` | una sesión `psql` en la **base de datos donde escribe ese hub** (module-toolkit#405); vacía si el arnés no la da |
+
+**`ERPLORA_HUB_PSQL`, el contrato SQL de la familia `hub`.** Una batería que necesita tocar la BD
+del hub por debajo de la API —dejar una transacción abierta para probar una carrera entre dos cajas
+(`services/tests/grant_race.hub.test.py`), o leer lo que un comando dejó escrito— **no la adivina**:
+la recibe. Es un comando de palabras separadas por espacios, sin comillas, al que la batería le
+añade sus propias opciones de `psql`:
+
+```python
+import os, shlex, subprocess, sys
+psql = shlex.split(os.environ.get("ERPLORA_HUB_PSQL", ""))
+if not psql:
+    sys.exit("ERPLORA_HUB_PSQL vacía: sin sesión SQL del hub esto es un fallo, no un skip")
+subprocess.run(psql + ["-tAc", "SELECT count(*) FROM …"], stdin=subprocess.DEVNULL, …)
+# o una sesión con una transacción abierta: Popen(psql, stdin=PIPE) y «BEGIN; …» por stdin
+```
+
+Los **dos** arneses que corren baterías contra un hub vivo la ponen con el mismo nombre y la misma
+forma, `docker exec -i <contenedor> psql -U <usuario> -v ON_ERROR_STOP=1 -d <bd>`:
+
+| Arnés | Contenedor | Base de datos |
+|---|---|---|
+| `erplora test --against-hub` | el Postgres efímero de la corrida (`erplora-ah-pg-*`) | `postgres`, la del `HUB_DATABASE_URL` del hub |
+| el corredor del hub (`scripts/ci/run-module-hub-batteries.sh`, CI del hub) | el contenedor de servicio del job (`--pg-container`) | la scratch de ese módulo (`hubbat_<módulo>_<sello>`) |
+
+Por qué no vale buscarla con `docker ps`: bajo `--against-hub` el puerto del hub lo publica su
+Postgres, pero la CI del hub arranca un `erplora-server` **nativo** sobre una BD scratch y ningún
+contenedor publica ese puerto — la batería de carrera de bonos devolvió `found []` y dejó en rojo un
+lote develop→main del hub sin que el módulo tuviera ningún fallo (services#130). El fixture de
+referencia lo comprueba contra el kernel real: lee con `ERPLORA_HUB_PSQL` las filas que acaba de
+escribir por `/api/command`, bajo el `hub_id` del runtime (con otra BD, o con la variable vacía,
+falla).
 
 🔴 **Sin `--against-hub`, una batería de esta familia sale como «sin correr», con su motivo — nunca
 como verde.** Es la misma regla que las de Postgres sin contenedor: contarla por buena sería
@@ -954,7 +986,8 @@ en verde; antes de module-toolkit#135 `inventory` moría en `missing_dependency`
 (`test/fixtures/against-hub/kernel_fixture`) está hecho a propósito de cosas que solo el kernel
 enseña: `:new_id`/`:hub_id` los inyecta el runtime y no el payload; un `BIGINT` vuelve por HTTP como
 **string** JSON; la misma query bajo otro `X-Hub-Id` no ve **nada**; y un payload que rompe su
-propio JSON Schema lo rechaza el runtime, no el test.
+propio JSON Schema lo rechaza el runtime, no el test; y `ERPLORA_HUB_PSQL` abre la BD donde el
+runtime acaba de escribir.
 
 **Todavía NO está enganchado al gate compartido**, y se dice en voz alta: `module-gate.yml` corre en
 los 27 repos de módulo, que son **privados**, y en el plan Free los secretos de organización no
