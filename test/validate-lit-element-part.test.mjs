@@ -88,6 +88,29 @@ test('a brace inside a string or a nested template of an earlier binding does no
   assert.equal(strayElementParts(src2).length, 1, src2);
 });
 
+test('the reader keeps its place across what would derail a naive tokenizer, so the stray part is still found', () => {
+  const stray = [
+    // an escaped quote inside a string of an earlier binding
+    "html`<ion-button title=${'it\\'s'} @click=${f}\n  ${label}</ion-button>`",
+    // an escaped backtick inside a nested template of an earlier binding
+    'html`<ion-button .body=${html`<i>\\`</i>`} @click=${f}\n  ${label}</ion-button>`',
+    // a handler with nested blocks and a `>` comparison: the expression ends at its OWN `}`
+    'html`<ion-button @click=${() => { if (x) { a(); } return b > c; }}\n  ${label}</ion-button>`',
+    // an apostrophe in stray text is not the start of a quoted attribute value
+    "html`<ion-button @click=${f}\n  It's ${label}</ion-button>`",
+  ];
+  for (const src of stray) assert.equal(strayElementParts(src).length, 1, src);
+});
+
+test('only an expression that IS an element directive is allowed, not one that merely calls something named like it', () => {
+  assert.equal(strayElementParts('html`<a @click=${f} ${this.href(x)}</a>`').length, 1);
+  assert.equal(strayElementParts('html`<div @click=${f} ${this.t(ref(x))}</div>`').length, 1);
+});
+
+test('a tag quoted in a JSDoc line starting with `*` is not read as a tag', () => {
+  assert.deepEqual(strayElementParts('/**\n * e.g. <ion-button ${label}\n */\nconst t = 1;'), []);
+});
+
 // ── What Lit DOES accept there, and every binding that is not in element position ──────────────
 
 test('the element directives Lit binds in that position are allowed', () => {

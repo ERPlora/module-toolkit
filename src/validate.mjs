@@ -474,9 +474,9 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
     );
   }
 
-  // module-toolkit#398: una etiqueta de apertura sin su `>` deja el `${texto}` en posición de parte de
-  // elemento y Lit lo IGNORA en silencio: el botón sale vacío. Pasó con «Guardar» del editor de flows
-  // (flows#144) y ningún gate lo vio. Cero casos en los 27 módulos al añadirla: sin lista de tolerados.
+  // module-toolkit#398: an opening tag without its `>` leaves the `${label}` in element-part position
+  // and Lit IGNORES it silently: the button ships empty. It happened to the flows editor's «Save»
+  // (flows#144) and no gate saw it. Zero cases in the 27 modules when added: no grandfather list.
   const litElementParts = checkLitElementParts(dir);
   if (litElementParts.errors.length) {
     throw new Error(
