@@ -44,7 +44,7 @@ test('a lone separator followed by exactly three digits is refused, with its two
     code: 'ambiguous_amount',
     readings: { grouped: 125000, decimal: 125 },
   });
-  assert.deepEqual(parseMoneyInput('2,500 €', 2), {
+  assert.deepEqual(parseMoneyInput('2,500 €', 2, { currency: 'EUR', locale: 'es' }), {
     ok: false,
     code: 'ambiguous_amount',
     readings: { grouped: 250000, decimal: 250 },
@@ -87,20 +87,62 @@ test('the same separator repeated is grouping, and grouping comes in threes (or 
 });
 
 test('currency symbols, codes, spaces, NBSP, NNBSP, thin space and apostrophes are cleaned away', () => {
-  assert.deepEqual(parseMoneyInput('1.250,50 €', 2), ok(125050));
-  assert.deepEqual(parseMoneyInput('€1,250.50', 2), ok(125050));
-  assert.deepEqual(parseMoneyInput('EUR 1.250,50', 2), ok(125050));
-  assert.deepEqual(parseMoneyInput('1 250,50 €', 2), ok(125050), 'NBSP');
-  assert.deepEqual(parseMoneyInput('1 250,50 €', 2), ok(125050), 'NNBSP (fr, odoo#106534)');
-  assert.deepEqual(parseMoneyInput('1 250,50', 2), ok(125050), 'thin space');
-  assert.deepEqual(parseMoneyInput("CHF 1'250.50", 2), ok(125050));
-  assert.deepEqual(parseMoneyInput('CHF 1’250.50', 2), ok(125050), 'de-CH right single quote');
-  assert.deepEqual(parseMoneyInput('Fr. 12.50', 2), ok(1250), 'a dot inside the currency is not a separator');
+  const eurEs = { currency: 'EUR', locale: 'es' };
+  assert.deepEqual(parseMoneyInput('1.250,50 €', 2, eurEs), ok(125050));
+  assert.deepEqual(parseMoneyInput('€1,250.50', 2, { currency: 'EUR', locale: 'en' }), ok(125050));
+  assert.deepEqual(parseMoneyInput('EUR 1.250,50', 2, eurEs), ok(125050));
+  assert.deepEqual(parseMoneyInput('1 250,50 €', 2, eurEs), ok(125050), 'NBSP');
+  assert.deepEqual(parseMoneyInput('1 250,50 €', 2, { currency: 'EUR', locale: 'fr' }), ok(125050), 'NNBSP (fr, odoo#106534)');
+  assert.deepEqual(parseMoneyInput('1 250,50', 2), ok(125050), 'thin space');
+  assert.deepEqual(parseMoneyInput("CHF 1'250.50", 2, { currency: 'CHF', locale: 'de-CH' }), ok(125050));
+  assert.deepEqual(parseMoneyInput('CHF 1’250.50', 2, { currency: 'CHF', locale: 'de-CH' }), ok(125050), 'de-CH right single quote');
+  assert.deepEqual(parseMoneyInput('kr. 12,50', 2, { currency: 'DKK', locale: 'da' }), ok(1250), 'a dot inside the currency is not a separator');
+});
+
+// ERPlora/module-toolkit#396: «1.5k» was saved as 1,50 and «12abc» as 12 — the letters were cleaned
+// away as if they were the currency. Like Odoo's monetary field, only THIS hub's currency is cleaned
+// (what the screen prints in the hub's language, its narrow symbol and its ISO code) plus the
+// universal currency signs (\p{Sc}); any other letter is an error the screen shows, never a number.
+test('letters glued to the amount are refused unless they are the hub currency (module-toolkit#396)', () => {
+  const eurEs = { currency: 'EUR', locale: 'es' };
+  for (const junk of ['1.5k', '2M', '12abc', 'hola 1.250,50', '12 euros', 'EURO 12', '12 kr', 'CHF 12', 'Fr. 12.50', 'k12']) {
+    assert.deepEqual(parseMoneyInput(junk, 2, eurEs), { ok: false, code: 'not_an_amount' }, `EUR «${junk}»`);
+  }
+  for (const junk of ['1.5k', '12abc', 'EUR 12', '12 kr']) {
+    assert.deepEqual(parseMoneyInput(junk, 2), { ok: false, code: 'not_an_amount' }, `no currency given: «${junk}»`);
+  }
+  assert.deepEqual(parseMoneyInput('12 kr', 2, { currency: 'SEK', locale: 'sv' }), ok(1200), 'kr IS the SEK of a Swedish hub');
+  assert.deepEqual(parseMoneyInput('12 kr', 2, { currency: 'SEK', locale: 'es' }), ok(1200), 'the narrow symbol counts too');
+  assert.deepEqual(parseMoneyInput('SEK 12', 2, { currency: 'SEK', locale: 'sv' }), ok(1200), 'the ISO code always counts');
+  assert.deepEqual(parseMoneyInput('eur 12', 2, eurEs), ok(1200), 'the code, whatever its case');
+  assert.deepEqual(parseMoneyInput('US$ 12.50', 2, { currency: 'USD', locale: 'es' }), ok(1250));
+  assert.deepEqual(parseMoneyInput('R$ 12,50', 2, { currency: 'BRL', locale: 'pt-BR' }), ok(1250));
+  assert.deepEqual(parseMoneyInput('-S/ 12.50', 2, { currency: 'PEN', locale: 'es-PE' }), ok(-1250));
+  assert.deepEqual(parseMoneyInput('k12r', 2, { currency: 'SEK', locale: 'sv' }), { ok: false, code: 'not_an_amount' }, 'the words do not join across the digits');
+  assert.deepEqual(parseMoneyInput('ksekr 12', 2, { currency: 'SEK', locale: 'sv' }), { ok: false, code: 'not_an_amount' }, 'nor around a word taken out');
+  assert.deepEqual(parseMoneyInput('12 абв', 2, { currency: 'EUR', locale: 'es' }), { ok: false, code: 'not_an_amount' }, 'letters of any script');
+  assert.deepEqual(parseMoneyInput('12 د.ك.', 2, { currency: 'EUR', locale: 'es' }), { ok: false, code: 'not_an_amount' }, 'the KWD of an Arabic hub is not EUR');
+  assert.deepEqual(parseMoneyInput('12,50 PLN', 2, { currency: 'PLN' }), ok(1250), 'no locale → en');
+  assert.deepEqual(parseMoneyInput('12,50 zł', 2, { currency: 'PLN' }), ok(1250), 'en prints zł as the narrow symbol');
+  assert.deepEqual(parseMoneyInput('12,50 zł', 2, { currency: 'EUR' }), { ok: false, code: 'not_an_amount' }, 'but not for EUR');
+});
+
+test('the universal currency signs are cleaned with or without a currency', () => {
+  for (const [typed, minor] of [['12 €', 1200], ['$12', 1200], ['£12.50', 1250], ['-¥1250', -125000]]) {
+    assert.deepEqual(parseMoneyInput(typed, 2), ok(minor), `«${typed}»`);
+  }
+  assert.deepEqual(parseMoneyInput('12 €', 2, { currency: 'EUR', locale: 'es' }), ok(1200));
+});
+
+test('a currency that is not an ISO code is a programming error, not a silent pass', () => {
+  for (const bad of ['EURO', 'eu', 12, '']) {
+    assert.throws(() => parseMoneyInput('12', 2, { currency: bad }), /money_input_currency_invalid/, String(bad));
+  }
 });
 
 test('the sign is kept: hyphen-minus and the Unicode minus Intl prints', () => {
   assert.deepEqual(parseMoneyInput('-1.250,50', 2), ok(-125050));
-  assert.deepEqual(parseMoneyInput('−1 250,50 kr', 2), ok(-125050), 'sv minus sign');
+  assert.deepEqual(parseMoneyInput('−1 250,50 kr', 2, { currency: 'SEK', locale: 'sv' }), ok(-125050), 'sv minus sign');
   assert.deepEqual(parseMoneyInput('-€12.50', 2), ok(-1250));
   assert.deepEqual(parseMoneyInput('-0', 2), ok(0));
   assert.ok(!Object.is(parseMoneyInput('-0', 2).minor, -0), 'no negative zero');
@@ -169,6 +211,12 @@ test('every amount formatMoney prints reads back to the same minor units', () =>
     ['de-DE', 'EUR', 2, 1250.5],
     ['de-CH', 'CHF', 2, 1250.5],
     ['sv-SE', 'SEK', 2, -1250.5],
+    ['da-DK', 'DKK', 2, 1250.5],
+    ['en-SE', 'SEK', 2, 1250.5],
+    ['es-ES', 'USD', 2, 1250.5],
+    ['pt-BR', 'BRL', 2, -1250.5],
+    ['es-PE', 'PEN', 2, 1250.5],
+    ['pl-PL', 'PLN', 2, 1250.5],
     ['en-IN', 'INR', 2, 125050.5],
     ['ja-JP', 'JPY', 0, 1250],
     ['en-US', 'KWD', 3, 1250.5],
@@ -176,7 +224,7 @@ test('every amount formatMoney prints reads back to the same minor units', () =>
   ];
   for (const [locale, currency, d, major] of cases) {
     const printed = screen(locale, currency, major);
-    assert.deepEqual(parseMoneyInput(printed, d), ok(Math.round(major * 10 ** d)), `${locale} ${currency} «${printed}»`);
+    assert.deepEqual(parseMoneyInput(printed, d, { currency, locale }), ok(Math.round(major * 10 ** d)), `${locale} ${currency} «${printed}»`);
   }
 });
 
@@ -210,6 +258,11 @@ test('normaliseMoneyInput rewrites what it can read and leaves the rest EXACTLY 
   assert.equal(normaliseMoneyInput('1.250', 2, 'es'), '1.250', 'ambiguous: no reading is picked');
   assert.equal(normaliseMoneyInput('abc', 2, 'es'), 'abc', 'garbage: what they wrote is not thrown away');
   assert.equal(normaliseMoneyInput('  ', 2, 'es'), '  ', 'empty stays empty, not 0,00');
+  assert.equal(normaliseMoneyInput('EUR 12', 2, 'es', 'EUR'), '12,00', 'the hub currency is cleaned');
+  assert.equal(normaliseMoneyInput('12 kr', 2, 'sv', 'SEK'), '12,00', 'with the hub locale');
+  assert.equal(normaliseMoneyInput('US$ 12', 2, 'es', 'USD'), '12,00', 'what the hub locale prints (en prints $)');
+  assert.equal(normaliseMoneyInput('1.5k', 2, 'es', 'EUR'), '1.5k', 'letters: left as typed, never 1,50');
+  assert.equal(normaliseMoneyInput('12 kr', 2, 'es', 'EUR'), '12 kr', 'another currency: left as typed');
 });
 
 test('the package exports it as `@erplora/module-toolkit/money-input`, typed', async () => {
@@ -223,4 +276,6 @@ test('the package exports it as `@erplora/module-toolkit/money-input`, typed', a
   const dts = readFileSync(new URL('src/money-input.d.mts', repo), 'utf8');
   for (const name of Object.keys(viaPackage)) assert.match(dts, new RegExp(`export (declare )?function ${name}\\b`), name);
   for (const code of ['not_an_amount', 'ambiguous_amount']) assert.match(dts, new RegExp(`'${code}'`), code);
+  assert.match(dts, /parseMoneyInput\(typed: unknown, decimals: number, options\?: MoneyInputOptions\)/, 'the currency option is typed');
+  assert.match(dts, /normaliseMoneyInput\(typed: string, decimals: number, locale\?: string, currency\?: string\)/);
 });
