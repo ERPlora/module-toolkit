@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { resolvePinned } from '../src/resolve-plugin.mjs';
 
 const scratch = mkdtempSync(join(tmpdir(), 'erplora-resolve-'));
@@ -103,4 +104,49 @@ test('a handed-over directory without the SDK is an error, not a fallback to the
   const res = await resolveWith(empty, '@erplora/module-sdk');
   assert.equal(res.path, undefined, `it resolved ${res.path} although the SDK it was told to use is not there`);
   assert.equal(res.errors?.length, 1);
+});
+
+// A module's UI imports the toolkit's own runtime pieces (`@erplora/module-toolkit/money-input`,
+// ERPlora/combos#9). The module gate builds BEFORE it links the toolkit into the module's
+// node_modules, and a vendor's module may not have it linked at all — so the build has to resolve
+// them from the toolkit that is building, the same way it pins lit and the SDK. Two versions of the
+// piece (the one a test imported, another the bundle baked) is what this avoids.
+
+/** The `onResolve` registration itself: its filter and its callback. */
+async function registration(sdkDir) {
+  const { erploraResolvePlugin } = await import('../src/resolve-plugin.mjs');
+  let filter;
+  let callback;
+  erploraResolvePlugin({ sdkDir }).setup({ onResolve: (opts, cb) => { filter = opts.filter; callback = cb; } });
+  return { filter, callback };
+}
+
+const TOOLKIT_SRC = join(fileURLToPath(new URL('..', import.meta.url)), 'src');
+
+test('the toolkit\'s runtime pieces are pinned to the toolkit that builds (combos#9)', async () => {
+  const { filter, callback } = await registration(undefined);
+  assert.ok(filter.test('@erplora/module-toolkit/money-input'), 'the plugin does not intercept the toolkit');
+  assert.equal(callback({ path: '@erplora/module-toolkit/money-input' }).path, join(TOOLKIT_SRC, 'money-input.mjs'));
+});
+
+test('a handed-over SDK does not redirect the toolkit\'s own pieces', async () => {
+  const sdk = join(vendorRoot('handed-over-toolkit'), 'module-sdk');
+  const { callback } = await registration(sdk);
+  assert.equal(callback({ path: '@erplora/module-toolkit/money-input' }).path, join(TOOLKIT_SRC, 'money-input.mjs'));
+});
+
+// Only the pieces written to run in a browser: `money-display-guard` reads the module's files with
+// `node:fs`, and the package's `./*` export would otherwise hand a bundle the whole CLI.
+test('only the toolkit\'s RUNTIME pieces can be bundled: a test guard or a CLI file is an error', async () => {
+  const { callback } = await registration(undefined);
+  for (const spec of [
+    '@erplora/module-toolkit/money-display-guard',
+    '@erplora/module-toolkit/src/validate.mjs',
+    '@erplora/module-toolkit/no-such-piece',
+    '@erplora/module-toolkit',
+  ]) {
+    const res = callback({ path: spec });
+    assert.equal(res.path, undefined, `${spec} resolved to ${res.path}`);
+    assert.equal(res.errors?.length, 1, spec);
+  }
 });

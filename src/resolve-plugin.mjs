@@ -62,7 +62,27 @@ export function resolvePinned(spec, { resolve = defaultResolve, vendorRoot = VEN
 // `import.meta.resolve(spec)` (Node ≥20, estable y síncrono) resuelve relativo a ESTE módulo,
 // que vive en el toolkit → cae en `module-toolkit/node_modules`. Honra el "exports" map
 // (subpaths de lit y de outfitkit: `/define`, `/ok-data-table`, `/directives/*`).
-const PINNED = /^(lit($|\/)|@lit\/|@erplora\/(outfitkit|module-sdk|module-types)($|\/))/;
+const PINNED = /^(lit($|\/)|@lit\/|@erplora\/(outfitkit|module-sdk|module-types|module-toolkit)($|\/))/;
+
+// The toolkit's own pieces a module's UI may BUNDLE (ERPlora/combos#9). An allowlist, not the
+// package's `./*` export: `money-display-guard` reads files with `node:fs` and belongs to tests,
+// and the rest of `src/` is the CLI. They resolve from the toolkit that is building — the module
+// gate builds before it links the toolkit into the module, and a vendor's repo may never link it.
+const TOOLKIT = /^@erplora\/module-toolkit($|\/(.*))/;
+const RUNTIME_PIECES = new Map([['money-input', '../src/money-input.mjs']]);
+
+/** The file a `@erplora/module-toolkit/<piece>` import bakes. Throws for anything not a runtime piece. */
+function toolkitPiece(spec) {
+  const piece = TOOLKIT.exec(spec)[2];
+  const file = RUNTIME_PIECES.get(piece);
+  if (!file) {
+    throw new Error(
+      `'${spec}' is not a runtime piece of the toolkit; a module's UI can import: ` +
+        [...RUNTIME_PIECES.keys()].map((p) => `@erplora/module-toolkit/${p}`).join(', '),
+    );
+  }
+  return fileURLToPath(new URL(file, import.meta.url));
+}
 
 /**
  * The file a hub package specifier builds from inside a GIVEN `packages/module-sdk` directory (its
@@ -88,6 +108,13 @@ export function erploraResolvePlugin({ sdkDir } = {}) {
     name: 'erplora-resolve',
     setup(build) {
       build.onResolve({ filter: PINNED }, (args) => {
+        if (TOOLKIT.test(args.path)) {
+          try {
+            return { path: toolkitPiece(args.path) };
+          } catch (err) {
+            return { errors: [{ text: err.message }] };
+          }
+        }
         try {
           if (sdkDir && VENDORED.test(args.path)) return { path: fromSdkDir(args.path, sdkDir) };
           return { path: resolvePinned(args.path) };
