@@ -122,9 +122,9 @@ test('listScreens: pairs the query a component drives with the columns it paints
     {
       query: 'demo.items.list',
       columns: [
-        { key: 'name', filterTypes: ['text'] },
-        { key: 'status', filterTypes: ['select'] },
-        { key: 'other', filterTypes: [] },
+        { key: 'name', filterTypes: ['text'], filterable: false, sentAs: 'name' },
+        { key: 'status', filterTypes: ['select'], filterable: false, sentAs: 'status' },
+        { key: 'other', filterTypes: [], filterable: false, sentAs: 'other' },
       ],
     },
   ]);
@@ -135,12 +135,14 @@ test('listScreens: a column that can paint TWO boxes reports BOTH, not the first
   // `...(x ? { filterType: 'select' } : { filterType: 'text' })` used to read as a dropdown and the
   // text branch — the one the user actually gets when the catalogue did not load — was invisible.
   const [{ columns }] = listScreens(branchingScreen('payment_method_name', ['select', 'text']));
-  assert.deepEqual(columns, [{ key: 'payment_method_name', filterTypes: ['select', 'text'] }]);
+  assert.deepEqual(columns, [
+    { key: 'payment_method_name', filterTypes: ['select', 'text'], filterable: false, sentAs: 'payment_method_name' },
+  ]);
 });
 
 test('listScreens: the same box painted twice is reported once', () => {
   const [{ columns }] = listScreens(branchingScreen('status', ['select', 'select']));
-  assert.deepEqual(columns, [{ key: 'status', filterTypes: ['select'] }]);
+  assert.deepEqual(columns, [{ key: 'status', filterTypes: ['select'], filterable: false, sentAs: 'status' }]);
 });
 
 test('listScreens: a column ends with ITS object, not at the next `key:`', () => {
@@ -156,8 +158,8 @@ const ctl = createListController(erplora(), 'demo.items.list', { columns });
 const toolbar = { filterType: 'select' };
 `);
   assert.deepEqual(columns, [
-    { key: 'name', filterTypes: ['text'] },
-    { key: 'status', filterTypes: [] },
+    { key: 'name', filterTypes: ['text'], filterable: false, sentAs: 'name' },
+    { key: 'status', filterTypes: [], filterable: false, sentAs: 'status' },
   ]);
 });
 
@@ -169,7 +171,72 @@ const columns = [
 ];
 const ctl = createListController(erplora(), 'demo.items.list', { columns });
 `);
-  assert.deepEqual(columns, [{ key: 'name', filterTypes: ['text'] }]);
+  assert.deepEqual(columns, [{ key: 'name', filterTypes: ['text'], filterable: false, sentAs: 'name' }]);
+});
+
+test('listScreens: says whether each column is `filterable` — the flag that draws its box', () => {
+  // ok-data-table draws a filter control only for `filterable: true`; with no `filterType` the
+  // control is a text box. A comment that mentions the flag draws nothing.
+  const [{ columns }] = listScreens(`import { erplora } from '@erplora/module-sdk';
+const columns = [
+  { key: 'name', filterable: true },
+  { key: 'difference', filterable: true, filterType: 'range' },
+  { key: 'status', filterable: false, filterType: 'select' },
+  { key: 'notes' /* filterable: true once */ },
+];
+const ctl = createListController(erplora(), 'demo.items.list', { columns });
+`);
+  assert.deepEqual(columns, [
+    { key: 'name', filterTypes: [], filterable: true, sentAs: 'name' },
+    { key: 'difference', filterTypes: ['range'], filterable: true, sentAs: 'difference' },
+    { key: 'status', filterTypes: ['select'], filterable: false, sentAs: 'status' },
+    { key: 'notes', filterTypes: [], filterable: false, sentAs: 'notes' },
+  ]);
+});
+
+test('listScreens: a column the screen RENAMES before it reaches the list is sent under the new name', () => {
+  // sales: the table's date column is `created_at`, the server filter is `erp_date`; tables: the
+  // zone column shows the name and the list filters `zone_id`. `onFilterChange` swaps the name.
+  const [{ columns }] = listScreens(`import { erplora } from '@erplora/module-sdk';
+const columns = [
+  { key: 'created_at', filterable: true, filterType: 'daterange' },
+  { key: 'zone', filterable: true, filterType: 'select' },
+  { key: 'is_active', filterable: true, filterType: 'select' },
+  { key: 'name', filterable: true },
+];
+const ctl = createListController(erplora(), 'demo.items.list', { columns });
+function onFilterChange(e) {
+  const col = e.detail.col === 'created_at' ? 'erp_date' : e.detail.col;
+  if (e.detail.col === 'is_active') return this.applyStatusFilter(e.detail.value);
+  this.ctrl.setFilter(detail.col == 'zone' ? 'zone_id' : col, e.detail.value);
+}
+`);
+  assert.deepEqual(
+    columns.map(({ key, sentAs }) => [key, sentAs]),
+    [['created_at', 'erp_date'], ['zone', 'zone_id'], ['is_active', null], ['name', 'name']],
+  );
+});
+
+test('listScreens: a column renamed in one place and taken by hand in another cannot be read', () => {
+  const [{ columns }] = listScreens(`import { erplora } from '@erplora/module-sdk';
+const columns = [{ key: 'zone', filterable: true }, { key: 'area', filterable: true }];
+const ctl = createListController(erplora(), 'demo.items.list', { columns });
+const a = col === 'zone' ? 'zone_id' : col;
+if (col === 'zone') this.reset();
+const b = col === 'area' ? 'area_id' : col;
+const c = col === 'area' ? 'area_code' : col;
+`);
+  assert.deepEqual(columns.map(({ key, sentAs }) => [key, sentAs]), [['zone', null], ['area', null]]);
+});
+
+test('listScreens: a name compared only inside a comment or a string renames nothing', () => {
+  const [{ columns }] = listScreens(`import { erplora } from '@erplora/module-sdk';
+const columns = [{ key: 'zone', filterable: true }];
+const ctl = createListController(erplora(), 'demo.items.list', { columns });
+// col === 'zone' ? 'zone_id' : col
+const help = "col === 'zone' ? 'zone_id' : col";
+`);
+  assert.deepEqual(columns.map(({ key, sentAs }) => [key, sentAs]), [['zone', 'zone']]);
 });
 
 test('listScreens: a source that drives no list says nothing', () => {
@@ -453,6 +520,196 @@ test('the painted `filterType` wins over the whitelist: no column is reported tw
     files: { [UI]: screen([['name', 'text']]) },
   });
   assert.equal(errors.length, 1);
+});
+
+// ── rule 4 · a box the screen offers has to be a filter the list accepts (module-toolkit#382) ─
+
+/** A Web Component that drives `query` and paints `columns` written verbatim (object literals). */
+function paintedScreen(columns, query = 'demo.items.list') {
+  return `import { erplora } from '@erplora/module-sdk';
+const columns = [
+  ${columns.join(',\n  ')}
+];
+const ctl = createListController(erplora(), '${query}', { columns });
+`;
+}
+
+/** A module whose manifest is written whole — for queries the `mod` helper cannot shape. */
+function modWith(queries, files) {
+  const { dir } = mod({ files });
+  const manifest = { id: 'demo', migrations: { postgres: ['migrations/postgres/001_init.sql'] }, queries };
+  return checkFilterOps(dir, manifest);
+}
+
+test('a range box over a column the list does not filter is rejected, naming the column and the list', () => {
+  // cash_register#107: `difference` painted as a range, `list.filters.difference` deleted. The table
+  // sends `f_difference_from`, the kernel answers 422 unknown_filter, and validate said exit 0.
+  const { errors, warnings } = run({
+    filters: { name: { op: 'like' } },
+    files: {
+      [UI]: paintedScreen([
+        "{ key: 'name', filterable: true, filterType: 'text' }",
+        "{ key: 'difference', filterable: true, filterType: 'range' }",
+      ]),
+    },
+  });
+  assert.deepEqual(warnings, []);
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /`difference`/);
+  assert.match(errors[0], /demo\.items\.list/);
+  assert.match(errors[0], /list\.filters/);
+  assert.match(errors[0], /unknown_filter/);
+});
+
+test('a `filterable` column with no `filterType` is a text box, and it is judged too', () => {
+  const { errors } = run({
+    filters: { name: { op: 'like' } },
+    files: { [UI]: paintedScreen(["{ key: 'status', filterable: true }"]) },
+  });
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /`status`/);
+});
+
+test('a list with a `list` block but NO `filters` at all still rejects the box it cannot answer', () => {
+  const errors = modWith(
+    { 'demo.items.list': { list: { sortable: ['name'] } } },
+    { [UI]: paintedScreen(["{ key: 'status', filterable: true, filterType: 'select' }"]) },
+  ).errors;
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /`status`/);
+});
+
+test('a box over a filter the list DOES declare is not reported by this rule', () => {
+  const { errors, warnings } = run({
+    filters: { status: { op: 'eq' }, created_at: { op: 'range' } },
+    files: {
+      [UI]: paintedScreen([
+        "{ key: 'status', filterable: true, filterType: 'select' }",
+        "{ key: 'created_at', filterable: true, filterType: 'daterange' }",
+      ]),
+    },
+  });
+  assert.deepEqual([...errors, ...warnings], []);
+});
+
+test('a column that is not `filterable` draws no box, so it asks nothing of the list', () => {
+  const { errors, warnings } = run({
+    filters: {},
+    files: {
+      [UI]: paintedScreen([
+        "{ key: 'status', filterType: 'select' }",
+        "{ key: 'name', filterable: false }",
+        "{ key: 'notes' /* filterable: true */ }",
+      ]),
+    },
+  });
+  assert.deepEqual([...errors, ...warnings], []);
+});
+
+test('the runtime also accepts a bind its SQL reads: `:f_<col>` is not an unknown filter', () => {
+  // `accepted_params` (hub/crates/runtime/src/queries.rs) takes every bind of the base SQL, so a
+  // list that answers the box by hand is not rejected by the kernel — and must not be here either.
+  const errors = modWith(
+    {
+      'demo.items.list': {
+        sql: 'SELECT * FROM demo_items WHERE hub_id = :hub_id AND (:f_status IS NULL OR status = :f_status) ' +
+          'AND (:f_created_at_from IS NULL OR created_at >= :f_created_at_from) ' +
+          'AND (:f_created_at_to IS NULL OR created_at <= :f_created_at_to)',
+        list: { filters: {} },
+      },
+    },
+    {
+      [UI]: paintedScreen([
+        "{ key: 'status', filterable: true, filterType: 'select' }",
+        "{ key: 'created_at', filterable: true, filterType: 'daterange' }",
+      ]),
+    },
+  ).errors;
+  assert.deepEqual(errors, []);
+});
+
+test('a range box needs BOTH bounds accepted: one bind of the pair is still an unknown filter', () => {
+  const errors = modWith(
+    {
+      'demo.items.list': {
+        sql: 'SELECT * FROM demo_items WHERE (:f_created_at_from IS NULL OR created_at >= :f_created_at_from)',
+        list: { filters: {} },
+      },
+    },
+    { [UI]: paintedScreen(["{ key: 'created_at', filterable: true, filterType: 'daterange' }"]) },
+  ).errors;
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /f_created_at_to/);
+});
+
+test('a bind written in a SQL FILE counts the same as inline SQL', () => {
+  const errors = modWith(
+    { 'demo.items.list': { sql: 'queries/items_list.sql', list: { filters: {} } } },
+    {
+      'queries/items_list.sql': 'SELECT * FROM demo_items -- :f_name in a comment is not a bind\n' +
+        "WHERE (:f_status IS NULL OR status = :f_status) AND label <> ':f_name /* nor in a string */'",
+      [UI]: paintedScreen([
+        "{ key: 'status', filterable: true, filterType: 'select' }",
+        "{ key: 'name', filterable: true }",
+      ]),
+    },
+  ).errors;
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /`name`/);
+});
+
+test('a property the query schema declares is accepted, as the runtime accepts it', () => {
+  const errors = modWith(
+    {
+      'demo.items.list': {
+        schema: { type: 'object', properties: { f_status: { type: 'string' } } },
+        list: { filters: {} },
+      },
+    },
+    { [UI]: paintedScreen(["{ key: 'status', filterable: true, filterType: 'select' }"]) },
+  ).errors;
+  assert.deepEqual(errors, []);
+});
+
+test('a screen over a query that is not a `list`, or not declared at all, is not judged here', () => {
+  // A query with no `list` block is not paged by the runtime's list engine, and a query the manifest
+  // does not declare is the contracts gate's finding, not a filter verdict.
+  const plain = modWith(
+    { 'demo.items.list': { sql: 'SELECT * FROM demo_items' } },
+    { [UI]: paintedScreen(["{ key: 'status', filterable: true }"]) },
+  );
+  assert.deepEqual(plain, { errors: [], warnings: [] });
+
+  const absent = modWith(
+    { 'demo.other.list': { list: { filters: {} } } },
+    { [UI]: paintedScreen(["{ key: 'status', filterable: true }"]) },
+  );
+  assert.deepEqual(absent, { errors: [], warnings: [] });
+});
+
+test('a box the screen RENAMES is judged under the name it sends: renamed to a declared filter, fine', () => {
+  const remap = (target) =>
+    paintedScreen(["{ key: 'created_at', filterable: true, filterType: 'daterange' }"]) +
+    `function onFilterChange(e) {\n  ctl.setFilter(e.detail.col === 'created_at' ? '${target}' : e.detail.col, e.detail.value);\n}\n`;
+
+  const good = run({ filters: { erp_date: { op: 'range' } }, files: { [UI]: remap('erp_date') } });
+  assert.deepEqual([...good.errors, ...good.warnings], []);
+
+  const bad = run({ filters: { erp_date: { op: 'range' } }, files: { [UI]: remap('erp_day') } });
+  assert.equal(bad.errors.length, 1, JSON.stringify(bad.errors));
+  assert.match(bad.errors[0], /`created_at`/);
+  assert.match(bad.errors[0], /f_erp_day_from/);
+});
+
+test('a box the screen takes BY HAND (compares its name and does its own thing) is not judged', () => {
+  // inventory's product status: one column, three values, two server columns — its filter is not a
+  // `setFilter` of the column, and what reaches the wire cannot be read from here.
+  const byHand =
+    paintedScreen(["{ key: 'state', filterable: true, filterType: 'select' }"]) +
+    "function onFilterChange(e) {\n  if (e.detail.col === 'state') return this.applyStatusFilter(e.detail.value);\n" +
+    '  ctl.setFilter(e.detail.col, e.detail.value);\n}\n';
+  const { errors, warnings } = run({ filters: {}, files: { [UI]: byHand } });
+  assert.deepEqual([...errors, ...warnings], []);
 });
 
 // ── the ratchet ─────────────────────────────────────────────────────────────────────────────
