@@ -1001,7 +1001,10 @@ de su propio ref —no contra una imagen publicada— y levantando **un hub por 
 lista no se quede atrás, la otra mitad del cierre está aquí: `src/check-hub-battery-pairing.mjs`
 (con su action `check-hub-battery-pairing`, module-toolkit#163 ← ERPlora/hub#1439) pone en rojo la
 PR de un módulo que **añade** una batería `*.hub.test.py|sh` sin declararla en el hub en esa misma
-pull request.
+pull request. Batería es solo lo que se llama `*.test.py|sh` —lo mismo que descubre el `find` del
+hub—; el contenido (`_HUB_BASE_URL`) decide la familia, no si es batería. Un ayudante como
+`tests/hub_harness.py` no se declara: el hub rechazaría su línea como «declarada pero no publicada»
+(module-toolkit#411).
 
 ## El gate de CI de los repos de módulo (ERPlora/pm#107)
 
