@@ -226,8 +226,11 @@ export function listScreens(source) {
  *     (inventory). What reaches the wire cannot be read from here: `null`, and the column is not
  *     judged. Missing a lie is the safe direction; accusing a working screen is not.
  *
- * A column compared in both ways, or renamed to two names, is `null` as well. Only the
- * `col === 'key'` spelling is read — the only one the catalogue writes.
+ * A column compared in both ways, or renamed to two names, is `null` as well. A ternary is a rename
+ * only when it hands the column back (`? 'target' : …col`); anything else that compares the name —
+ * `col === 'total' ? 'end' : 'start'` to align a cell, `col !== 'zone'` — is `null` too: judging
+ * the box under `end` would refuse a list that declares `total` correctly. The comparison is read
+ * with the name on either side (`'key' === …col`).
  */
 function filterRoutes(source, code) {
   const routes = new Map();
@@ -237,14 +240,27 @@ function filterRoutes(source, code) {
     else if (routes.get(key) !== target) routes.set(key, null);
   };
   const quoted = (at) => readString(source, at);
-  // `…col === 'key'` — optionally followed by `? 'target'`.
-  for (const m of code.matchAll(/\bcol\s*={2,3}\s*'/g)) {
+  const COL = String.raw`(?:[\w$]+\s*\??\.\s*)*col\b`;
+  /** What `…` after the comparison makes of the column: its new name, or `null` when unreadable. */
+  const target = (after, negated) => {
+    if (negated) return null;
+    const ternary = /^\s*\?\s*'/.exec(code.slice(after));
+    if (!ternary) return null;
+    const open = after + ternary[0].length - 1;
+    const renamed = quoted(open);
+    if (renamed == null) return null;
+    const handsBack = new RegExp(String.raw`^\s*:\s*${COL}`).test(code.slice(open + renamed.length + 2));
+    return handsBack ? renamed : null;
+  };
+  // `…col === 'key'` / `…col !== 'key'`.
+  for (const m of code.matchAll(/\bcol\s*(!|=)==?\s*'/g)) {
     const open = m.index + m[0].length - 1;
     const key = quoted(open);
-    if (key == null) continue;
-    const after = open + key.length + 2;
-    const ternary = /^\s*\?\s*'/.exec(code.slice(after));
-    note(key, ternary ? quoted(after + ternary[0].length - 1) : null);
+    if (key != null) note(key, target(open + key.length + 2, m[1] === '!'));
+  }
+  // `'key' === …col` / `'key' !== …col`.
+  for (const m of code.matchAll(new RegExp(String.raw`'[^'\n]*'\s*(!|=)==?\s*${COL}`, 'g'))) {
+    note(quoted(m.index), target(m.index + m[0].length, m[1] === '!'));
   }
   return routes;
 }

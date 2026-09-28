@@ -239,6 +239,44 @@ const help = "col === 'zone' ? 'zone_id' : col";
   assert.deepEqual(columns.map(({ key, sentAs }) => [key, sentAs]), [['zone', 'zone']]);
 });
 
+test('listScreens: a ternary over the name that does not hand the column back is not a rename', () => {
+  // `col === 'total' ? 'end' : 'start'` aligns a cell; reading it as a rename would judge the box
+  // under `end` and refuse a list that declares `total` correctly (review of module-toolkit#408).
+  const [{ columns }] = listScreens(`import { erplora } from '@erplora/module-sdk';
+const columns = [
+  { key: 'total', filterable: true, filterType: 'range' },
+  { key: 'zone', filterable: true },
+  { key: 'area', filterable: true },
+];
+const ctl = createListController(erplora(), 'demo.items.list', { columns });
+const align = (col) => (col === 'total' ? 'end' : 'start');
+const next = col === 'zone' ? 'zone_id' : col === 'area' ? 'area_id' : col;
+`);
+  // A chain of renames hands the column back at its end, so each arm is still a rename.
+  assert.deepEqual(
+    columns.map(({ key, sentAs }) => [key, sentAs]),
+    [['total', null], ['zone', 'zone_id'], ['area', 'area_id']],
+  );
+});
+
+test('listScreens: the rename is read with the name on either side, and a negated comparison is by hand', () => {
+  const [{ columns }] = listScreens(`import { erplora } from '@erplora/module-sdk';
+const columns = [
+  { key: 'created_at', filterable: true, filterType: 'daterange' },
+  { key: 'zone', filterable: true },
+];
+const ctl = createListController(erplora(), 'demo.items.list', { columns });
+function onFilterChange(e) {
+  ctl.setFilter('created_at' === e.detail.col ? 'erp_date' : e.detail.col, e.detail.value);
+  const wire = e.detail.col !== 'zone' ? 'other' : e.detail.col; // zone is the one NOT renamed
+}
+`);
+  assert.deepEqual(
+    columns.map(({ key, sentAs }) => [key, sentAs]),
+    [['created_at', 'erp_date'], ['zone', null]],
+  );
+});
+
 test('listScreens: a source that drives no list says nothing', () => {
   assert.deepEqual(listScreens('export const x = 1;'), []);
 });
@@ -709,6 +747,16 @@ test('a box the screen takes BY HAND (compares its name and does its own thing) 
     "function onFilterChange(e) {\n  if (e.detail.col === 'state') return this.applyStatusFilter(e.detail.value);\n" +
     '  ctl.setFilter(e.detail.col, e.detail.value);\n}\n';
   const { errors, warnings } = run({ filters: {}, files: { [UI]: byHand } });
+  assert.deepEqual([...errors, ...warnings], []);
+});
+
+test('a correct list is not refused because the screen compares a column name for something else', () => {
+  // The list declares `total` as the range its box needs; the screen only aligns that cell.
+  const aligned =
+    paintedScreen(["{ key: 'total', filterable: true, filterType: 'range' }"]) +
+    "const align = (col) => (col === 'total' ? 'end' : 'start');\n" +
+    'function onFilterChange(e) {\n  ctl.setFilter(e.detail.col, e.detail.value);\n}\n';
+  const { errors, warnings } = run({ filters: { total: { op: 'range' } }, files: { [UI]: aligned } });
   assert.deepEqual([...errors, ...warnings], []);
 });
 
