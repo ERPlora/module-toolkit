@@ -25,6 +25,7 @@ import { checkIonicFill, checkIonicMissingFill } from './validate-ionic-fill.mjs
 import { checkIonicColor } from './validate-ionic-color.mjs';
 import { checkMoneyFilters } from './validate-money-filters.mjs';
 import { checkIonicClass } from './validate-ionic-class.mjs';
+import { checkLitElementParts } from './validate-lit-element-part.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 import { checkContracts } from './contracts.mjs';
 import { checkPgCompat } from './validate-pg.mjs';
@@ -470,6 +471,17 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
     throw new Error(
       'elementos Ionic con el atributo `class` enlazado entero, que borra las clases de Ionic (module-toolkit#303):\n  - ' +
         ionicClass.errors.join('\n  - '),
+    );
+  }
+
+  // module-toolkit#398: an opening tag without its `>` leaves the `${label}` in element-part position
+  // and Lit IGNORES it silently: the button ships empty. It happened to the flows editor's «Save»
+  // (flows#144) and no gate saw it. Zero cases in the 27 modules when added: no grandfather list.
+  const litElementParts = checkLitElementParts(dir);
+  if (litElementParts.errors.length) {
+    throw new Error(
+      'etiquetas Lit sin cerrar cuyo contenido el hub NUNCA pinta (module-toolkit#398):\n  - ' +
+        litElementParts.errors.join('\n  - '),
     );
   }
 
