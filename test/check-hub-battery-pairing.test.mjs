@@ -106,6 +106,9 @@ test('a harness that reads the hub url is NOT a battery: the hub would reject it
     { path: 'tests/hub_harness.py', content: 'os.environ.get("ERPLORA_HUB_BASE_URL")\n' },
     { path: 'tests/lib/hub_client.sh', content: 'curl "$ERPLORA_HUB_BASE_URL/api"\n' },
     { path: 'tests/hub_harness.pyc', content: 'PAYMENT_GATEWAYS_HUB_BASE_URL' },
+    // A merge leftover: `.test.py` in the middle of the name, not at the end. The hub's `find`
+    // (`-name '*.test.py'`) never sees it, so the rule must be anchored like `BATTERY_RE`.
+    { path: 'tests/totals.hub.test.py.orig', content: 'os.environ["ERPLORA_HUB_BASE_URL"]\n' },
   ]);
   assert.deepEqual(added, []);
 });
