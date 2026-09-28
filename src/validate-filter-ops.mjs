@@ -127,7 +127,7 @@ export const FILTER_OPS_GRANDFATHERED = [
   ['tasks', 'tasks.projects.list', 'color'],
   // tickets — 1
   ['tickets', 'tickets.tickets.list', 'ticket_number'],
-  // verifactu — 11
+  // verifactu — 10 (`event_type` became a select of named types in ERPlora/verifactu#134)
   ['verifactu', 'verifactu.records.list', 'sequence_number'],
   ['verifactu', 'verifactu.records.list', 'invoice_number'],
   ['verifactu', 'verifactu.records.list', 'invoice_type'],
@@ -136,7 +136,6 @@ export const FILTER_OPS_GRANDFATHERED = [
   ['verifactu', 'verifactu.contingency.list', 'attempts'],
   ['verifactu', 'verifactu.contingency.list', 'last_error'],
   ['verifactu', 'verifactu.contingency.list', 'status'],
-  ['verifactu', 'verifactu.events.list', 'event_type'],
   ['verifactu', 'verifactu.aeat.records.list', 'invoice_number'],
   ['verifactu', 'verifactu.aeat.records.list', 'estado'],
   // whatsapp_inbox — 2 (the requests screen was retired in whatsapp_inbox#193)
