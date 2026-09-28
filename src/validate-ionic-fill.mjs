@@ -67,19 +67,20 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * allowance (module-toolkit#189; `test/validate-grandfathered-scope.test.mjs` holds that line for
  * every grandfathered list in `src/`).
  *
- * WHERE THE SWEEP IS — 101 dead controls left, in 17 files across 10 modules. It started at 275 in
+ * WHERE THE SWEEP IS — 95 dead controls left, in 16 files across 10 modules. It started at 275 in
  * 45 files across 22 the day the check landed.
  *
  *   done, and out of the list  appointments · cash_register · customers · inventory · kitchen ·
  *                              pricing · printing · staff · tables · tasks · tickets · whatsapp_inbox
- *                              (157 controls, 26 files; plus taxes' rules screen, 12 controls)
- *   still owing, worst first   invoice 16 · online_booking 16 · services 16 · schedules 14 ·
- *                              reservations 11 · payment_gateways 8 · taxes 6 · invoice_series 6 ·
+ *                              (157 controls, 26 files; plus taxes' rules screen, 12 controls, and
+ *                              invoice's series settings, 6 controls)
+ *   still owing, worst first   online_booking 16 · services 16 · schedules 14 · reservations 11 ·
+ *                              invoice 10 · payment_gateways 8 · taxes 6 · invoice_series 6 ·
  *                              payments 5 · cart_checkout 3
  *
  * ⚠️ Four of those modules are RETIRED and nobody is going to pay their debt: `invoice_series`
  * (ADR-0369) and `cart_checkout` / `payments` / `online_booking` (saas migration 0058) — 30 of the
- * 101. Their entries stay while their `ui/` still ships the dead controls, because the rule above is
+ * 95. Their entries stay while their `ui/` still ships the dead controls, because the rule above is
  * measured, not declared; they leave with the repos when those are archived.
  *
  * `sales`, `verifactu` and `flows` were never here: their `fill` sits on `ion-button`, where it paints.
@@ -89,7 +90,6 @@ export const FILL_GRANDFATHERED = [
   // happens to be in a checkout other workers are editing.
   ['cart_checkout', 'ui/components/erp-cart-checkout-carts/erp-cart-checkout-carts.ts', 3],
   ['invoice', 'ui/components/erp-invoice-list/erp-invoice-list.ts', 10],
-  ['invoice', 'ui/components/erp-invoice-settings/erp-invoice-settings.ts', 6],
   ['invoice_series', 'ui/components/erp-invoice-series-list/erp-invoice-series-list.ts', 6],
   ['online_booking', 'ui/components/erp-online-booking-list/erp-online-booking-list.ts', 6],
   ['online_booking', 'ui/components/erp-online-booking-settings/erp-online-booking-settings.ts', 10],
