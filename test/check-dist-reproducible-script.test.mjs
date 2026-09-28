@@ -74,8 +74,8 @@ done
 
   const temp = join(root, 'runner-temp');
   mkdirSync(temp);
-  const run = (sdkArg = sdk, env = {}) =>
-    spawnSync('bash', [SCRIPT, mod, sdkArg], {
+  const run = (sdkArg = sdk, env = {}, shell = 'bash') =>
+    spawnSync(shell, [SCRIPT, mod, sdkArg], {
       encoding: 'utf8',
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, ERPLORA_TOOLKIT: toolkit, RUNNER_TEMP: temp, ...env },
     });
@@ -161,4 +161,33 @@ test('an SDK path that holds no package fails the same way, and installs nothing
   } finally {
     rmSync(r.root, { recursive: true, force: true });
   }
+});
+
+// module-toolkit#410: the step runs on the CI's bash 5, but `npm test` runs it on whatever `bash`
+// comes first on PATH — on a Mac, the 3.2 that ships as /bin/bash. `mapfile` (bash 4+) made four of
+// the tests above red there and green in CI. Two locks: the script runs for real on /bin/bash
+// (catches it on a Mac), and it holds none of the bash 4+ builtins (catches it on the Ubuntu CI,
+// whose /bin/bash is 5 and would run anything).
+test('runs on the bash 3.2 macOS ships as /bin/bash, not only on the CI bash', { skip: !existsSync('/bin/bash') && 'no /bin/bash' }, () => {
+  const r = runner({ sealed: '0.1.70' });
+  try {
+    const res = r.run(r.sdk, {}, '/bin/bash');
+    assert.equal(res.status, 0, res.stdout + res.stderr);
+    for (const name of BAKED) assert.ok(r.npmLog().includes(` ${name}@${locked(name)}`), `${name} not installed under /bin/bash`);
+    assert.deepEqual(r.cli(), ['build', r.mod, '--check', '--sdk', r.sdk]);
+  } finally {
+    rmSync(r.root, { recursive: true, force: true });
+  }
+});
+
+test('the script uses no bash 4+ builtin or syntax that bash 3.2 lacks', () => {
+  const BASH4 = [
+    [/^\s*(mapfile|readarray)\b/m, 'mapfile/readarray'],
+    [/\b(declare|local|typeset)\s+-[a-zA-Z]*[An]/, 'associative arrays / namerefs (declare -A / -n)'],
+    [/\$\{[#!]?\w+(\[[^\]]*\])?(,,?|\^\^?)[^}]*\}/, 'case modification ${x,,} / ${x^^}'],
+    [/\bcoproc\b/, 'coproc'],
+    [/&>>|\|&/, '&>> / |&'],
+  ];
+  const body = readFileSync(SCRIPT, 'utf8');
+  for (const [re, what] of BASH4) assert.doesNotMatch(body, re, `${what} needs bash 4+: macOS ships bash 3.2 as /bin/bash`);
 });

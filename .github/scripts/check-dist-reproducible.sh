@@ -27,7 +27,9 @@ fi
 
 # The packages the bundle bakes, at the toolkit's locked versions: the bundler and the whole Lit
 # family (the resolve plugin pins every `lit*`/`@lit/*` specifier to the toolkit's own copy).
-mapfile -t baked < <(node -e '
+# A read loop, not `mapfile`: `npm test` runs this on a Mac's /bin/bash 3.2 (module-toolkit#410).
+baked=()
+while IFS= read -r spec; do baked+=("$spec"); done < <(node -e '
   const lock = require(process.argv[1]);
   for (const [key, meta] of Object.entries(lock.packages)) {
     const m = /^node_modules\/(esbuild|lit|lit-html|lit-element|@lit\/[^/]+|@lit-labs\/[^/]+)$/.exec(key);
