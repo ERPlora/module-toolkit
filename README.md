@@ -435,6 +435,22 @@ multilínea que un grep de una línea no veía— y `sales`) se toleraban; `kitc
 (techo 3/3); cada módulo lo arregla en su repo
 y borra antes su línea. La premisa está anclada a `@ionic/core` en `test/validate-ionic-class.test.mjs`.
 
+## La etiqueta Lit sin su `>` que deja el elemento vacío (module-toolkit#398)
+
+`src/validate-lit-element-part.mjs`. En una plantilla Lit, una expresión `${…}` dentro de una etiqueta
+de apertura **sin atributo delante** es una *parte de elemento*: Lit enlaza ahí directivas de
+elemento (`ref`, `spread`) e ignora en silencio cualquier otro valor. Basta con olvidar el `>`
+—`<ion-button @click=${…}` y en la línea siguiente `${label}</ion-button>`— para que el texto caiga en
+esa posición y el botón salga **vacío**, sin error ni aviso. Pasó con «Guardar» del editor de flows
+(flows#144, publicado así desde flows#116) y ningún gate lo vio.
+
+La puerta lee cada etiqueta de `ui/` (sin tests, `dist/` ni `node_modules/`) hasta su `>` real
+—saltando `${…}` con sus cadenas y plantillas anidadas, y sin leer como etiqueta lo citado en un
+comentario (la trampa de module-toolkit#367)— y rechaza toda `${…}` que empiece una palabra nueva sin
+`=` delante, salvo `ref(…)`, `spread(…)` y `animate(…)`. **Sin lista de tolerados**: medido sobre
+`origin/main` de los 27 repos el 2026-09-28, 210 ficheros y **0 casos**; el control positivo es el
+`erp-flows-editor.ts` de flows justo antes de flows#145, que cae en su línea 3898.
+
 ## El filtro «desde / hasta» sobre un importe que la lista no declara (module-toolkit#375)
 
 `src/validate-money-filters.mjs`. El dinero viaja en la unidad mínima (ADR-0123) y la cantidad en

@@ -25,6 +25,7 @@ import { checkIonicFill, checkIonicMissingFill } from './validate-ionic-fill.mjs
 import { checkIonicColor } from './validate-ionic-color.mjs';
 import { checkMoneyFilters } from './validate-money-filters.mjs';
 import { checkIonicClass } from './validate-ionic-class.mjs';
+import { checkLitElementParts } from './validate-lit-element-part.mjs';
 import { lintSchema, collectSchemaFiles } from './validate-schemas.mjs';
 import { checkContracts } from './contracts.mjs';
 import { checkPgCompat } from './validate-pg.mjs';
@@ -470,6 +471,17 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
     throw new Error(
       'elementos Ionic con el atributo `class` enlazado entero, que borra las clases de Ionic (module-toolkit#303):\n  - ' +
         ionicClass.errors.join('\n  - '),
+    );
+  }
+
+  // module-toolkit#398: una etiqueta de apertura sin su `>` deja el `${texto}` en posición de parte de
+  // elemento y Lit lo IGNORA en silencio: el botón sale vacío. Pasó con «Guardar» del editor de flows
+  // (flows#144) y ningún gate lo vio. Cero casos en los 27 módulos al añadirla: sin lista de tolerados.
+  const litElementParts = checkLitElementParts(dir);
+  if (litElementParts.errors.length) {
+    throw new Error(
+      'etiquetas Lit sin cerrar cuyo contenido el hub NUNCA pinta (module-toolkit#398):\n  - ' +
+        litElementParts.errors.join('\n  - '),
     );
   }
 
