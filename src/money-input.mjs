@@ -20,7 +20,10 @@ const SPACING = "\\s'\\u2019\\u02bc";
 /** Any character that can sit between two digit groups. */
 const GROUP_SEP = new RegExp(`[.,${SPACING}]`);
 const MINUS = /[-\u2212]/;
-const MINUSES = /[-\u2212]/g;
+const SIGN = /[-+\u2212]/;
+const SIGNS = /[-+\u2212]/g;
+/** Accounting brackets: a spreadsheet's negative. Cleaned away like a symbol, they flip the sign. */
+const BRACKET = /[()]/;
 
 const NOT_AN_AMOUNT = Object.freeze({ ok: false, code: 'not_an_amount' });
 
@@ -98,7 +101,8 @@ function intDigits(intPart) {
  *   readings in minor units so the message can show both.
  *
  * Both separators are read, always; symbols, currency codes, spaces, NBSP/NNBSP/thin space and
- * apostrophes are cleaned away; the sign is a `-` or `−` before the first digit.
+ * apostrophes are cleaned away; the sign is ONE `-`, `−` or `+` before the first digit — two signs, a
+ * sign after the digits or accounting brackets `(12)` are refused, not guessed.
  *
  * @param {unknown} typed
  * @param {number} decimals the currency's scale (`erplora().currencyDecimals`), 0–4
@@ -118,9 +122,9 @@ export function parseMoneyInput(typed, decimals) {
   const suffix = raw.slice(end);
   const core = raw.slice(start, end);
 
-  const minuses = (prefix.match(MINUSES) ?? []).length;
-  if (minuses > 1 || MINUS.test(suffix)) return NOT_AN_AMOUNT;
-  const negative = minuses === 1;
+  const signs = prefix.match(SIGNS) ?? [];
+  if (signs.length > 1 || SIGN.test(suffix) || BRACKET.test(prefix + suffix)) return NOT_AN_AMOUNT;
+  const negative = signs.length === 1 && MINUS.test(signs[0]);
 
   const split = splitCore(core, decimals);
   if (!split) return NOT_AN_AMOUNT;

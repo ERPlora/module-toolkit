@@ -105,6 +105,16 @@ test('the sign is kept: hyphen-minus and the Unicode minus Intl prints', () => {
   assert.deepEqual(parseMoneyInput('-0', 2), ok(0));
   assert.ok(!Object.is(parseMoneyInput('-0', 2).minor, -0), 'no negative zero');
   assert.deepEqual(parseMoneyInput('12-', 2), { ok: false, code: 'not_an_amount' }, 'a trailing minus is not a sign');
+  assert.deepEqual(parseMoneyInput('12−', 2), { ok: false, code: 'not_an_amount' }, 'nor a trailing Unicode minus');
+  assert.deepEqual(parseMoneyInput('+12', 2), ok(1200), 'a lone plus is a sign too');
+});
+
+// A spreadsheet pastes a negative in accounting brackets — `(1.250,50 €)` — and cleaning the brackets
+// away as if they were a currency symbol flips the sign in silence. Two signs are no sign at all.
+test('accounting brackets and doubled or trailing signs are refused, never read with a guessed sign', () => {
+  for (const junk of ['(12)', '(1.250,50 €)', '€(12.50)', '12)', '+-12', '-+12', '++12', '12+', '1.250,50 +']) {
+    assert.deepEqual(parseMoneyInput(junk, 2), { ok: false, code: 'not_an_amount' }, `«${junk}»`);
+  }
 });
 
 test('digits, not floats: HALF_UP on the typed digits (ADR-0123)', () => {
@@ -118,6 +128,8 @@ test('digits, not floats: HALF_UP on the typed digits (ADR-0123)', () => {
   assert.deepEqual(parseMoneyInput('12,5', 0), ok(13), 'no decimals: other fractions round to the unit');
   assert.deepEqual(parseMoneyInput('-2,345', 3), ok(-2345));
   assert.deepEqual(parseMoneyInput('-2,3451', 2), ok(-235), 'HALF_UP is away from zero on the magnitude');
+  assert.deepEqual(parseMoneyInput('1.250,505', 2), ok(125051), 'HALF_UP with both separators too');
+  assert.deepEqual(parseMoneyInput('1,250.5049', 2), ok(125050));
   assert.deepEqual(parseMoneyInput(',5', 2), ok(50));
   assert.deepEqual(parseMoneyInput('.5', 2), ok(50));
 });
