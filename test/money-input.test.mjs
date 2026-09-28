@@ -91,9 +91,9 @@ test('currency symbols, codes, spaces, NBSP, NNBSP, thin space and apostrophes a
   assert.deepEqual(parseMoneyInput('1.250,50 €', 2, eurEs), ok(125050));
   assert.deepEqual(parseMoneyInput('€1,250.50', 2, { currency: 'EUR', locale: 'en' }), ok(125050));
   assert.deepEqual(parseMoneyInput('EUR 1.250,50', 2, eurEs), ok(125050));
-  assert.deepEqual(parseMoneyInput('1 250,50 €', 2, eurEs), ok(125050), 'NBSP');
-  assert.deepEqual(parseMoneyInput('1 250,50 €', 2, { currency: 'EUR', locale: 'fr' }), ok(125050), 'NNBSP (fr, odoo#106534)');
-  assert.deepEqual(parseMoneyInput('1 250,50', 2), ok(125050), 'thin space');
+  assert.deepEqual(parseMoneyInput('1 250,50 €', 2, eurEs), ok(125050), 'NBSP');
+  assert.deepEqual(parseMoneyInput('1 250,50 €', 2, { currency: 'EUR', locale: 'fr' }), ok(125050), 'NNBSP (fr, odoo#106534)');
+  assert.deepEqual(parseMoneyInput('1 250,50', 2), ok(125050), 'thin space');
   assert.deepEqual(parseMoneyInput("CHF 1'250.50", 2, { currency: 'CHF', locale: 'de-CH' }), ok(125050));
   assert.deepEqual(parseMoneyInput('CHF 1’250.50', 2, { currency: 'CHF', locale: 'de-CH' }), ok(125050), 'de-CH right single quote');
   assert.deepEqual(parseMoneyInput('kr. 12,50', 2, { currency: 'DKK', locale: 'da' }), ok(1250), 'a dot inside the currency is not a separator');
@@ -127,11 +127,47 @@ test('letters glued to the amount are refused unless they are the hub currency (
   assert.deepEqual(parseMoneyInput('12,50 zł', 2, { currency: 'EUR' }), { ok: false, code: 'not_an_amount' }, 'but not for EUR');
 });
 
-test('the universal currency signs are cleaned with or without a currency', () => {
+test('without a currency any currency sign is cleaned; with one, only its own', () => {
   for (const [typed, minor] of [['12 €', 1200], ['$12', 1200], ['£12.50', 1250], ['-¥1250', -125000]]) {
     assert.deepEqual(parseMoneyInput(typed, 2), ok(minor), `«${typed}»`);
   }
-  assert.deepEqual(parseMoneyInput('12 €', 2, { currency: 'EUR', locale: 'es' }), ok(1200));
+  const eurEs = { currency: 'EUR', locale: 'es' };
+  assert.deepEqual(parseMoneyInput('12 €', 2, eurEs), ok(1200));
+  for (const foreign of ['$12', '12 £', '-¥1250', '12 ₿', '12 ¤']) {
+    assert.deepEqual(parseMoneyInput(foreign, 2, eurEs), { ok: false, code: 'not_an_amount' }, `a euro hub, «${foreign}»`);
+  }
+  // The keyboard's symbol is not always the one the hub's language prints: English's counts too.
+  assert.deepEqual(parseMoneyInput('¥1250', 0, { currency: 'JPY', locale: 'ja' }), ok(1250), 'ja prints ￥, the keyboard types ¥');
+  assert.deepEqual(parseMoneyInput('CA$ 12', 2, { currency: 'CAD', locale: 'fr-CA' }), ok(1200), 'fr-CA prints $, English CA$');
+});
+
+// rv-397: not only letters — «5½» was saved as 5, «12%» as 12 and «١٢ 5» as 5. Next to the digits
+// only the hub currency, spaces, the direction marks Intl prints (he, ar) and one sign may sit.
+test('any other character next to the digits is not an amount, never the number that is left', () => {
+  const eurEs = { currency: 'EUR', locale: 'es' };
+  for (const junk of ['5½', '12%', '#12', '12²', '١٢ 5', '~12', '12*', '@12', '12 =', '12 €!']) {
+    assert.deepEqual(parseMoneyInput(junk, 2, eurEs), { ok: false, code: 'not_an_amount' }, `EUR «${junk}»`);
+    assert.deepEqual(parseMoneyInput(junk, 2), { ok: false, code: 'not_an_amount' }, `no currency given: «${junk}»`);
+  }
+  assert.deepEqual(parseMoneyInput('12.', 2, eurEs), ok(1200), 'a separator with nothing after it');
+  assert.deepEqual(parseMoneyInput('+12', 2, eurEs), ok(1200), 'one sign');
+  assert.deepEqual(parseMoneyInput('‏12 €', 2, eurEs), ok(1200), 'a direction mark is not a letter');
+});
+
+// Every currency Intl knows, in the languages with their own way of printing it: nothing the
+// screen prints is refused by the characters it puts around the digits.
+test('what Intl prints for any currency reads back in the hub language', () => {
+  const locales = ['es', 'en', 'fr-CA', 'de-CH', 'da', 'sv', 'pt-BR', 'es-PE', 'en-IN', 'ja', 'he', 'ar-EG-u-nu-latn', 'fa-u-nu-latn', 'ko'];
+  for (const currency of Intl.supportedValuesOf('currency')) {
+    const d = new Intl.NumberFormat('en', { style: 'currency', currency }).resolvedOptions().maximumFractionDigits;
+    for (const locale of locales) {
+      for (const major of [Number((1234.5678).toFixed(d)), -7]) {
+        const printed = new Intl.NumberFormat(locale, { style: 'currency', currency, useGrouping: true }).format(major);
+        const read = parseMoneyInput(printed, d, { currency, locale });
+        assert.deepEqual(read, ok(Math.round(major * 10 ** d)), `${locale} ${currency} «${printed}»`);
+      }
+    }
+  }
 });
 
 test('a currency that is not an ISO code is a programming error, not a silent pass', () => {

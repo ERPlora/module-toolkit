@@ -11,7 +11,8 @@ export type MoneyInput =
   | { ok: false; code: 'ambiguous_amount'; readings: { grouped: number; decimal: number } };
 
 /** The hub's currency (`erplora().currency`, ISO 4217) and locale (`erplora().locale`; none → `en`):
- *  only that currency's symbol, narrow symbol and code may sit next to the digits. */
+ *  only that currency's symbol, narrow symbol (in that locale and in English) and code may sit next
+ *  to the digits — any other letter or sign (`1.5k`, `5½`, `$12` in a euro hub) is `not_an_amount`. */
 export interface MoneyInputOptions {
   currency?: string;
   locale?: string;
