@@ -205,10 +205,12 @@ function npmTestPatterns(script) {
   return (m[1] ?? '').split(/\s+/).filter((a) => a && !a.startsWith('-'));
 }
 
-/** Every file under `test/`, fixtures included, as `a/b.ext` relative to `test/`. */
+/**
+ * Every entry under `test/`, fixtures included, as `a/b.ext` relative to `test/`. Directories are
+ * kept: a pattern that expands to one hands `node --test` a path it fails on.
+ */
 function allTestTreeFiles() {
   return readdirSync(join(REPO, 'test'), { recursive: true, withFileTypes: true })
-    .filter((e) => e.isFile())
     .map((e) => join(e.parentPath ?? e.path, e.name).slice(join(REPO, 'test').length + 1))
     .sort();
 }
@@ -242,5 +244,11 @@ test('the npm-test check refuses the scripts that pick up fixtures (module-toolk
   assert.throws(() => assertRunsExactlyTheSuites("node --test 'test/**/*.test.mjs'"), /reach test\/fixtures/);
   assert.throws(() => assertRunsExactlyTheSuites('node --test test/*'), /does not run exactly/);
   assert.throws(() => assertRunsExactlyTheSuites('node --test test/validate-*.test.mjs'), /does not run exactly/);
+  // A pattern that expands to a DIRECTORY is not a suite either: every Node from 22 to 26 fails
+  // the run on it («not ok … test/fixtures/real-modules»), red locally and green on CI again.
+  assert.throws(
+    () => assertRunsExactlyTheSuites('node --test test/*.test.mjs test/fixtures/*'),
+    /does not run exactly/,
+  );
   assert.ok(allTestTreeFiles().some((f) => f.startsWith('fixtures/') && f.endsWith('.ts')));
 });
