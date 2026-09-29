@@ -253,6 +253,20 @@ test('what only LOOKS like a comment is not skipped: `//` in a string or a templ
   }
 });
 
+test('an escaped slash of a regular expression does not open a comment: `/^https?:\\/\\//` is code', () => {
+  const values = ["href=${url.replace(/^https?:\\/\\//, '')}", "href=${s.replace(/\\/*$/, '')}"];
+  for (const value of values) {
+    const stray = `html\`<a ${value}\n  \${label}</a>\`;\nconst tail = '*/';`;
+    const clean = `html\`<a ${value}>\${label}</a>\`;\nconst tail = '*/';`;
+    assert.deepEqual(
+      strayElementParts(stray).map((found) => [found.tag, found.expr]),
+      [['a', 'label']],
+      stray,
+    );
+    assert.deepEqual(strayElementParts(clean), [], clean);
+  }
+});
+
 test('checkLitElementParts lets the closed tag of flows#149 through', () => {
   const m = mod({ 'ui/components/erp-flows-editor/erp-flows-editor.ts': FLOWS_149 });
   try {

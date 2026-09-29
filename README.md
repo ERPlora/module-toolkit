@@ -451,7 +451,9 @@ empiece una palabra nueva sin `=` delante, salvo `ref(…)`, `spread(…)` y `an
 dentro de la expresión importa (module-toolkit#421): el apóstrofo de `// … the owner's screen` leído
 como código abría una «cadena» hasta la siguiente comilla del fichero, y un `<input>` bien cerrado
 salía denunciado por una expresión de 570 líneas más abajo (flows#149) —o un `>` que sí faltaba
-pasaba sin verse—. Límite conocido: una expresión regular literal con una comilla o `//` dentro. **Sin lista de tolerados**: medido sobre
+pasaba sin verse—. La barra invertida escapa el carácter siguiente, así que el `\/\/` de
+`/^https?:\/\//` no es un comentario. Límite conocido: una expresión regular literal con una comilla o
+`//` sin escapar (`/[/]/`). **Sin lista de tolerados**: medido sobre
 `origin/main` de los 27 repos el 2026-09-28, 210 ficheros y **0 casos**; el control positivo es el
 `erp-flows-editor.ts` de flows justo antes de flows#145, que cae en su línea 3898.
 

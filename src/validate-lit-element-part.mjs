@@ -21,7 +21,8 @@
 // `// … the owner's screen` is not the start of a string. Read as one, it ran to the next quote of
 // the file, every quote after it was read inside out, and a closed `<input>` was reported for an
 // expression 570 lines below (flows#149) — or a real stray part was swallowed with the rest of the
-// file. Known limit: a regular expression literal holding a quote or `//` is still read as code.
+// file. A backslash escapes the next character, so the `\/\/` of `/^https?:\/\//` is not a comment.
+// Known limit: a regular expression literal with an unescaped quote or `//` (`/[/]/`) is read as code.
 import { readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { sourceFiles } from './validate-ionic-color.mjs';
@@ -38,7 +39,9 @@ function skipExpression(source, i) {
   let depth = 1;
   while (i < source.length) {
     const ch = source[i];
-    if (ch === '"' || ch === "'") i = skipString(source, i + 1, ch);
+    // Outside strings a backslash only escapes inside a regular expression: `\/\/` is not a comment.
+    if (ch === '\\') i += 2;
+    else if (ch === '"' || ch === "'") i = skipString(source, i + 1, ch);
     else if (ch === '`') i = skipTemplate(source, i + 1);
     else if (ch === '/' && source[i + 1] === '/') i = skipLineComment(source, i + 2);
     else if (ch === '/' && source[i + 1] === '*') i = skipBlockComment(source, i + 2);
