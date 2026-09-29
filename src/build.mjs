@@ -58,7 +58,7 @@ export async function build(moduleDir, { wasm = {}, sdk = {} } = {}) {
     console.log(`✓ wasm ${id}: ${handler.file} al día (no se recompila)`);
   }
 
-  await bundleWebComponent(dir, id, outfile);
+  await bundleWebComponent(dir, id, outfile, { sdkDir: sdk.sdkDir });
 
   const code = readFileSync(outfile, 'utf8');
   assertCspSafe(code, `${id} bundle`);

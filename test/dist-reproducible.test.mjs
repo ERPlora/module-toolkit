@@ -217,3 +217,25 @@ test('`erplora build <dir> --check --sdk <dir>`: exit 1 with the code on an old 
     rmSync(fresh.root, { recursive: true, force: true });
   }
 });
+
+// module-toolkit#392: the SDK moves on hub develop every few hours, and every move leaves the
+// committed bundle of every module behind it. Rebaking them all has to be one command that bakes
+// THE SDK it is handed — until this, `build --sdk <dir>` took the flag and baked whatever SDK the
+// toolkit resolved, so the only way to bake develop's was to re-point the toolkit's node_modules.
+test('`erplora build <dir> --sdk <dir>` bakes THAT SDK: the gate\'s rebuild matches it right after', async () => {
+  const f = await fixture({ builtWith: 'old' });
+  try {
+    const built = spawnSync(process.execPath, [CLI, 'build', f.mod, '--sdk', f.sdks.develop], { encoding: 'utf8' });
+    assert.equal(built.status, 0, built.stderr + built.stdout);
+    assert.match(readFileSync(f.dist, 'utf8'), /list_money_filters_need_currency_decimals/);
+    const check = spawnSync(process.execPath, [CLI, 'build', f.mod, '--check', '--sdk', f.sdks.develop], { encoding: 'utf8' });
+    assert.equal(check.status, 0, check.stderr + check.stdout);
+
+    // And back: the flag is what decides, not whatever the toolkit happens to resolve.
+    const old = spawnSync(process.execPath, [CLI, 'build', f.mod, `--sdk=${f.sdks.old}`], { encoding: 'utf8' });
+    assert.equal(old.status, 0, old.stderr + old.stdout);
+    assert.doesNotMatch(readFileSync(f.dist, 'utf8'), /list_money_filters_need_currency_decimals/);
+  } finally {
+    rmSync(f.root, { recursive: true, force: true });
+  }
+});

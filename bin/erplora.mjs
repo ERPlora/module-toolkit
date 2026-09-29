@@ -73,7 +73,7 @@ const usage = () => {
   g view <id> <vista>            añade una vista (Web Component Lit) a un módulo
   g command|query <id> <nombre>  añade un command/query SQL a un módulo
   dev <dir>                      preview del módulo con datos mock (CSP-safe)
-  build <dir>                    compila el WebComponent → dist/<id>.esm.js
+  build <dir> [--sdk <d>]        builds the Web Component → dist/<id>.esm.js (baking THAT SDK)
   build <dir> --check [--sdk <d>] rebuilds aside and fails if dist/<id>.esm.js differs
   validate <dir> [--pg]          valida el manifest + CSP del bundle + contratos (ADR-0127);
                                  con --pg, además PREPARA cada SQL contra un Postgres efímero
@@ -137,7 +137,8 @@ try {
         );
         break;
       }
-      await (await import('../src/build.mjs')).build(target(rest[0]));
+      // `--sdk <dir>` bakes THAT SDK (module-toolkit#392: the catalog rebake hands over develop's).
+      await (await import('../src/build.mjs')).build(target(rest[0]), sdkDir ? { sdk: { sdkDir: resolve(sdkDir) } } : {});
       break;
     case 'validate':
       need(rest[0], 'falta la ruta del módulo');
