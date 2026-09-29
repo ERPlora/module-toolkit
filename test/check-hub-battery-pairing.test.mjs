@@ -95,6 +95,31 @@ test('files outside `tests/` and non-batteries are ignored', () => {
   assert.deepEqual(added, []);
 });
 
+// module-toolkit#411: a hub battery's HARNESS (`tests/hub_harness.py`) reads the runtime url
+// too, so the content rule alone called it a battery and the gate demanded a hub line for it. But
+// the hub only discovers `*.test.py|sh` (`module-hub-batteries.sh`, `find -name '*.test.py'`):
+// that line would read «declared but not published» and turn the HUB red. The author of
+// payment_gateways#54 had no way out but to drop the battery. A battery is a battery by NAME first,
+// exactly as `run-batteries.mjs` (`BATTERY_RE`) and the hub see it; the content only picks its family.
+test('a harness that reads the hub url is NOT a battery: the hub would reject its line', () => {
+  const added = addedBatteries([
+    { path: 'tests/hub_harness.py', content: 'os.environ.get("ERPLORA_HUB_BASE_URL")\n' },
+    { path: 'tests/lib/hub_client.sh', content: 'curl "$ERPLORA_HUB_BASE_URL/api"\n' },
+    { path: 'tests/hub_harness.pyc', content: 'PAYMENT_GATEWAYS_HUB_BASE_URL' },
+    // A merge leftover: `.test.py` in the middle of the name, not at the end. The hub's `find`
+    // (`-name '*.test.py'`) never sees it, so the rule must be anchored like `BATTERY_RE`.
+    { path: 'tests/totals.hub.test.py.orig', content: 'os.environ["ERPLORA_HUB_BASE_URL"]\n' },
+  ]);
+  assert.deepEqual(added, []);
+});
+
+test('a `.test.sh` without `.hub.` in its name that reads the hub url still counts', () => {
+  const added = addedBatteries([
+    { path: 'tests/smoke.test.sh', content: 'curl "$PAYMENT_GATEWAYS_HUB_BASE_URL/health"\n' },
+  ]);
+  assert.deepEqual(added, ['tests/smoke.test.sh']);
+});
+
 // The whole point of the issue: «el mensaje de error tiene que nombrar LAS DOS ediciones — qué
 // línea falta y en qué fichero de qué repo—, nunca "no cuadra"». A message that only says the
 // pair is broken sends the author to read someone else's CI.
@@ -187,6 +212,27 @@ test('CLI: an undeclared battery exits 1 and names both edits', () => {
   assert.equal(code, 1);
   assert.match(output, /inventory\/tests\/combo_stock\.hub\.test\.py/);
   assert.match(output, /ERPlora\/hub/);
+});
+
+// The payment_gateways#54 shape, end to end: the new battery is declared, its new harness is not
+// (and must not be — the hub would reject it). Before #411 this exited 1 demanding
+// `payment_gateways/tests/hub_harness.py`.
+test('CLI: a declared battery plus its new harness exits 0 and does not ask for the harness', () => {
+  const b = bench({
+    moduleId: 'payment_gateways',
+    declared: ['payment_gateways/tests/deleted_gateway_frees_its_code.hub.test.py'],
+    batteries: {
+      'deleted_gateway_frees_its_code.hub.test.py': 'from hub_harness import Hub\n',
+      'hub_harness.py': 'BASE = os.environ.get("ERPLORA_HUB_BASE_URL")\n',
+    },
+  });
+  const { code, output } = run([
+    '--module-dir', b.moduleDir, '--sdk-path', b.sdkPath,
+    '--added', join(b.moduleDir, 'tests/deleted_gateway_frees_its_code.hub.test.py'),
+    '--added', join(b.moduleDir, 'tests/hub_harness.py'),
+  ]);
+  assert.equal(code, 0, output);
+  assert.doesNotMatch(output, /hub_harness\.py/);
 });
 
 test('CLI: a PR that adds no battery exits 0 and says nothing alarming', () => {

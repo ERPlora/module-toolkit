@@ -190,3 +190,65 @@ test('the zip detector recognises the calls it is there to catch', () => {
   assert.ok(NEEDS_ZIP.test("execFileSync('unzip', ['-p', zip])"));
   assert.ok(!NEEDS_ZIP.test("spawnSync('npm', ['pack'])"));
 });
+
+// `npm test` has to run the suites and nothing else (module-toolkit#400). A bare `node --test` leaves
+// the choice to Node's default discovery, and that set moves with the Node version: from 22.18 type
+// stripping is on without a flag and `**/test/**/*.ts` joins it, so the Lit fixture under
+// `test/fixtures/real-modules/` ran as a test and failed on its decorators — red on every laptop,
+// green on CI, which passes its own list. The script names its files, so the set is the same
+// everywhere: every suite CI runs plus the ones declared in CANNOT_RUN_IN_CI, and no fixture.
+
+/** The file patterns `scripts.test` hands to `node --test` (flags dropped). */
+function npmTestPatterns(script) {
+  const m = /^node --test(?:\s+(.*))?$/.exec(script.trim());
+  assert.ok(m, `scripts.test is expected to be \`node --test <patterns>\`, got «${script}»`);
+  return (m[1] ?? '').split(/\s+/).filter((a) => a && !a.startsWith('-'));
+}
+
+/**
+ * Every entry under `test/`, fixtures included, as `a/b.ext` relative to `test/`. Directories are
+ * kept: a pattern that expands to one hands `node --test` a path it fails on.
+ */
+function allTestTreeFiles() {
+  return readdirSync(join(REPO, 'test'), { recursive: true, withFileTypes: true })
+    .map((e) => join(e.parentPath ?? e.path, e.name).slice(join(REPO, 'test').length + 1))
+    .sort();
+}
+
+/** The files a script would run: what its patterns match in the `test/` tree. */
+function npmTestFiles(script) {
+  const patterns = npmTestPatterns(script);
+  assert.ok(
+    patterns.length > 0,
+    'scripts.test runs `node --test` with no pattern: which files run is then up to the Node ' +
+      'version (22.18+ also picks the .ts fixtures under test/), not to this repository',
+  );
+  for (const p of patterns) assert.ok(!p.includes('**'), `«${p}»: \`**\` would reach test/fixtures/`);
+  return allTestTreeFiles().filter((f) => patterns.some((p) => matches(p, f)));
+}
+
+/** Fails unless `script` runs every suite in `test/` and nothing else. */
+function assertRunsExactlyTheSuites(script) {
+  assert.deepEqual(npmTestFiles(script), SUITES, `«${script}» does not run exactly the suites`);
+}
+
+test('`npm test` runs exactly the suites, never the fixtures (module-toolkit#400)', () => {
+  const pkg = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8'));
+  assertRunsExactlyTheSuites(pkg.scripts.test);
+});
+
+test('the npm-test check refuses the scripts that pick up fixtures (module-toolkit#400)', () => {
+  // Control: the three shapes that reintroduce #400, so the check above cannot go green by
+  // accepting anything.
+  assert.throws(() => assertRunsExactlyTheSuites('node --test'), /no pattern/);
+  assert.throws(() => assertRunsExactlyTheSuites("node --test 'test/**/*.test.mjs'"), /reach test\/fixtures/);
+  assert.throws(() => assertRunsExactlyTheSuites('node --test test/*'), /does not run exactly/);
+  assert.throws(() => assertRunsExactlyTheSuites('node --test test/validate-*.test.mjs'), /does not run exactly/);
+  // A pattern that expands to a DIRECTORY is not a suite either: every Node from 22 to 26 fails
+  // the run on it («not ok … test/fixtures/real-modules»), red locally and green on CI again.
+  assert.throws(
+    () => assertRunsExactlyTheSuites('node --test test/*.test.mjs test/fixtures/*'),
+    /does not run exactly/,
+  );
+  assert.ok(allTestTreeFiles().some((f) => f.startsWith('fixtures/') && f.endsWith('.ts')));
+});
