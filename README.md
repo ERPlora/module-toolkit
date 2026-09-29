@@ -445,9 +445,13 @@ esa posición y el botón salga **vacío**, sin error ni aviso. Pasó con «Guar
 (flows#144, publicado así desde flows#116) y ningún gate lo vio.
 
 La puerta lee cada etiqueta de `ui/` (sin tests, `dist/` ni `node_modules/`) hasta su `>` real
-—saltando `${…}` con sus cadenas y plantillas anidadas, y sin leer como etiqueta lo citado en un
-comentario (la trampa de module-toolkit#367)— y rechaza toda `${…}` que empiece una palabra nueva sin
-`=` delante, salvo `ref(…)`, `spread(…)` y `animate(…)`. **Sin lista de tolerados**: medido sobre
+—saltando `${…}` con sus cadenas, plantillas anidadas y **comentarios** (`//` y `/* … */`), y sin leer
+como etiqueta lo citado en un comentario (la trampa de module-toolkit#367)— y rechaza toda `${…}` que
+empiece una palabra nueva sin `=` delante, salvo `ref(…)`, `spread(…)` y `animate(…)`. El comentario
+dentro de la expresión importa (module-toolkit#421): el apóstrofo de `// … the owner's screen` leído
+como código abría una «cadena» hasta la siguiente comilla del fichero, y un `<input>` bien cerrado
+salía denunciado por una expresión de 570 líneas más abajo (flows#149) —o un `>` que sí faltaba
+pasaba sin verse—. Límite conocido: una expresión regular literal con una comilla o `//` dentro. **Sin lista de tolerados**: medido sobre
 `origin/main` de los 27 repos el 2026-09-28, 210 ficheros y **0 casos**; el control positivo es el
 `erp-flows-editor.ts` de flows justo antes de flows#145, que cae en su línea 3898.
 

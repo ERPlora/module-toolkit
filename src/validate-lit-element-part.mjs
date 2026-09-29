@@ -16,6 +16,12 @@
 // The reader is a small tokenizer, not a regex: a Lit tag does not end at the first `>`
 // (`@click=${() => a > b}`), expressions nest templates and strings, and a tag NAMED in a comment is
 // not a tag (the trap of module-toolkit#367).
+//
+// A COMMENT inside an expression is not code either (module-toolkit#421): the apostrophe of
+// `// … the owner's screen` is not the start of a string. Read as one, it ran to the next quote of
+// the file, every quote after it was read inside out, and a closed `<input>` was reported for an
+// expression 570 lines below (flows#149) — or a real stray part was swallowed with the rest of the
+// file. Known limit: a regular expression literal holding a quote or `//` is still read as code.
 import { readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { sourceFiles } from './validate-ionic-color.mjs';
@@ -34,6 +40,8 @@ function skipExpression(source, i) {
     const ch = source[i];
     if (ch === '"' || ch === "'") i = skipString(source, i + 1, ch);
     else if (ch === '`') i = skipTemplate(source, i + 1);
+    else if (ch === '/' && source[i + 1] === '/') i = skipLineComment(source, i + 2);
+    else if (ch === '/' && source[i + 1] === '*') i = skipBlockComment(source, i + 2);
     else {
       if (ch === '{') depth += 1;
       else if (ch === '}') {
@@ -44,6 +52,18 @@ function skipExpression(source, i) {
     }
   }
   return i;
+}
+
+/** Index of the line break that ends a `//` comment whose body starts at `i`. */
+function skipLineComment(source, i) {
+  const end = source.indexOf('\n', i);
+  return end === -1 ? source.length : end;
+}
+
+/** Index right after the `*\/` that closes a block comment whose body starts at `i`. */
+function skipBlockComment(source, i) {
+  const end = source.indexOf('*/', i);
+  return end === -1 ? source.length : end + 2;
 }
 
 /** Index right after the closing quote of a string whose body starts at `i`. */

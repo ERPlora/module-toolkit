@@ -174,6 +174,94 @@ test('a tag named in a COMMENT is not read as a tag (the trap of module-toolkit#
   for (const src of clean) assert.deepEqual(strayElementParts(src), [], src);
 });
 
+// ── A comment INSIDE an expression is not code (module-toolkit#421) ───────────────────────────
+
+/**
+ * The shape that turned flows#149 red with nothing unclosed, as `erp-flows-editor.ts` has it: the
+ * handler of a CLOSED `<input>` carries a comment with an apostrophe (`comment`), and so does an
+ * expression of a later template (`later`). Read as code, the first apostrophe opens a «string» that
+ * runs to the second, the handler «ends» hundreds of lines below and the next child expression is
+ * reported as the stray part of that `<input>`.
+ */
+function flows149(comment, later, quote = "'") {
+  return [
+    'const iters = html`',
+    '  <input',
+    '    @change=${(e) =>',
+    '      this.setDoc({',
+    `        ${comment}`,
+    '        max_iters: 1,',
+    '      })}',
+    '  />',
+    '`;',
+    'const taps = html`',
+    '  ${this.renderValue({',
+    `    ${later}`,
+    '    template: true,',
+    '  })}',
+    '',
+    `  \${taps.kind === ${quote}list${quote} ? open : nothing}`,
+    '`;',
+    '',
+  ].join('\n');
+}
+
+const FLOWS_149 = flows149(
+  "// Clamping here keeps the refusal off the owner's screen.",
+  "// Meta's body.text is a string on the wire.",
+);
+
+test('flows#149 — an apostrophe in a comment of a handler does not open a string: the closed tag is clean', () => {
+  assert.deepEqual(strayElementParts(FLOWS_149), []);
+});
+
+test('a quote in a comment of an expression is not code, whatever the quote and the comment', () => {
+  const clean = [
+    flows149("/* keeps the refusal off the owner's screen */", "/* Meta's body is a string */"),
+    flows149("/**\n         * the owner's screen\n         */", "/** Meta's body */"),
+    flows149('// a 2" pipe', '// a 3" pipe', '"'),
+  ];
+  for (const src of clean) assert.deepEqual(strayElementParts(src), [], src);
+});
+
+test('the stray part after a handler with a comment is still found, at the line its tag opens', () => {
+  const stray = [
+    // a quote: read as a string, it would swallow the rest of the file and the stray part with it
+    "html`\n<ion-button @click=${() => {\n  // keeps the owner's place\n  f();\n}}\n  ${label}</ion-button>`",
+    "html`\n<ion-button @click=${() => { /* the owner's place */ f(); }}\n  ${label}</ion-button>`",
+    // a brace or a backtick: read as code, the expression would end somewhere else
+    'html`\n<ion-button @click=${() => { /* { */ f(); }}\n  ${label}</ion-button>`',
+    'html`\n<ion-button @click=${() => {\n  // }\n  f();\n}}\n  ${label}</ion-button>`',
+    'html`\n<ion-button @click=${() => { /* a ` tick */ f(); }}\n  ${label}</ion-button>`',
+  ];
+  for (const src of stray) {
+    assert.deepEqual(
+      strayElementParts(src).map((found) => [found.tag, found.line, found.expr]),
+      [['ion-button', 2, 'label']],
+      src,
+    );
+  }
+});
+
+test('what only LOOKS like a comment is not skipped: `//` in a string or a template, and a division', () => {
+  const values = ["href=${'https://erplora.com'}", 'href=${`https://${host}/x`}', '.ratio=${a / b}'];
+  for (const value of values) {
+    const stray = `html\`<ion-button ${value} @click=\${f}\n  \${label}</ion-button>\``;
+    const clean = `html\`<ion-button ${value} @click=\${f}>\${label}</ion-button>\``;
+    assert.equal(strayElementParts(stray).length, 1, stray);
+    assert.deepEqual(strayElementParts(clean), [], clean);
+  }
+});
+
+test('checkLitElementParts lets the closed tag of flows#149 through', () => {
+  const m = mod({ 'ui/components/erp-flows-editor/erp-flows-editor.ts': FLOWS_149 });
+  try {
+    assert.deepEqual(checkLitElementParts(m.dir, m.manifest).errors, []);
+  } finally {
+    m.clean();
+  }
+});
+
 // ── The module gate ────────────────────────────────────────────────────────────────────────────
 
 test('checkLitElementParts reports the file and the line of an unclosed tag in ui/', () => {
