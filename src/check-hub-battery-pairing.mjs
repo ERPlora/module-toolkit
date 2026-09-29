@@ -23,7 +23,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 
-import { HUB_NAME_RE, HUB_CONTENT_RE } from './run-batteries.mjs';
+import { BATTERY_RE, HUB_NAME_RE, HUB_CONTENT_RE } from './run-batteries.mjs';
 
 /** Where the reviewed list lives inside an `ERPlora/hub` checkout. */
 export const HUB_LIST_PATH = 'scripts/ci/module-hub-batteries.txt';
@@ -47,6 +47,12 @@ export function parseDeclarations(text) {
  * module-toolkit#55 measured: 20 files in 7 modules invisible. If the two sides disagreed on what a
  * battery IS, this guard would close one asymmetry by opening another.
  *
+ * And a battery is a battery by NAME first (`*.test.py|sh`, `BATTERY_RE`) — the content only says
+ * which FAMILY it belongs to. That is how `discoverBatteries` reads it and the only files the hub's
+ * `find` ever looks at. Without it a battery's harness (`tests/hub_harness.py`, which reads the
+ * runtime url too) was demanded as a battery, and the line the author was told to add would have
+ * turned the hub red as «declared but not published» (module-toolkit#411, payment_gateways#54).
+ *
  * @param {{path: string, content: string}[]} files paths relative to the module directory
  */
 export function addedBatteries(files) {
@@ -54,7 +60,7 @@ export function addedBatteries(files) {
     .filter(({ path }) => {
       const parts = path.split('/');
       if (parts[0] !== 'tests') return false;
-      return !PLUMBING.has(parts[parts.length - 1]);
+      return !PLUMBING.has(parts[parts.length - 1]) && BATTERY_RE.test(path);
     })
     .filter(({ path, content }) => HUB_NAME_RE.test(path) || HUB_CONTENT_RE.test(content ?? ''))
     .map(({ path }) => path);

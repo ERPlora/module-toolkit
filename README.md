@@ -435,6 +435,22 @@ multilínea que un grep de una línea no veía— y `sales`) se toleraban; `kitc
 (techo 3/3); cada módulo lo arregla en su repo
 y borra antes su línea. La premisa está anclada a `@ionic/core` en `test/validate-ionic-class.test.mjs`.
 
+## La etiqueta Lit sin su `>` que deja el elemento vacío (module-toolkit#398)
+
+`src/validate-lit-element-part.mjs`. En una plantilla Lit, una expresión `${…}` dentro de una etiqueta
+de apertura **sin atributo delante** es una *parte de elemento*: Lit enlaza ahí directivas de
+elemento (`ref`, `spread`) e ignora en silencio cualquier otro valor. Basta con olvidar el `>`
+—`<ion-button @click=${…}` y en la línea siguiente `${label}</ion-button>`— para que el texto caiga en
+esa posición y el botón salga **vacío**, sin error ni aviso. Pasó con «Guardar» del editor de flows
+(flows#144, publicado así desde flows#116) y ningún gate lo vio.
+
+La puerta lee cada etiqueta de `ui/` (sin tests, `dist/` ni `node_modules/`) hasta su `>` real
+—saltando `${…}` con sus cadenas y plantillas anidadas, y sin leer como etiqueta lo citado en un
+comentario (la trampa de module-toolkit#367)— y rechaza toda `${…}` que empiece una palabra nueva sin
+`=` delante, salvo `ref(…)`, `spread(…)` y `animate(…)`. **Sin lista de tolerados**: medido sobre
+`origin/main` de los 27 repos el 2026-09-28, 210 ficheros y **0 casos**; el control positivo es el
+`erp-flows-editor.ts` de flows justo antes de flows#145, que cae en su línea 3898.
+
 ## El filtro «desde / hasta» sobre un importe que la lista no declara (module-toolkit#375)
 
 `src/validate-money-filters.mjs`. El dinero viaja en la unidad mínima (ADR-0123) y la cantidad en
@@ -925,6 +941,38 @@ por el mismo motivo medido en module-toolkit#55. Recibe por entorno:
 | `ERPLORA_HUB_BASE_URL` / `<ID>_HUB_BASE_URL` | la url del runtime vivo |
 | `ERPLORA_HUB_ID` | el `hub_id` del runtime (`GET /api/hub/context`), bajo el que están sus seeds |
 | `ERPLORA_HUB_IMAGE` | la referencia exacta contra la que se está probando |
+| `ERPLORA_HUB_PSQL` | una sesión `psql` en la **base de datos donde escribe ese hub** (module-toolkit#405); vacía si el arnés no la da |
+
+**`ERPLORA_HUB_PSQL`, el contrato SQL de la familia `hub`.** Una batería que necesita tocar la BD
+del hub por debajo de la API —dejar una transacción abierta para probar una carrera entre dos cajas
+(`services/tests/grant_race.hub.test.py`), o leer lo que un comando dejó escrito— **no la adivina**:
+la recibe. Es un comando de palabras separadas por espacios, sin comillas, al que la batería le
+añade sus propias opciones de `psql`:
+
+```python
+import os, shlex, subprocess, sys
+psql = shlex.split(os.environ.get("ERPLORA_HUB_PSQL", ""))
+if not psql:
+    sys.exit("ERPLORA_HUB_PSQL vacía: sin sesión SQL del hub esto es un fallo, no un skip")
+subprocess.run(psql + ["-tAc", "SELECT count(*) FROM …"], stdin=subprocess.DEVNULL, …)
+# o una sesión con una transacción abierta: Popen(psql, stdin=PIPE) y «BEGIN; …» por stdin
+```
+
+Los **dos** arneses que corren baterías contra un hub vivo la ponen con el mismo nombre y la misma
+forma, `docker exec -i <contenedor> psql -U <usuario> -v ON_ERROR_STOP=1 -d <bd>`:
+
+| Arnés | Contenedor | Base de datos |
+|---|---|---|
+| `erplora test --against-hub` | el Postgres efímero de la corrida (`erplora-ah-pg-*`) | `postgres`, la del `HUB_DATABASE_URL` del hub |
+| el corredor del hub (`scripts/ci/run-module-hub-batteries.sh`, CI del hub) | el contenedor de servicio del job (`--pg-container`) | la scratch de ese módulo (`hubbat_<módulo>_<sello>`) |
+
+Por qué no vale buscarla con `docker ps`: bajo `--against-hub` el puerto del hub lo publica su
+Postgres, pero la CI del hub arranca un `erplora-server` **nativo** sobre una BD scratch y ningún
+contenedor publica ese puerto — la batería de carrera de bonos devolvió `found []` y dejó en rojo un
+lote develop→main del hub sin que el módulo tuviera ningún fallo (services#130). El fixture de
+referencia lo comprueba contra el kernel real: lee con `ERPLORA_HUB_PSQL` las filas que acaba de
+escribir por `/api/command`, bajo el `hub_id` del runtime (con otra BD, o con la variable vacía,
+falla).
 
 🔴 **Sin `--against-hub`, una batería de esta familia sale como «sin correr», con su motivo — nunca
 como verde.** Es la misma regla que las de Postgres sin contenedor: contarla por buena sería
@@ -938,7 +986,8 @@ en verde; antes de module-toolkit#135 `inventory` moría en `missing_dependency`
 (`test/fixtures/against-hub/kernel_fixture`) está hecho a propósito de cosas que solo el kernel
 enseña: `:new_id`/`:hub_id` los inyecta el runtime y no el payload; un `BIGINT` vuelve por HTTP como
 **string** JSON; la misma query bajo otro `X-Hub-Id` no ve **nada**; y un payload que rompe su
-propio JSON Schema lo rechaza el runtime, no el test.
+propio JSON Schema lo rechaza el runtime, no el test; y `ERPLORA_HUB_PSQL` abre la BD donde el
+runtime acaba de escribir.
 
 **Todavía NO está enganchado al gate compartido**, y se dice en voz alta: `module-gate.yml` corre en
 los 27 repos de módulo, que son **privados**, y en el plan Free los secretos de organización no
@@ -952,7 +1001,10 @@ de su propio ref —no contra una imagen publicada— y levantando **un hub por 
 lista no se quede atrás, la otra mitad del cierre está aquí: `src/check-hub-battery-pairing.mjs`
 (con su action `check-hub-battery-pairing`, module-toolkit#163 ← ERPlora/hub#1439) pone en rojo la
 PR de un módulo que **añade** una batería `*.hub.test.py|sh` sin declararla en el hub en esa misma
-pull request.
+pull request. Batería es solo lo que se llama `*.test.py|sh` —lo mismo que descubre el `find` del
+hub—; el contenido (`_HUB_BASE_URL`) decide la familia, no si es batería. Un ayudante como
+`tests/hub_harness.py` no se declara: el hub rechazaría su línea como «declarada pero no publicada»
+(module-toolkit#411).
 
 ## El gate de CI de los repos de módulo (ERPlora/pm#107)
 

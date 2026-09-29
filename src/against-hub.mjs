@@ -55,6 +55,13 @@ export const DEV_HUB_ROW_ID = 'local';
 /** Where the module directory is mounted inside the container (the hub's staging root, hub#239). */
 export const STAGING_ROOT = '/erplora-staging';
 
+/**
+ * Where the hub writes. One constant because TWO things read it: the hub's `HUB_DATABASE_URL`, and
+ * the `ERPLORA_HUB_PSQL` session handed to the batteries — which has to open THIS database, not a
+ * second guess of it (module-toolkit#405).
+ */
+const HUB_DATABASE_URL = 'postgres://postgres:postgres@localhost:5432/postgres';
+
 /** Port the image listens on (`HUB_BIND=0.0.0.0:8787`, `docker/Dockerfile`). */
 const HUB_PORT = 8787;
 
@@ -145,14 +152,37 @@ export function resolveImageRef(value) {
  * The environment a hub battery reads. Generic AND derived from the manifest id, the same shape
  * `pgContainerVars` already uses — so a battery written tomorrow needs no change here.
  */
-export function hubBatteryVars(moduleId, { baseUrl, hubId = DEV_HUB_ROW_ID, image = '' } = {}) {
+export function hubBatteryVars(moduleId, { baseUrl, hubId = DEV_HUB_ROW_ID, image = '', psql = '' } = {}) {
   return {
     [`${moduleId.toUpperCase()}_HUB_BASE_URL`]: baseUrl,
     ERPLORA_HUB_BASE_URL: baseUrl,
     ERPLORA_HUB_ID: hubId,
     ERPLORA_HUB_IMAGE: image,
+    // Always present, empty when nobody handed a session over: the battery that needs SQL reads
+    // «no session here» and FAILS, instead of falling back to a guess (module-toolkit#405).
+    ERPLORA_HUB_PSQL: psql,
     ERPLORA_MODULE_ID: moduleId,
   };
+}
+
+/**
+ * `ERPLORA_HUB_PSQL` — a psql session on the database the hub under test WRITES TO
+ * (module-toolkit#405). Before it, a battery that had to hold a transaction open in that database
+ * (the voucher race of `services/tests/grant_race.hub.test.py`) guessed where it was with
+ * `docker ps`: that finds the container publishing the hub's port under `--against-hub`, and
+ * NOTHING in the hub's CI, whose runner boots a native `erplora-server` on a scratch database of
+ * the job's service container (services#130 turned a hub release red with a module that had no
+ * fault).
+ *
+ * The contract, shared word for word with the hub's `scripts/ci/run-module-hub-batteries.sh`
+ * (its default admin command `docker exec -i <pg> psql -U <user> -v ON_ERROR_STOP=1` plus
+ * `-d <scratch db>`): whitespace-separated words, no quoting, that a battery splits and runs with
+ * its own psql flags appended (`-tAc <sql>`, or a script on stdin — hence `-i`).
+ */
+export function hubPsqlCommand({ container, user = 'postgres', database } = {}) {
+  if (!container) throw new Error('hubPsqlCommand: falta el contenedor de Postgres del hub');
+  if (!database) throw new Error('hubPsqlCommand: falta la base de datos del hub');
+  return `docker exec -i ${container} psql -U ${user} -v ON_ERROR_STOP=1 -d ${database}`;
 }
 
 // ── the catalogue a hub battery needs ────────────────────────────────────────────────────────
@@ -582,7 +612,7 @@ export async function withHubRuntime(
       // a battery talk to `/api/query` without a session. Both are the point of a scratch hub.
       '-e', 'HUB_AUTH=dev',
       '-e', 'HUB_DEV_MODE=1',
-      '-e', 'HUB_DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres',
+      '-e', `HUB_DATABASE_URL=${HUB_DATABASE_URL}`,
       // The staging root the installer confines `dir` to. `HUB_MODULES_DIR` is deliberately NOT
       // set: with it, the boot scan would install the module (and every companion mounted next to
       // it) by itself, and the explicit calls through the real door — the thing being tested —
@@ -644,7 +674,13 @@ export async function withHubRuntime(
         `\`GET /api/hub/context\` no devolvió un \`hub_id\` utilizable: ${JSON.stringify(context)}`,
       );
     }
-    const live = { baseUrl, hubId, image, container: hub };
+    const hubDb = new URL(HUB_DATABASE_URL);
+    const psql = hubPsqlCommand({
+      container: pg,
+      user: decodeURIComponent(hubDb.username),
+      database: hubDb.pathname.slice(1),
+    });
+    const live = { baseUrl, hubId, image, container: hub, psql };
 
     for (const entry of plan.skipped) {
       log(`  · vecino ${entry.id} sin instalar: ${entry.reason}`);
