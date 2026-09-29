@@ -70,8 +70,11 @@ function catalog() {
   });
   const sdkRev = git(hub, 'log', '-1', '--format=%H', 'develop', '--', 'packages/module-sdk', 'packages/module-types').slice(0, 10);
   // The checkout the fleet shares is on another branch: the script reads develop, never the tree.
+  // Committed there, so that branch's HEAD has an SDK revision of its own: the rebake branch is named
+  // after DEVELOP's, or a stale checkout would name it after an older SDK and dedupe against it.
   git(hub, 'checkout', '-q', '-b', 'feature/elsewhere');
   write(join(hub, 'packages/module-sdk/src/index.ts'), 'export const moneyFilter = (v) => v; // not develop\n');
+  git(hub, 'commit', '-qam', 'an SDK change that is not on develop');
 
   const mods = join(root, 'modules');
   const module = (id, dist, extra = {}) => {
@@ -176,7 +179,8 @@ test('a stale bundle gets one branch with ONLY dist/ rebaked with develop\'s SDK
     const log = c.ghLog();
     assert.match(log, new RegExp(`pr create --repo ERPlora/stale --base main --head ${branch} `));
     // It supersedes the older rebake of that module — and only that one.
-    assert.match(log, /pr close 41 --repo ERPlora\/stale /);
+    // …taking its branch with it: a superseded rebake/sdk-* left on the remote is noise forever.
+    assert.match(log, /pr close 41 --repo ERPlora\/stale .*--delete-branch/);
     assert.doesNotMatch(log, /pr close (77|12) /);
     assert.match(r.stdout, /^stale\topened\thttps:\/\/github.com\/ERPlora\/stale\/pull\/77$/m);
   } finally {
