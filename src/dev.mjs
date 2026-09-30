@@ -10,7 +10,7 @@
 // Nota: el layout (sidebar/drawer) es CSS flex por robustez; los COMPONENTES son Ionic + OutfitKit.
 // (ion-split-pane/ion-menu sin router no maquetan bien fuera del shell real del Hub.)
 import { context as esContext } from 'esbuild';
-import { readFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve, join, extname, basename } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -516,8 +516,9 @@ export async function startDev(moduleDir, opts = {}) {
   const outfitkit = devOutfitkit(modDirs, opts.outfitkit);
   for (const w of outfitkit.warnings) console.warn(`⚠ ${w}`);
 
-  const outDir = join(tmpdir(), `erplora-dev-${preselect || 'workspace'}`);
-  mkdirSync(outDir, { recursive: true });
+  // One folder per preview, not per module id: two previews of the same module (a branch and main,
+  // side by side) used to share it and serve each other's build (module-toolkit#432).
+  const outDir = mkdtempSync(join(tmpdir(), `erplora-dev-${preselect || 'workspace'}-`));
 
   // Every rebuild has to be VISIBLE (module-toolkit#81). `logLevel: 'silent'` stays — the plugin
   // below prints a better report than esbuild's default and, crucially, also flips `status`, which
@@ -581,6 +582,7 @@ export async function startDev(moduleDir, opts = {}) {
   const close = async () => {
     await ctx.dispose();
     await new Promise((r) => server.close(r));
+    rmSync(outDir, { recursive: true, force: true });
   };
   return { port: listening, outfitkit, close };
 }
