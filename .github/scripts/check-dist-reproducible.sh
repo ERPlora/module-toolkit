@@ -10,8 +10,10 @@
 #   - the SDK: `<module-sdk-dir>`, the hub develop checkout the gate already has on disk;
 #   - esbuild and Lit: the versions the toolkit LOCKS (`package-lock.json`), which is what
 #     `npm ci` gives whoever builds;
-#   - OutfitKit: the version the module SEALED in `dist/outfitkit.json` (hub#1024). Without a
-#     seal none is installed and the check itself reports the bundle as unsealed.
+#   - OutfitKit: the version the module SEALED in `dist/outfitkit.json` (hub#1024). Not installed
+#     here: `build --check` fetches it from npm into its own cache and bakes it from there
+#     (module-toolkit#423). Linking it into the toolkit would put back the local copy the bundle must
+#     not bake; an unpublished seal, or no seal at all, is the check's own verdict.
 # Guard: test/check-dist-reproducible-script.test.mjs (run for real, with a fake npm).
 set -euo pipefail
 
@@ -46,17 +48,7 @@ npm_install() {
   npm install --prefix "$deps" --cache "$deps/.npm-cache" --no-audit --no-fund --loglevel=error --legacy-peer-deps "$@"
 }
 
-sealed=$(node -e 'try { process.stdout.write(String(require(process.argv[1]).outfitkit ?? "")) } catch {}' "$mod/dist/outfitkit.json")
-if [ -n "$sealed" ]; then
-  # In one install with the rest, so OutfitKit's own Lit dedupes onto the locked one.
-  if ! npm_install "${baked[@]}" "@erplora/outfitkit@$sealed"; then
-    echo "::error::the bundle was built with @erplora/outfitkit@$sealed (dist/outfitkit.json) and npm could not install that version: no rebuild can reproduce it. Rebuild with a published OutfitKit and commit dist/ (erplora build <dir>)"
-    exit 1
-  fi
-  baked+=("@erplora/outfitkit@$sealed")
-else
-  npm_install "${baked[@]}"
-fi
+npm_install "${baked[@]}"
 
 # ESM ignores NODE_PATH: each package has to be resolvable from the toolkit itself.
 for spec in "${baked[@]}"; do

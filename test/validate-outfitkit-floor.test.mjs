@@ -135,11 +135,15 @@ test('no floor + a bake ahead of every hub WARNS on validate and BLOCKS on publi
 test('the two ways out are priced, not just named', () => {
   // An escape hatch whose cost is hidden is not a choice, it is a trap: declaring the next tag
   // stops the module installing on the WHOLE live fleet until that tag ships (hub#521), and
-  // rebuilding lower means moving `../outfitkit`, a checkout the author does not own.
+  // rebuilding lower means pinning `@erplora/outfitkit` in the module's package.json — `build`
+  // bakes the declared npm version, not a sibling `../outfitkit` checkout (module-toolkit#423) —
+  // which freezes the module out of every later OutfitKit fix until the pin is removed.
   const { dir, manifest } = moduleDir({ stamp: '0.1.99' });
   const [blocked] = checkOutfitkitFloor(dir, manifest, { publishing: true }).errors;
   assert.match(blocked, /dejará de instalarse/, 'the cost of declaring the next tag');
-  assert.match(blocked, /\.\.\/outfitkit/, 'the cost of rebuilding lower');
+  assert.match(blocked, /"@erplora\/outfitkit": "0\.1\.98"/, 'the way to rebuild lower');
+  assert.match(blocked, /no recibe las mejoras/, 'the cost of rebuilding lower');
+  assert.doesNotMatch(blocked, /\.\.\/outfitkit/, 'moving ../outfitkit no longer changes what build bakes');
 });
 
 test('the block ALWAYS leaves a one-line way out, even when no hub ships the bake yet', () => {

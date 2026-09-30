@@ -18,12 +18,13 @@ import { bundleStampFile, checkBundleProvenance, stampBundle } from './bundle-fr
 import { bundleWebComponent, resolveEntry } from './bundle-web-component.mjs';
 import { buildWasmHandler } from './wasm.mjs';
 import { assertSdkFresh } from './sdk-freshness.mjs';
+import { resolveOutfitkit } from './outfitkit-ci.mjs';
 
 // The bundling recipe is shared with `build --check` (module-toolkit#389); re-exported here, where
 // callers (and test/build-entry.test.mjs) have always found it.
 export { bundleWebComponent, resolveEntry };
 
-export async function build(moduleDir, { wasm = {}, sdk = {} } = {}) {
+export async function build(moduleDir, { wasm = {}, sdk = {}, outfitkit = {} } = {}) {
   const dir = resolve(process.cwd(), moduleDir);
   const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
   const id = manifest.id;
@@ -42,6 +43,12 @@ export async function build(moduleDir, { wasm = {}, sdk = {} } = {}) {
     );
   }
 
+  // module-toolkit#423: the OutfitKit the module gate installs (npm: what the module declares, or
+  // `latest`), never the toolkit's local copy — a link to the shared `outfitkit/` checkout that
+  // sealed 0.1.79 into 21 modules whose tests ran against 0.1.125. Resolved BEFORE dist/ is touched:
+  // without npm this throws, it never falls back to the checkout. `outfitkit.env` is for tests.
+  const ok = resolveOutfitkit(dir, outfitkit);
+
   const outfile = join(dir, 'dist', `${id}.esm.js`);
   mkdirSync(join(dir, 'dist'), { recursive: true });
 
@@ -58,7 +65,7 @@ export async function build(moduleDir, { wasm = {}, sdk = {} } = {}) {
     console.log(`✓ wasm ${id}: ${handler.file} al día (no se recompila)`);
   }
 
-  await bundleWebComponent(dir, id, outfile, { sdkDir: sdk.sdkDir });
+  await bundleWebComponent(dir, id, outfile, { sdkDir: sdk.sdkDir, outfitkitPrefix: ok.prefix });
 
   const code = readFileSync(outfile, 'utf8');
   assertCspSafe(code, `${id} bundle`);
@@ -81,15 +88,11 @@ export async function build(moduleDir, { wasm = {}, sdk = {} } = {}) {
   stampBundle(dir, manifest);
   console.log(`✓ freshness ${id}: ${bundleStampFile(id)} (sello de ui/)`);
 
-  // El SELLO de OutfitKit (ERPlora/hub#1024): con qué versión se horneó este bundle. En un hub real
-  // el shell define sus `ok-*` primero y el `define()` horneado —que está guardado— pierde en
-  // silencio, así que el módulo corre con una OutfitKit que no es la suya y nadie lo compara. El
-  // sello no arregla esa deriva: la hace visible (el shell avisa cuando descarta una copia distinta).
-  const okVersion = stampOutfitkit(dir);
-  console.log(
-    okVersion
-      ? `✓ outfitkit ${id}: dist/${OUTFITKIT_STAMP} (horneada ${okVersion})`
-      : `⚠ outfitkit ${id}: sin versión resoluble — el bundle va SIN sello y el shell no podrá avisar de una deriva`,
-  );
+  // The OutfitKit SEAL (ERPlora/hub#1024): which version this bundle baked. In a real hub the shell
+  // defines its `ok-*` first and the baked, guarded `define()` loses in silence, so the module runs
+  // with an OutfitKit that is not its own; the seal makes that drift visible. Since
+  // module-toolkit#423 it is also what the gate's screen tests install and `build --check` rebuilds with.
+  stampOutfitkit(dir, { version: ok.version });
+  console.log(`✓ outfitkit ${id}: dist/${OUTFITKIT_STAMP} (baked ${ok.version} from npm, what the module gate installs)`);
   return outfile;
 }

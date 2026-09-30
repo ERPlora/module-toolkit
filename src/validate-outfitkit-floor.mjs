@@ -61,6 +61,12 @@
 // nunca. Y el trinquete de #201 sigue en pie: con número real, `validate` sigue avisando y quien
 // bloquea sigue siendo `pack`, porque el sello lo pone `../outfitkit`, no el autor.
 //
+// 🔵 **module-toolkit#423 — the seal no longer comes from `../outfitkit`.** `build` bakes and seals
+// what the module's `package.json` declares or, when it declares nothing (all 27 today), npm's
+// `latest` — the one the gate's screen tests run against. Still ahead of the fleet by design and
+// still not the author's pick by default, so the split above stands: warning in `validate`, red in
+// `pack`. What changed is the way out: pin a version in the module's `package.json`, not the checkout.
+//
 // 🔵 **module-toolkit#346 — the stamp is compared only when the SHELL components need it.** The
 // shell defines just the `ok-*` it imports (22, `SHELL_OUTFITKIT_COMPONENTS`); every other `ok-*`
 // in the bundle is painted by the module's own copy, so a newer stamp is only a problem if the
@@ -403,10 +409,10 @@ export function checkOutfitkitFloor(
           'puede haberse quedado atrás'
         : `medido en el hub ${source.hub}, que publica su propio sello (ERPlora/hub#1588)`
       : 'deducido por la fecha del tag (`HUB_OUTFITKIT`), no medido';
-  // 🔴 Las dos salidas se dan CON SU PRECIO. Una salida cuyo coste se calla no es una elección, es
-  // una trampa: declarar el tag siguiente deja el módulo sin instalarse en NINGÚN hub vivo hasta
-  // que ese tag salga (hub#521 lo aplica), y reconstruir más abajo obliga a mover `../outfitkit`,
-  // que es un checkout compartido y no es del autor. Quien decide con el coste delante elige bien.
+  // 🔴 Both ways out come WITH THEIR PRICE. A way out whose cost goes unsaid is a trap, not a
+  // choice: declaring the next tag leaves the module installable on NO live hub until that tag
+  // ships (hub#521 enforces it), and rebuilding lower pins the module to an older OutfitKit — the
+  // one `build` bakes and the gate's screen tests run against (module-toolkit#423).
   const howToDeclare = needed
     ? `Declara \`"compatibility": { "min_erplora_version": "${needed.hub}" }\` en el manifest ` +
       `(el hub más antiguo que lleva OutfitKit ${stamp}) — el hub lo aplica al instalar (hub#521) ` +
@@ -420,8 +426,10 @@ export function checkOutfitkitFloor(
       'rechace la instalación con un mensaje accionable (hub#521) en vez de pintar la pantalla mal ' +
       `— COSTE: el módulo dejará de instalarse en TODA la flota viva (${newestHub.hub} y ` +
       'anteriores) hasta que salga ese tag; (b) reconstruir contra ' +
-      `${newestHub.outfitkit} — COSTE: hay que bajar el checkout compartido \`../outfitkit\`, que ` +
-      'no es tuyo, así que afecta a quien esté trabajando en él.';
+      `${newestHub.outfitkit}: declara \`"@erplora/outfitkit": "${newestHub.outfitkit}"\` en el ` +
+      '`package.json` del módulo y vuelve a correr `erplora build` (hornea y sella esa versión, y ' +
+      'con ella corren sus tests en el gate; module-toolkit#423) — COSTE: el módulo no recibe las ' +
+      'mejoras de OutfitKit posteriores hasta que quites la declaración.';
 
   // module-toolkit#346: the stamp is ONE version for the whole bundle, but the hub's version only
   // decides the `ok-*` its shell defines — the rest are painted by the module's own copy. So before
@@ -509,13 +517,13 @@ export function checkOutfitkitFloor(
       'así que no hay ' +
       'uno solo que pueda pintarlo. Los `ok-*` que pintan son los del SHELL, no los del bundle ' +
       '(ADR-0133): la pantalla sale rota en casa del cliente y él no puede arreglarlo. ';
-    // El trinquete de la cabecera: en `validate` es aviso porque el sello lo pone el checkout
-    // compartido, no el autor; en `pack` es rojo porque ahí es donde el zip sale hacia un cliente.
+    // The ratchet from the header: a warning in `validate`, because `build` seals npm's latest
+    // OutfitKit, which runs ahead of the fleet by design; red in `pack`, where the zip leaves for a client.
     if (publishing) errors.push(`${said}${howToDeclare}`);
     else {
       warnings.push(
-        `${said}NO se bloquea aquí a propósito: el sello sale del checkout compartido ` +
-          '`../outfitkit`, que va por delante de la flota por diseño, así que un rojo en `validate` ' +
+        `${said}NO se bloquea aquí a propósito: \`erplora build\` sella la última OutfitKit de npm ` +
+          '(module-toolkit#423), que va por delante de la flota por diseño, así que un rojo en `validate` ' +
           'pararía a todo módulo que toque su UI por la cadencia de release del hub. Donde SÍ para ' +
           `es en \`erplora pack\`, antes de que el zip llegue a un cliente. ${howToDeclare}`,
       );

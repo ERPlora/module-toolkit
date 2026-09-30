@@ -51,6 +51,18 @@ if (sdkAt !== -1) {
     process.exit(1);
   }
 }
+// `--outfitkit <version>` (`build`, module-toolkit#423): bake THAT OutfitKit from npm instead of
+// what the module declares or `latest` — how merge-pr.sh keeps the version both sides sealed.
+let outfitkitVersion;
+const okAt = argv.findIndex((a) => a === '--outfitkit' || a.startsWith('--outfitkit='));
+if (okAt !== -1) {
+  const [flag, value] = argv.splice(okAt, argv[okAt] === '--outfitkit' ? 2 : 1);
+  outfitkitVersion = flag === '--outfitkit' ? value : flag.slice('--outfitkit='.length);
+  if (!outfitkitVersion) {
+    console.error('✗ --outfitkit needs the version of @erplora/outfitkit to bake (e.g. 0.1.125)');
+    process.exit(1);
+  }
+}
 const againstHub = parseAgainstHub(argv, { positionals: true });
 // Flags are separated from positional args so `erplora validate <dir> --pg` works in any order.
 const flags = new Set(againstHub.positionals.filter((a) => a.startsWith('--')));
@@ -73,7 +85,7 @@ const usage = () => {
   g view <id> <vista>            añade una vista (Web Component Lit) a un módulo
   g command|query <id> <nombre>  añade un command/query SQL a un módulo
   dev <dir>                      preview del módulo con datos mock (CSP-safe)
-  build <dir> [--sdk <d>]        builds the Web Component → dist/<id>.esm.js (baking THAT SDK)
+  build <dir> [--sdk <d>] [--outfitkit <v>]  builds the Web Component → dist/<id>.esm.js (baking THAT SDK / OutfitKit)
   build <dir> --check [--sdk <d>] rebuilds aside and fails if dist/<id>.esm.js differs
   validate <dir> [--pg]          valida el manifest + CSP del bundle + contratos (ADR-0127);
                                  con --pg, además PREPARA cada SQL contra un Postgres efímero
@@ -137,8 +149,12 @@ try {
         );
         break;
       }
-      // `--sdk <dir>` bakes THAT SDK (module-toolkit#392: the catalog rebake hands over develop's).
-      await (await import('../src/build.mjs')).build(target(rest[0]), sdkDir ? { sdk: { sdkDir: resolve(sdkDir) } } : {});
+      // `--sdk <dir>` bakes THAT SDK (module-toolkit#392: the catalog rebake hands over develop's);
+      // `--outfitkit <version>` THAT OutfitKit, from npm (module-toolkit#423).
+      await (await import('../src/build.mjs')).build(target(rest[0]), {
+        ...(sdkDir ? { sdk: { sdkDir: resolve(sdkDir) } } : {}),
+        ...(outfitkitVersion ? { outfitkit: { version: outfitkitVersion } } : {}),
+      });
       break;
     case 'validate':
       need(rest[0], 'falta la ruta del módulo');

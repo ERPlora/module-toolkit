@@ -6,10 +6,11 @@
 // the script takes is observable. What must hold:
 //   - the bundler and Lit come at the toolkit's LOCKED versions (a rebuild with another Lit differs
 //     for a reason that is not the SDK);
-//   - OutfitKit comes at the version the module SEALED in `dist/outfitkit.json`;
+//   - OutfitKit is NOT the step's business: `build --check` fetches the version the module SEALED
+//     in `dist/outfitkit.json` into its own cache (module-toolkit#423, test/outfitkit-ci.test.mjs),
+//     so linking one into the toolkit here would only put back the copy the bundle must not bake;
 //   - everything is linked where the toolkit resolves it, and the check runs with develop's SDK;
-//   - a missing SDK or an unpublished sealed OutfitKit stops the step with the reason, before any
-//     check can say anything.
+//   - a missing SDK stops the step with the reason, before any check can say anything.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -35,7 +36,7 @@ function write(file, body) {
  * A runner in a directory: a fake `npm` on PATH, a fake toolkit with the real lock, a module
  * (sealed with `sealed`, or unsealed with null) and an SDK directory.
  */
-function runner({ sealed = '0.1.70', npmFailsOn = null } = {}) {
+function runner({ sealed = '0.1.70' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'erplora-dist-step-'));
   const bin = join(root, 'bin');
   write(
@@ -49,7 +50,6 @@ for a in "$@"; do
     --*|install) ;;
     *@*)
       name="\${a%@*}"
-      ${npmFailsOn ? `[ "$a" = "${npmFailsOn}" ] && { echo "npm error 404 $a" >&2; exit 1; }` : ''}
       mkdir -p "$prefix/node_modules/$name"
       echo "{\\"name\\":\\"$name\\",\\"version\\":\\"\${a##*@}\\"}" > "$prefix/node_modules/$name/package.json" ;;
   esac
@@ -84,16 +84,15 @@ done
   return { root, toolkit, mod, sdk, temp, run, npmLog, cli };
 }
 
-test('installs the LOCKED bundler and Lit plus the SEALED OutfitKit, links them, and runs the check with the SDK', () => {
+test('installs the LOCKED bundler and Lit, links them, and runs the check with the SDK', () => {
   const r = runner({ sealed: '0.1.70' });
   try {
     const res = r.run();
     assert.equal(res.status, 0, res.stdout + res.stderr);
     const log = r.npmLog();
     for (const name of BAKED) assert.ok(log.includes(` ${name}@${locked(name)}`), `${name}@${locked(name)} not installed: ${log}`);
-    assert.ok(log.includes(' @erplora/outfitkit@0.1.70'), `the sealed OutfitKit is what gets installed: ${log}`);
     assert.ok(log.includes('--legacy-peer-deps'), 'the scratch install skips peer resolution (module-toolkit#171)');
-    for (const name of [...BAKED, '@erplora/outfitkit']) {
+    for (const name of BAKED) {
       const link = join(r.toolkit, 'node_modules', name);
       assert.equal(readlinkSync(link), join(r.temp, 'erplora-bundle-deps', 'node_modules', name), `${name} not linked into the toolkit`);
     }
@@ -102,6 +101,24 @@ test('installs the LOCKED bundler and Lit plus the SEALED OutfitKit, links them,
     rmSync(r.root, { recursive: true, force: true });
   }
 });
+
+// module-toolkit#423: the sealed OutfitKit is fetched by `build --check` itself, into its cache and
+// baked from there. A copy installed and linked into the toolkit here is the local copy the bundle
+// must not bake — and an unpublished seal is the check's verdict (`dist_outfitkit_unavailable`).
+for (const sealed of ['0.1.70', null]) {
+  test(`installs and links no OutfitKit (${sealed ? `sealed ${sealed}` : 'unsealed'}): build --check fetches the sealed one`, () => {
+    const r = runner({ sealed });
+    try {
+      const res = r.run();
+      assert.equal(res.status, 0, res.stdout + res.stderr);
+      assert.ok(!r.npmLog().includes('@erplora/outfitkit'), `the step installed an OutfitKit: ${r.npmLog()}`);
+      assert.ok(!existsSync(join(r.toolkit, 'node_modules', '@erplora', 'outfitkit')), 'an OutfitKit was linked into the toolkit');
+      assert.deepEqual(r.cli(), ['build', r.mod, '--check', '--sdk', r.sdk]);
+    } finally {
+      rmSync(r.root, { recursive: true, force: true });
+    }
+  });
+}
 
 test('the verdict of the check is the verdict of the step', () => {
   const r = runner();
@@ -121,30 +138,6 @@ test('without the SDK the step fails naming the wiring, and installs nothing', (
     assert.match(res.stdout, /::error::.*module-sdk-path/);
     assert.equal(r.npmLog(), '');
     assert.equal(r.cli(), null);
-  } finally {
-    rmSync(r.root, { recursive: true, force: true });
-  }
-});
-
-test('a sealed OutfitKit that npm cannot give fails the step naming that version, before any check', () => {
-  const r = runner({ sealed: '0.1.999', npmFailsOn: '@erplora/outfitkit@0.1.999' });
-  try {
-    const res = r.run();
-    assert.equal(res.status, 1);
-    assert.match(res.stdout, /::error::.*@erplora\/outfitkit@0\.1\.999/);
-    assert.equal(r.cli(), null);
-  } finally {
-    rmSync(r.root, { recursive: true, force: true });
-  }
-});
-
-test('an unsealed bundle installs no OutfitKit and lets the check say so', () => {
-  const r = runner({ sealed: null });
-  try {
-    const res = r.run();
-    assert.equal(res.status, 0, res.stdout + res.stderr);
-    assert.ok(!r.npmLog().includes('@erplora/outfitkit'));
-    assert.deepEqual(r.cli(), ['build', r.mod, '--check', '--sdk', r.sdk]);
   } finally {
     rmSync(r.root, { recursive: true, force: true });
   }

@@ -221,8 +221,9 @@ jobs:
           mkdir -p node_modules/@iconify node_modules/@iconify-json
           ln -sfn "$deps/node_modules/@iconify/utils" node_modules/@iconify/utils
           ln -sfn "$deps/node_modules/@iconify-json/ion" node_modules/@iconify-json/ion
-          # `build --check` (module-toolkit#389) compares a bundle only when the OutfitKit the toolkit
-          # resolves is the one the bundle was sealed with, so its CLI test needs one resolvable here.
+          # The toolkit's own OutfitKit: `validate` reads its types (validate-outfitkit-api.mjs). It is
+          # never what a bundle bakes: `build` and `build --check` fetch theirs from npm into a cache
+          # (module-toolkit#423), and their suites use a fake registry.
           mkdir -p node_modules/@erplora
           ln -sfn "$deps/node_modules/@erplora/outfitkit" node_modules/@erplora/outfitkit
           # The whole Lit family, not only `lit`: the resolve plugin pins every `lit*`/`@lit/*` specifier
@@ -287,6 +288,7 @@ jobs:
           test/dist-reproducible.test.mjs
           test/bundle-web-component.test.mjs
           test/check-dist-reproducible-script.test.mjs
+          test/outfitkit-ci.test.mjs
           test/rebake-catalog-script.test.mjs
           test/resolve-plugin.test.mjs
           test/install-from-package.test.mjs

@@ -99,15 +99,35 @@ function fromSdkDir(spec, sdkDir) {
   return file;
 }
 
+const OUTFITKIT = /^@erplora\/outfitkit($|\/)/;
+
 /**
- * @param {{sdkDir?: string}} [options] `sdkDir`: bake THIS `@erplora/module-sdk` (and its
- *   `module-types` sibling) instead of the toolkit's installed one.
+ * @param {{sdkDir?: string, outfitkitPrefix?: string}} [options] `sdkDir`: bake THIS
+ *   `@erplora/module-sdk` (and its `module-types` sibling) instead of the toolkit's installed one;
+ *   `outfitkitPrefix`: a directory whose `node_modules` holds the `@erplora/outfitkit` to bake
+ *   (module-toolkit#423: the one the gate installs, not the toolkit's local copy).
  */
-export function erploraResolvePlugin({ sdkDir } = {}) {
+export function erploraResolvePlugin({ sdkDir, outfitkitPrefix } = {}) {
   return {
     name: 'erplora-resolve',
     setup(build) {
+      if (outfitkitPrefix) {
+        // Registered first, so it answers OutfitKit before the pin below. esbuild's own resolver
+        // from that prefix honours the package's `exports` map; Lit imported from inside OutfitKit
+        // still goes through the pin and bakes the toolkit's copy.
+        build.onResolve({ filter: OUTFITKIT }, async (args) => {
+          if (args.pluginData?.erploraOutfitkit) return undefined;
+          const found = await build.resolve(args.path, {
+            kind: args.kind,
+            resolveDir: outfitkitPrefix,
+            pluginData: { erploraOutfitkit: true },
+          });
+          return found.errors.length ? { errors: found.errors } : { path: found.path };
+        });
+      }
       build.onResolve({ filter: PINNED }, (args) => {
+        // The nested resolve above comes back through here: let esbuild answer it from the prefix.
+        if (args.pluginData?.erploraOutfitkit) return undefined;
         if (TOOLKIT.test(args.path)) {
           try {
             return { path: toolkitPiece(args.path) };
