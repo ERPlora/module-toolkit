@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Rebakes the committed bundle of every module the SDK change left behind — module-toolkit#392.
+# Rebakes the committed bundle of every module the SDK change left behind — module-toolkit#392 —
+# or that ships an older OutfitKit than `erplora build` bakes today — module-toolkit#424.
 #
 #   scripts/rebake-catalog.sh <hub-checkout> <modules-dir>
 #
@@ -17,17 +18,28 @@
 # comes, businesses keep the old SDK. So the SDK change is what rebakes, here, for the whole
 # catalog at once — the way a Renovate bump follows a dependency release.
 #
+# The same holds for OutfitKit (#424). Since #423 `build` bakes and seals the OutfitKit npm gives
+# (what the module declares in its package.json, else latest), while the gate's check rebuilds with
+# the SEALED one — so a bundle sealed with 0.1.79 is `reproducible` and the SDK pass never saw it
+# (21 of 27 modules on 2026-09-30, npm at 0.1.125). The seal is compared here with what build would
+# bake today (`outfitkit-ci.mjs drift`), and an older seal is rebaked like a stale SDK.
+#
 # WHAT IT DOES, per module checkout in <modules-dir> (a `.git` DIRECTORY: fleet worktrees carry a
 # `.git` FILE and are skipped), always reading `origin/main`, never the working tree:
-#   - runs the gate's own check against hub `origin/develop`'s SDK; green → `fresh`;
-#   - `dist_not_reproducible` → rebuilds in a throwaway worktree with `erplora build --sdk`, refuses
-#     if anything outside dist/ changed, checks the result again with the gate's check, commits
-#     ONLY dist/ to `rebake/sdk-<sdk-rev>` and opens one PR against main; an older open
-#     `rebake/sdk-*` PR of that module is closed as superseded;
+#   - runs the gate's own check against hub `origin/develop`'s SDK, then asks the toolkit which
+#     OutfitKit build bakes today; green and sealed with that one → `fresh`;
+#   - `dist_not_reproducible` (branch `rebake/sdk-<sdk-rev>`), or green but sealed with another
+#     OutfitKit (branch `rebake/outfitkit-<version>`) → rebuilds in a throwaway worktree with
+#     `erplora build --sdk … --outfitkit <that version>`, refuses if anything outside dist/ changed
+#     or the seal is not that version, checks the result again with the gate's check, commits ONLY
+#     dist/ to the branch and opens one PR against main; any older open `rebake/*` PR of that
+#     module is closed as superseded (the new one bakes today's SDK AND today's OutfitKit);
 #   - an archived repository → `archived`, skipped;
 #   - that branch already on the remote → `pending` (the PR for this SDK exists: nothing twice);
-#   - any other red of the check (unsealed, OutfitKit not installable…) → `error`, nothing pushed.
-# Output: one `<id>\t<state>\t<detail>` line per module. Exit 1 if any module ended in `error` or
+#   - any other red of the check (unsealed, OutfitKit not installable…), or npm unable to say
+#     which OutfitKit build bakes today → `error`, nothing pushed.
+# Output: one `<id>\t<state>\t<detail>` line per module; a dry run's `stale` detail is
+# `<main-sha> sdk`, `<main-sha> outfitkit <sealed> → <today>` or both. Exit 1 if any module ended in `error` or
 # `refused`, 3 if the hub could not be read.
 set -uo pipefail
 
@@ -83,7 +95,7 @@ if ! git -C "$hub" worktree add -q --detach "$work/hub" origin/develop; then
 fi
 worktrees+=("$hub|$work/hub")
 sdk=$work/hub/packages/module-sdk
-branch=rebake/sdk-$sdk_rev
+sdk_branch=rebake/sdk-$sdk_rev
 echo "SDK: hub develop@${sdk_rev:0:7} — $sdk_subject" >&2
 
 # ── the toolkit to build with
@@ -131,7 +143,7 @@ verdict_line() { # the check's last ✗/::error:: line, or its last line
 }
 
 rebake_one() { # $1 = module checkout, $2 = id
-  local dir=$1 id=$2 slug out rc src wt outside body url n head
+  local dir=$1 id=$2 slug out rc src wt outside body url n head drift sealed target branch why title sealed_now
   if ! git -C "$dir" fetch -q origin main; then
     report "$id" error "could not fetch origin main"
     return 1
@@ -146,8 +158,8 @@ rebake_one() { # $1 = module checkout, $2 = id
     report "$id" archived "$slug"
     return 0
   fi
-  if git -C "$dir" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-    report "$id" pending "$branch"
+  if git -C "$dir" ls-remote --exit-code --heads origin "$sdk_branch" >/dev/null 2>&1; then
+    report "$id" pending "$sdk_branch"
     return 0
   fi
 
@@ -157,19 +169,43 @@ rebake_one() { # $1 = module checkout, $2 = id
   git -C "$dir" archive origin/main | tar -x -C "$src"
   out=$(run_check "$id" "$src")
   rc=$?
-  if [ "$rc" -eq 0 ]; then
+  if [ "$rc" -ne 0 ]; then
+    case "$out" in
+      *dist_not_reproducible*) ;;
+      *)
+        report "$id" error "$(verdict_line "$out")"
+        return 1
+        ;;
+    esac
+  fi
+  # The OutfitKit build bakes today, by the toolkit's own rule: every rebuild bakes THAT one by name.
+  if ! drift=$(node "$toolkit/src/outfitkit-ci.mjs" drift "$src" 2>&1); then
+    report "$id" error "$(printf '%s\n' "$drift" | tail -1)"
+    return 1
+  fi
+  sealed=${drift%%$'\t'*}
+  target=${drift#*$'\t'}
+  if [ "$drift" = "${drift#*$'\t'}" ] || [ -z "$target" ]; then
+    report "$id" error "the toolkit did not say which OutfitKit build bakes today (outfitkit-ci.mjs drift gave '$drift')"
+    return 1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    branch=$sdk_branch
+    why=sdk
+    [ "$sealed" = "$target" ] || why="sdk, outfitkit $sealed → $target"
+  elif [ "$sealed" != "$target" ]; then
+    branch=rebake/outfitkit-$target
+    why="outfitkit $sealed → $target"
+    if git -C "$dir" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+      report "$id" pending "$branch"
+      return 0
+    fi
+  else
     report "$id" fresh "$(git -C "$dir" rev-parse --short origin/main)"
     return 0
   fi
-  case "$out" in
-    *dist_not_reproducible*) ;;
-    *)
-      report "$id" error "$(verdict_line "$out")"
-      return 1
-      ;;
-  esac
   if [ "${REBAKE_DRY_RUN:-}" = 1 ]; then
-    report "$id" stale "$(git -C "$dir" rev-parse --short origin/main)"
+    report "$id" stale "$(git -C "$dir" rev-parse --short origin/main) $why"
     return 0
   fi
 
@@ -181,7 +217,7 @@ rebake_one() { # $1 = module checkout, $2 = id
     return 1
   fi
   worktrees+=("$dir|$wt")
-  if ! (cd "$wt" && node "$toolkit/bin/erplora.mjs" build "$wt" --sdk "$sdk") >"$work/build-$id.log" 2>&1; then
+  if ! (cd "$wt" && node "$toolkit/bin/erplora.mjs" build "$wt" --sdk "$sdk" --outfitkit "$target") >"$work/build-$id.log" 2>&1; then
     report "$id" error "erplora build failed: $(tail -1 "$work/build-$id.log")"
     return 1
   fi
@@ -194,13 +230,24 @@ rebake_one() { # $1 = module checkout, $2 = id
     report "$id" error "the check said stale but the rebuild changed nothing in dist/"
     return 1
   fi
+  sealed_now=$(node "$toolkit/src/outfitkit-ci.mjs" drift "$wt" 2>/dev/null) || sealed_now=""
+  sealed_now=${sealed_now%%$'\t'*}
+  if [ "$sealed_now" != "$target" ]; then
+    report "$id" error "the rebuild sealed ${sealed_now:-no OutfitKit}, not $target"
+    return 1
+  fi
   if ! out=$(run_check "$id" "$wt"); then
     report "$id" error "still not reproducible after the rebuild: $(verdict_line "$out")"
     return 1
   fi
 
+  if [ "$why" = sdk ] || [ "${why#sdk,}" != "$why" ]; then
+    title="La pantalla publicada de $id se rehornea con la librería de módulos al día (SDK ${sdk_rev:0:7})"
+  else
+    title="La pantalla publicada de $id se rehornea con la OutfitKit $target (llevaba la $sealed)"
+  fi
   if ! git -C "$wt" add -A -- dist \
-    || ! git -C "$wt" commit -q -m "dist/ rehorneado con el SDK de hub develop@${sdk_rev:0:7} (module-toolkit#392)"; then
+    || ! git -C "$wt" commit -q -m "dist/ rehorneado con el SDK de hub develop@${sdk_rev:0:7} y la OutfitKit $target ($why; module-toolkit#392, #424)"; then
     report "$id" error "could not commit the rebaked dist/"
     return 1
   fi
@@ -213,33 +260,35 @@ rebake_one() { # $1 = module checkout, $2 = id
   cat >"$body" <<EOF
 ## Qué pasa
 
-La pantalla publicada de \`$id\` estaba hecha con una versión anterior de la librería común de los módulos. Desde el último cambio de esa librería en el hub, quien usa la app sigue viendo el comportamiento antiguo, y la próxima propuesta de cambio del módulo saldría en rojo por algo que no es suyo.
+La pantalla publicada de \`$id\` estaba hecha con una versión anterior de las librerías comunes de los módulos (la del hub o la de componentes, OutfitKit). Quien usa la app sigue viendo el comportamiento antiguo y no recibe los arreglos ya publicados, y la próxima propuesta de cambio del módulo arrastraría ese salto sin ser suyo.
 
 ## Propuesta
 
-Regenerar solo el paquete publicado (\`dist/\`) con la librería del hub al día. No cambia nada más del módulo.
+Regenerar solo el paquete publicado (\`dist/\`) con las librerías al día. No cambia nada más del módulo; sus pruebas de pantalla corren en esta PR contra la OutfitKit nueva antes de publicarse.
 
 ## Detalle técnico
 
+- Motivo: $why.
 - SDK: hub \`develop@${sdk_rev:0:7}\` — $sdk_subject
+- OutfitKit: \`$sealed\` en \`main\` → \`$target\` en esta rama (la que \`erplora build\` hornea hoy: la declarada en el \`package.json\` del módulo o la última de npm).
 - Base: \`main@$(git -C "$dir" rev-parse --short origin/main)\`; el diff es solo \`dist/\`.
-- La comprobación del gate (\`check-dist-reproducible.sh\`) da rojo en \`main\` (\`dist_not_reproducible\`) y verde en esta rama.
-- Abierta por \`module-toolkit/scripts/rebake-catalog.sh\` al cambiar el SDK (ERPlora/module-toolkit#392). Si entra antes otra PR del módulo que toque \`ui/\`, esta queda en conflicto solo en \`dist/\` y \`merge-pr.sh\` la regenera (pm#494).
+- La comprobación del gate (\`check-dist-reproducible.sh\`) da verde en esta rama.
+- Abierta por \`module-toolkit/scripts/rebake-catalog.sh\` (ERPlora/module-toolkit#392, #424). Si entra antes otra PR del módulo que toque \`ui/\`, esta queda en conflicto solo en \`dist/\` y \`merge-pr.sh\` la regenera (pm#494).
 EOF
   if ! url=$(gh pr create --repo "$slug" --base main --head "$branch" \
-    --title "La pantalla publicada de $id se rehornea con la librería de módulos al día (SDK ${sdk_rev:0:7})" \
+    --title "$title" \
     --body-file "$body"); then
     report "$id" error "pushed $branch but could not open its PR"
     return 1
   fi
   url=$(printf '%s\n' "$url" | tail -1)
 
-  # An older rebake of this module is superseded by this one: its bundle is not what develop gives.
+  # An older rebake of this module is superseded by this one: its bundle is not what build gives today.
   while read -r n head; do
     case "$head" in
-      rebake/sdk-*)
+      rebake/sdk-* | rebake/outfitkit-*)
         [ "$head" != "$branch" ] || continue
-        gh pr close "$n" --repo "$slug" --comment "Sustituida por $url (SDK de hub develop@${sdk_rev:0:7})." --delete-branch >/dev/null \
+        gh pr close "$n" --repo "$slug" --comment "Sustituida por $url (SDK de hub develop@${sdk_rev:0:7}, OutfitKit $target)." --delete-branch >/dev/null \
           || echo "⚠ $id: could not close the superseded rebake PR #$n" >&2
         ;;
     esac

@@ -16,10 +16,18 @@
 //   - running again for the same SDK opens nothing twice;
 //   - any other red of the check, or a build that touches more than dist/, never pushes;
 //   - dry run reports and pushes nothing; fleet worktrees (`.git` FILE) are not modules.
+//
+// And the same pass for OutfitKit (module-toolkit#424). Since #423 `build --check` rebuilds with
+// the SEALED OutfitKit, so a bundle sealed with 0.1.79 is `reproducible` while `build` would bake
+// npm's 0.1.125 today: 21 of 27 modules on 2026-09-30, invisible to the pass above. So:
+//   - a bundle the SDK leaves alone but sealed with an older OutfitKit than build bakes today (the
+//     version the module declares, else npm latest) gets its own `rebake/outfitkit-<v>` PR;
+//   - every rebuild bakes THAT version (`build --outfitkit <v>`), and one that does not seal it is
+//     never pushed; npm unreachable is an error, never a silent «fresh».
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,6 +65,7 @@ function repo(root, slug, branch, files) {
   return clone;
 }
 
+const seal = (v) => `{"outfitkit":"${v}"}\n`;
 const SDK_SOURCE = 'export const moneyFilter = (v, d) => v * 10 ** d;\n';
 const BAKED = `baked:${SDK_SOURCE}`;
 
@@ -82,7 +91,7 @@ function catalog() {
       'module.json': `{"id":"${id}"}\n`,
       'ui/components/view.ts': 'export {};\n',
       [`dist/${id}.esm.js`]: dist,
-      'dist/outfitkit.json': '{"outfitkit":"0.1.79"}\n',
+      'dist/outfitkit.json': seal('0.1.79'),
       ...extra,
     });
     const dir = join(mods, id);
@@ -98,21 +107,40 @@ function catalog() {
     unsealed: module('unsealed', 'baked:old sdk\n', { UNSEALED: '1\n' }),
     touchy: module('touchy', 'baked:old sdk\n', { 'ui/TOUCH': '1\n' }),
     wrong: module('wrong', 'baked:old sdk\n', { 'ui/WRONG': '1\n' }),
+    // The SDK leaves these alone; only their OutfitKit seal differs from npm latest (0.1.79 below).
+    oldkit: module('oldkit', BAKED, { 'dist/outfitkit.json': seal('0.1.70') }),
+    // …unless the module declares that version on purpose: then that is what build bakes.
+    pinned: module('pinned', BAKED, {
+      'dist/outfitkit.json': seal('0.1.70'),
+      'package.json': JSON.stringify({ devDependencies: { '@erplora/outfitkit': '0.1.70' } }),
+    }),
+    // A build that does not seal the version it was asked for.
+    oldseal: module('oldseal', BAKED, { 'dist/outfitkit.json': seal('0.1.70'), 'ui/OLDSEAL': '1\n' }),
   };
   // A fleet worktree of a module sits beside the modules with a `.git` FILE: never a module.
   git(m.stale.dir, 'worktree', 'add', '-q', '--detach', join(mods, 'stale-wt-9'), 'origin/main');
 
   const toolkit = join(root, 'toolkit');
-  // The fake toolkit bakes the SDK it is handed; a module carrying ui/TOUCH makes it write outside dist/.
+  // Which OutfitKit build bakes is the REAL rule of the toolkit, asked of a fake npm below.
+  for (const f of ['outfitkit-ci.mjs', 'outfitkit-stamp.mjs']) {
+    mkdirSync(join(toolkit, 'src'), { recursive: true });
+    copyFileSync(join(REPO, 'src', f), join(toolkit, 'src', f));
+  }
+  // The fake toolkit bakes the SDK it is handed and seals the OutfitKit it is told; a module carrying
+  // ui/TOUCH makes it write outside dist/, ui/OLDSEAL makes it seal another version.
   write(
     join(toolkit, 'bin', 'erplora.mjs'),
     `import { readFileSync, writeFileSync, existsSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
-const [cmd, dir, flag, sdk] = process.argv.slice(2);
+const [cmd, dir, ...flags] = process.argv.slice(2);
 appendFileSync(${JSON.stringify(join(root, 'build.log'))}, JSON.stringify(process.argv.slice(2)) + '\\n');
-if (cmd !== 'build' || flag !== '--sdk') process.exit(2);
+const opt = (name) => (flags.indexOf(name) >= 0 ? flags[flags.indexOf(name) + 1] : undefined);
+const sdk = opt('--sdk');
+const kit = opt('--outfitkit');
+if (cmd !== 'build' || !sdk) process.exit(2);
 const id = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8')).id;
 writeFileSync(join(dir, 'dist', id + '.esm.js'), 'baked:' + readFileSync(join(sdk, 'src', 'index.ts'), 'utf8'));
+if (kit) writeFileSync(join(dir, 'dist', 'outfitkit.json'), existsSync(join(dir, 'ui', 'OLDSEAL')) ? ${JSON.stringify(seal('0.1.75'))} : '{"outfitkit":"' + kit + '"}\\n');
 if (existsSync(join(dir, 'ui', 'TOUCH'))) writeFileSync(join(dir, 'ui', 'extra.ts'), 'export {};\\n');
 if (existsSync(join(dir, 'ui', 'WRONG'))) writeFileSync(join(dir, 'dist', id + '.esm.js'), 'baked:something else');
 `,
@@ -135,6 +163,21 @@ echo "✗ dist_not_reproducible: dist/$id.esm.js is not what $id's ui/ gives"; e
     0o755,
   );
   const bin = join(root, 'bin');
+  // The registry: FAKE_NPM_PUBLISHED oldest first, the last one is latest; FAKE_NPM_OFFLINE=1 fails.
+  write(
+    join(bin, 'npm'),
+    `#!/usr/bin/env bash
+echo "$*" >> "${join(root, 'npm.log')}"
+[ "\${FAKE_NPM_OFFLINE:-}" = 1 ] && { echo "npm error network ENOTFOUND" >&2; exit 1; }
+read -r -a published <<< "\${FAKE_NPM_PUBLISHED:-0.1.70 0.1.79}"
+[ "$1" = view ] || exit 2
+spec="\${2##*@}"
+[ "$spec" = latest ] && { echo "\\"\${published[\${#published[@]}-1]}\\""; exit 0; }
+for v in "\${published[@]}"; do [ "$v" = "$spec" ] && { echo "\\"$v\\""; exit 0; }; done
+echo "npm error 404 No match for $2" >&2; exit 1
+`,
+    0o755,
+  );
   write(
     join(bin, 'gh'),
     `#!/usr/bin/env bash
@@ -163,13 +206,20 @@ esac
   const ghLog = () => (existsSync(join(root, 'gh.log')) ? readFileSync(join(root, 'gh.log'), 'utf8') : '');
   const remoteBranches = (mod) =>
     git(mod.origin, 'for-each-ref', '--format=%(refname:short)', 'refs/heads/').split('\n').filter(Boolean);
-  return { root, hub, mods, m, sdkRev, run, ghLog, remoteBranches };
+  const builds = (id) =>
+    (existsSync(join(root, 'build.log')) ? readFileSync(join(root, 'build.log'), 'utf8') : '')
+      .split('\n')
+      .filter((l) => l.includes(`/wt/${id}"`))
+      .map((l) => JSON.parse(l));
+  return { root, hub, mods, m, sdkRev, run, ghLog, remoteBranches, builds };
 }
 
 test('a stale bundle gets one branch with ONLY dist/ rebaked with develop\'s SDK, and one PR against main', () => {
   const c = catalog();
   try {
-    const r = c.run({ FAKE_GH_OPEN: `41 rebake/sdk-0123456789\n77 rebake/sdk-${c.sdkRev}\n12 fix/other\n` });
+    const r = c.run({
+      FAKE_GH_OPEN: `41 rebake/sdk-0123456789\n43 rebake/outfitkit-0.1.70\n77 rebake/sdk-${c.sdkRev}\n12 fix/other\n`,
+    });
     const branch = `rebake/sdk-${c.sdkRev}`;
     assert.deepEqual(c.remoteBranches(c.m.stale).sort(), [branch, 'main'].sort(), r.stdout + r.stderr);
     const changed = git(c.m.stale.origin, 'diff', '--name-only', 'main', branch).split('\n');
@@ -181,7 +231,12 @@ test('a stale bundle gets one branch with ONLY dist/ rebaked with develop\'s SDK
     // It supersedes the older rebake of that module — and only that one.
     // …taking its branch with it: a superseded rebake/sdk-* left on the remote is noise forever.
     assert.match(log, /pr close 41 --repo ERPlora\/stale .*--delete-branch/);
-    assert.doesNotMatch(log, /pr close (77|12) /);
+    // An open OutfitKit rebake is superseded as well: this one bakes today's OutfitKit AND the SDK.
+    assert.match(log, /pr close 43 --repo ERPlora\/stale .*--delete-branch/);
+    // (The fake gh answers the same open list for every repository, so only stale's closes count here.)
+    assert.doesNotMatch(log, /pr close (77|12) --repo ERPlora\/stale /);
+    // …because it bakes, by name, the OutfitKit build resolves today, not whatever npm says later.
+    assert.deepEqual(c.builds('stale').map((a) => a.slice(a.indexOf('--outfitkit'))), [['--outfitkit', '0.1.79']]);
     assert.match(r.stdout, /^stale\topened\thttps:\/\/github.com\/ERPlora\/stale\/pull\/77$/m);
   } finally {
     rmSync(c.root, { recursive: true, force: true });
@@ -276,6 +331,115 @@ test('a rebuild the gate\'s check still rejects is never pushed', () => {
     assert.match(r.stdout, /^wrong\terror\tstill not reproducible after the rebuild: .*dist_not_reproducible/m);
     assert.deepEqual(c.remoteBranches(c.m.wrong), ['main']);
     assert.doesNotMatch(c.ghLog(), /^pr /m);
+  } finally {
+    rmSync(c.root, { recursive: true, force: true });
+  }
+});
+
+test('a bundle sealed with an older OutfitKit than build bakes today gets its own rebake/outfitkit-<v> PR', () => {
+  const c = catalog();
+  try {
+    const r = c.run({ REBAKE_ONLY: 'oldkit', FAKE_GH_OPEN: '43 rebake/outfitkit-0.1.70\n44 rebake/sdk-0123456789\n12 fix/other\n' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const branch = 'rebake/outfitkit-0.1.79';
+    assert.deepEqual(c.remoteBranches(c.m.oldkit).sort(), [branch, 'main'].sort());
+    assert.deepEqual(git(c.m.oldkit.origin, 'diff', '--name-only', 'main', branch).split('\n'), ['dist/outfitkit.json']);
+    assert.equal(git(c.m.oldkit.origin, 'show', `${branch}:dist/outfitkit.json`), seal('0.1.79').trim());
+    assert.deepEqual(c.builds('oldkit').map((a) => a.slice(a.indexOf('--outfitkit'))), [['--outfitkit', '0.1.79']]);
+    const log = c.ghLog();
+    assert.match(log, new RegExp(`pr create --repo ERPlora/oldkit --base main --head ${branch} `));
+    assert.match(log, /pr create --repo ERPlora\/oldkit .*--title .*OutfitKit 0\.1\.79 \(llevaba la 0\.1\.70\)/);
+    // The PR says which OutfitKit it leaves and which it takes.
+    const body = readFileSync(join(c.root, 'work', 'pr-oldkit.md'), 'utf8');
+    assert.match(body, /^- Motivo: outfitkit 0\.1\.70 → 0\.1\.79\.$/m);
+    assert.match(body, /^- OutfitKit: `0\.1\.70` en `main` → `0\.1\.79` en esta rama/m);
+    assert.match(log, /pr close 43 --repo ERPlora\/oldkit .*--delete-branch/);
+    assert.match(log, /pr close 44 --repo ERPlora\/oldkit .*--delete-branch/);
+    assert.doesNotMatch(log, /pr close 12 /);
+    assert.match(r.stdout, /^oldkit\topened\thttps:\/\/github.com\/ERPlora\/oldkit\/pull\/77$/m);
+  } finally {
+    rmSync(c.root, { recursive: true, force: true });
+  }
+});
+
+test('the OutfitKit a module declares on purpose is fresh at that version, and an up-to-date seal is fresh', () => {
+  const c = catalog();
+  try {
+    const r = c.run({ REBAKE_ONLY: 'pinned fresh' });
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^pinned\tfresh\b/m);
+    assert.match(r.stdout, /^fresh\tfresh\b/m);
+    assert.deepEqual(c.remoteBranches(c.m.pinned), ['main']);
+    assert.deepEqual(c.builds('pinned'), []);
+  } finally {
+    rmSync(c.root, { recursive: true, force: true });
+  }
+});
+
+test('dry run lists the modules with an old OutfitKit, and which version each would take', () => {
+  const c = catalog();
+  try {
+    const r = c.run({ REBAKE_DRY_RUN: '1', FAKE_NPM_PUBLISHED: '0.1.70 0.1.79 0.1.126' });
+    assert.match(r.stdout, /^oldkit\tstale\t\S+ outfitkit 0\.1\.70 → 0\.1\.126$/m);
+    // An SDK-stale bundle says it too when its OutfitKit is also behind: the rebake takes both.
+    assert.match(r.stdout, /^stale\tstale\t\S+ sdk, outfitkit 0\.1\.79 → 0\.1\.126$/m);
+    assert.match(r.stdout, /^fresh\tstale\t\S+ outfitkit 0\.1\.79 → 0\.1\.126$/m);
+    assert.deepEqual(c.remoteBranches(c.m.oldkit), ['main']);
+    assert.doesNotMatch(c.ghLog(), /^pr /m);
+    assert.deepEqual(c.builds('oldkit'), []);
+  } finally {
+    rmSync(c.root, { recursive: true, force: true });
+  }
+});
+
+test('running again for the same OutfitKit opens nothing twice', () => {
+  const c = catalog();
+  try {
+    c.run({ REBAKE_ONLY: 'oldkit' });
+    const again = c.run({ REBAKE_ONLY: 'oldkit' });
+    assert.equal(c.ghLog().match(/pr create/g).length, 1);
+    assert.match(again.stdout, /^oldkit\tpending\trebake\/outfitkit-0\.1\.79$/m);
+  } finally {
+    rmSync(c.root, { recursive: true, force: true });
+  }
+});
+
+test('npm unreachable is an error that pushes nothing, never a silent fresh', () => {
+  const c = catalog();
+  try {
+    const r = c.run({ REBAKE_ONLY: 'oldkit fresh', FAKE_NPM_OFFLINE: '1' });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^oldkit\terror\t.*outfitkit_unresolvable/m);
+    assert.match(r.stdout, /^fresh\terror\t.*outfitkit_unresolvable/m);
+    assert.deepEqual(c.remoteBranches(c.m.oldkit), ['main']);
+    assert.doesNotMatch(c.ghLog(), /^pr /m);
+  } finally {
+    rmSync(c.root, { recursive: true, force: true });
+  }
+});
+
+test('a rebuild that does not seal the OutfitKit it was asked for is never pushed', () => {
+  const c = catalog();
+  try {
+    const r = c.run({ REBAKE_ONLY: 'oldseal' });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^oldseal\terror\t.*sealed 0\.1\.75, not 0\.1\.79/m);
+    assert.deepEqual(c.remoteBranches(c.m.oldseal), ['main']);
+    assert.doesNotMatch(c.ghLog(), /^pr /m);
+  } finally {
+    rmSync(c.root, { recursive: true, force: true });
+  }
+});
+
+test('a toolkit that answers nothing about OutfitKit is an error, never read as fresh', () => {
+  const c = catalog();
+  try {
+    // What the symlinked-TMPDIR entry guard did: exit 0 and not a word.
+    write(join(c.root, 'toolkit', 'src', 'outfitkit-ci.mjs'), 'process.exit(0);\n');
+    const r = c.run({ REBAKE_ONLY: 'oldkit' });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^oldkit\terror\tthe toolkit did not say which OutfitKit/m);
+    assert.deepEqual(c.remoteBranches(c.m.oldkit), ['main']);
   } finally {
     rmSync(c.root, { recursive: true, force: true });
   }
