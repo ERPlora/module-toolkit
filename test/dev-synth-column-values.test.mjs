@@ -259,6 +259,48 @@ test('ALTER COLUMN DROP DEFAULT and DROP CONSTRAINT forget what an earlier migra
   }
 });
 
+test('an unnamed CHECK is named after the columns it reads, list or not, as Postgres does', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'erplora-dev-values-'));
+  const manifest = {
+    id: 'x',
+    migrations: { postgres: ['1.sql', '2.sql'] },
+    queries: { 'x.list': { sql: 'SELECT * FROM x_t', list: { sort: ['status', 'kind'] } } },
+  };
+  // Measured on postgres:18: x_t_status_check (one column read, even with an AND), x_t_kind_check
+  // (no list, still takes the name), x_t_check (two columns) and x_t_kind_check1 (the name was taken).
+  write(
+    join(dir, '1.sql'),
+    "CREATE TABLE x_t (status TEXT, kind TEXT, CHECK (status IN ('a', 'b') AND status <> ''), CHECK (kind <> 'z'));\n" +
+      "ALTER TABLE x_t ADD CHECK (kind IN ('p', 'q') AND status <> 'c');\nALTER TABLE x_t ADD CHECK (kind IN ('q', 'r'));\n",
+  );
+  // A dropped name is free again: the next unnamed kind CHECK takes x_t_kind_check1 back.
+  write(
+    join(dir, '2.sql'),
+    'ALTER TABLE x_t DROP CONSTRAINT x_t_status_check;\nALTER TABLE x_t DROP CONSTRAINT x_t_kind_check1;\n' +
+      "ALTER TABLE x_t ADD CHECK (kind IN ('q', 's'));\nALTER TABLE x_t DROP CONSTRAINT x_t_kind_check1;\n",
+  );
+  try {
+    assert.deepEqual(listColumnValues(dir, manifest), { 'x.list': { kind: ['p', 'q'] } });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a DEFAULT with a cast still counts; one the CHECK does not allow is never dealt', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'erplora-dev-values-'));
+  const manifest = {
+    id: 'x',
+    migrations: { postgres: ['m.sql'] },
+    queries: { 'x.list': { sql: 'SELECT * FROM x_t', list: { sort: ['a', 'b'] } } },
+  };
+  write(join(dir, 'm.sql'), "CREATE TABLE x_t (a TEXT DEFAULT 'x'::text NOT NULL, b TEXT DEFAULT 'zz' CHECK (b IN ('p', 'q')));\n");
+  try {
+    assert.deepEqual(listColumnValues(dir, manifest), { 'x.list': { a: ['x'], b: ['p', 'q'] } });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('an ambiguous column (two joined tables declare it, no qualifier) or an unknown source gets no values', () => {
   const dir = mkdtempSync(join(tmpdir(), 'erplora-dev-values-'));
   const manifest = {

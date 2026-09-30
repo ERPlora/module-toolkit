@@ -143,16 +143,18 @@ const sqlName = (name) => name.replace(/"/g, '').split('.').pop().toLowerCase();
 const blankLiterals = (text) => text.replace(new RegExp(SQL_LITERAL, 'g'), (l) => "'" + ' '.repeat(l.length - 2) + "'");
 
 /**
- * Every `col IN ('a', 'b')` a `CHECK` in `text` imposes: `{ lists: [{ column, values }], single }`. Only
- * a conjunct at the top level of the CHECK counts — services writes `CHECK (discount_type IN (...) AND
- * discount_percent >= 0 …)` — and a CHECK with a top-level OR imposes none of its lists on every row.
- * `single` is a CHECK that is nothing but its one list: the only kind Postgres names after its column.
+ * Every `col IN ('a', 'b')` a `CHECK` in `text` imposes: `{ lists: [{ column, values }], words }`, or
+ * null when `text` has no CHECK. Only a conjunct at the top level of the CHECK counts — services writes
+ * `CHECK (discount_type IN (...) AND discount_percent >= 0 …)` — and a CHECK with a top-level OR imposes
+ * none of its lists on every row. `words` are the names the CHECK reads at any depth: Postgres names an
+ * unnamed CHECK after the one column it reads, whatever else it says.
  */
 function checkLists(text) {
   const at = /\bCHECK\s*\(/i.exec(blankLiterals(text));
   const body = at && parenBody(text, at.index);
-  if (body == null) return { lists: [], single: false };
+  if (body == null) return null;
   const code = blankLiterals(body);
+  const words = (code.match(/"?\b[A-Za-z_]\w*\b"?/g) || []).map(sqlName);
   let depth = 0;
   const cuts = [];
   for (let i = 0; i < code.length; i += 1) {
@@ -160,7 +162,7 @@ function checkLists(text) {
     else if (code[i] === ')') depth -= 1;
     else if (depth === 0 && /\w/.test(code[i]) && (i === 0 || !/\w/.test(code[i - 1]))) {
       const word = /^\w+/.exec(code.slice(i))[0].toUpperCase();
-      if (word === 'OR') return { lists: [], single: false };
+      if (word === 'OR') return { lists: [], words };
       if (word === 'AND') cuts.push(i);
     }
   }
@@ -172,7 +174,7 @@ function checkLists(text) {
     const m = new RegExp(String.raw`^"?(\w+)"?\s+IN\s*\(\s*(${SQL_LITERAL}(?:\s*,\s*${SQL_LITERAL})*)\s*\)$`, 'is').exec(conjunct);
     if (m) out.push({ column: m[1].toLowerCase(), values: [...m[2].matchAll(new RegExp(SQL_LITERAL, 'g'))].map((v) => unquote(v[0])) });
   }
-  return { lists: out, single: cuts.length === 0 && out.length === 1 };
+  return { lists: out, words };
 }
 
 /** The value of a `DEFAULT '<literal>'` that is only that literal (not `'a' || b`), or null. */
@@ -187,8 +189,9 @@ function defaultLiteral(text) {
  * migrations, in the order they run, so a later `ALTER` wins: `ADD COLUMN`, `ADD`/`DROP CONSTRAINT`,
  * `ALTER COLUMN SET`/`DROP DEFAULT`, `DROP COLUMN`. Unlike `declaredTypesByColumn` it is keyed by
  * TABLE: in `tables` three tables declare `status`, each with its own values (module-toolkit#440).
- * An unnamed CHECK gets the name Postgres gives it — `<table>_<column>_check` for one list alone,
- * `<table>_check` otherwise, plus a number when taken — so a later `DROP CONSTRAINT` finds it.
+ * An unnamed CHECK gets the name Postgres gives it — `<table>_<column>_check` when it reads one
+ * column, `<table>_check` otherwise, plus a number when taken, a CHECK with no list included — so a
+ * later `DROP CONSTRAINT` finds it.
  */
 function declaredValuesByTable(dir, manifest) {
   const tables = new Map();
@@ -197,17 +200,25 @@ function declaredValuesByTable(dir, manifest) {
     if (!tables.has(key)) tables.set(key, new Map());
     return tables.get(key);
   };
+  const checkNames = new Map(); // table -> the CHECK names it holds, with a list or not
+  const namesOf = (tableName) => {
+    const key = sqlName(tableName);
+    if (!checkNames.has(key)) checkNames.set(key, new Set());
+    return checkNames.get(key);
+  };
   const addCheck = (t, tableName, text, name) => {
-    const { lists, single } = checkLists(text);
-    if (!lists.length) return;
+    const check = checkLists(text);
+    if (!check) return;
+    const taken = namesOf(tableName);
     let key = name ? sqlName(name) : null;
     if (!key) {
-      const base = `${sqlName(tableName)}${single ? '_' + lists[0].column : ''}_check`;
-      const taken = (k) => [...t.values()].some((c) => c.checks.has(k));
+      const read = new Set([...check.lists.map((l) => l.column), ...check.words.filter((w) => t.has(w))]);
+      const base = `${sqlName(tableName)}${read.size === 1 ? '_' + [...read][0] : ''}_check`;
       key = base;
-      for (let n = 1; taken(key); n += 1) key = base + n;
+      for (let n = 1; taken.has(key); n += 1) key = base + n;
     }
-    for (const list of lists) t.get(list.column)?.checks.set(key, list.values);
+    taken.add(key);
+    for (const list of check.lists) t.get(list.column)?.checks.set(key, list.values);
   };
   const addColumn = (t, tableName, part) => {
     const [name, ...rest] = part.split(/\s+/);
@@ -246,6 +257,7 @@ function declaredValuesByTable(dir, manifest) {
         else if (/^ADD\s+CHECK\b/i.test(action)) addCheck(t, alter[1], action.replace(/^ADD\s+/i, ''), null);
         else if ((m = /^ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(.*)$/is.exec(action))) addColumn(t, alter[1], m[1]);
         else if ((m = /^DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/i.exec(action))) {
+          namesOf(alter[1]).delete(m[1].toLowerCase());
           for (const col of t.values()) col.checks.delete(m[1].toLowerCase());
         } else if ((m = /^DROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?"?(\w+)"?/i.exec(action))) t.delete(m[1].toLowerCase());
         else if ((m = /^ALTER\s+(?:COLUMN\s+)?"?(\w+)"?\s+(SET\s+DEFAULT\s+.*|DROP\s+DEFAULT\b.*)$/is.exec(action))) {
