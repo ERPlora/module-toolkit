@@ -25,7 +25,8 @@ function write(file, body) {
   writeFileSync(file, body);
 }
 
-// The shape of the `tables` module that broke: TEXT number, INTEGER flags (ADR-0007: flags are
+// The shape of the `tables` module that broke (with a `;` inside a comment and a literal, which must not
+// cut the CREATE TABLE in two): TEXT number, INTEGER flags (ADR-0007: flags are
 // 0/1 integers, dates are ISO TEXT), a NUMERIC amount, a column added later by ALTER TABLE, and
 // list columns that are query aliases no migration declares.
 const MANIFEST = {
@@ -46,8 +47,8 @@ const MIGRATION_1 = `-- Mesa física
 CREATE TABLE IF NOT EXISTS tables_table (
     id          TEXT PRIMARY KEY,
     hub_id      TEXT NOT NULL,
-    number      TEXT NOT NULL,
-    name        TEXT NOT NULL DEFAULT '',
+    number      TEXT NOT NULL,  -- the label the host types; free text, never a number
+    name        TEXT NOT NULL DEFAULT 'no; name',
     capacity    INTEGER NOT NULL DEFAULT 4,
     is_active   INTEGER NOT NULL DEFAULT 1,
     paid_total  NUMERIC(12,2) NOT NULL DEFAULT 0,
@@ -179,6 +180,16 @@ test('every declared kind is invented with its own JS type', async () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('an INTEGER amount with a flag-like name (paid_total in cents) is a number, not a 0/1 flag', async () => {
+  const rows = await inventedRows({ 'tables.tables.list': { paid_total: 'integer' } });
+  assert.ok(rows.some((r) => r.paid_total > 1), JSON.stringify(rows.map((r) => r.paid_total)));
+});
+
+test('a decimal column carries a fraction, so a screen that rounds is exercised', async () => {
+  const rows = await inventedRows({ 'tables.tables.list': { capacity: 'decimal' } });
+  assert.ok(rows.some((r) => !Number.isInteger(r.capacity)), JSON.stringify(rows.map((r) => r.capacity)));
 });
 
 test('date and timestamp kinds are invented as ISO strings of their own shape', async () => {

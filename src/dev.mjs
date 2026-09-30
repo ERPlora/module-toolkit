@@ -20,6 +20,7 @@ import { buildOutfitkitSpec, fetchOutfitkit, npmOutfitkitVersion } from './outfi
 import { resolvedOutfitkitVersion } from './dist-reproducible.mjs';
 import { declaredColumnTypes } from './validate-filter-ops.mjs';
 import { migrationFiles } from './validate-migrations.mjs';
+import { splitStatements } from './validate-migration-guard.mjs';
 import {
   createBuildStatus,
   buildStatusPlugin,
@@ -71,7 +72,8 @@ function loadFixtures(dir, into) {
 /**
  * `column -> Set<declared type>` over the module's postgres migrations, STATEMENT by statement:
  * `declaredColumnTypes` keeps the first declaration of a column per text, and two tables of the same
- * migration declaring \`code\` as TEXT and as INTEGER must both be seen to be left out.
+ * migration declaring \`code\` as TEXT and as INTEGER must both be seen to be left out. The split is
+ * `splitStatements`', which leaves a \`;\` inside a comment, a literal or a \`$$\` body alone.
  */
 function declaredTypesByColumn(dir, manifest) {
   const types = new Map();
@@ -82,7 +84,7 @@ function declaredTypesByColumn(dir, manifest) {
     } catch {
       continue; // a missing migration is validate's finding, not the preview's
     }
-    for (const statement of sql.replace(/--[^\n]*/g, '').split(';')) {
+    for (const statement of splitStatements(sql)) {
       for (const [col, type] of declaredColumnTypes(statement)) {
         if (!types.has(col)) types.set(col, new Set());
         types.get(col).add(type);
