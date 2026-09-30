@@ -373,7 +373,7 @@ test('runBatteries: un `tests/` con SOLO un huérfano tampoco pasa en silencio',
 // ── 🔴 module-toolkit#417: WHICH python runs the batteries ───────────────────────────────────
 //
 // A Mac carries two: `/usr/bin/python3` is 3.9 (Command Line Tools) and Homebrew's is 3.14. The
-// batteries write `str | None` (3.10+) in ~260 files across 25 modules, evaluated when the function
+// batteries write `str | None` (3.10+) in ~200 files across 27 modules, evaluated when the function
 // is DEFINED, so under 3.9 they die with `TypeError: unsupported operand type(s) for |` before
 // testing anything — and the suite reads «your battery FAILS» on a clean `main`. At least six fleet
 // sessions in one batch chased that red into their own change. The toolkit picks an interpreter
