@@ -33,7 +33,7 @@ function write(file, body) {
  * a private cache, and a module whose Web Component imports `@erplora/outfitkit/define`. Each
  * published version's `define.js` carries a marker, so the bundle says which one it baked.
  */
-function sandbox({ published = ['0.1.110', '0.1.125'], declared = null, offline = false } = {}) {
+function sandbox({ published = ['0.0.110', '0.0.125'], declared = null, offline = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'erplora-ok-ci-'));
   const bin = join(root, 'bin');
   const log = join(root, 'npm.log');
@@ -93,17 +93,22 @@ async function quietly(fn) {
   }
 }
 
-test('the positive control: the toolkit on this machine resolves an OutfitKit other than npm latest', () => {
-  // Without this the test below could pass by accident on a machine whose checkout IS npm latest.
-  assert.notEqual(resolvedOutfitkitVersion(), '0.1.125');
+// The fake registry publishes 0.0.x only: no real OutfitKit is there, so neither the laptop's
+// checkout nor the copy CI installs from npm (`^0.1.98`) can be what a test below sees baked.
+const SANDBOX_VERSIONS = ['0.0.42', '0.0.100', '0.0.110', '0.0.125'];
+
+test('the positive control: the toolkit on this machine resolves an OutfitKit the fake registry does not publish', () => {
+  // Without this the tests below could pass by accident on a machine whose own copy IS the one
+  // they expect baked and sealed.
+  assert.ok(!SANDBOX_VERSIONS.includes(resolvedOutfitkitVersion()), resolvedOutfitkitVersion());
 });
 
 test('build bakes and seals npm latest for a module that declares no version (all 27 today)', async () => {
   const s = sandbox();
   try {
     await quietly(() => build(s.mod, { sdk: NO_SDK, outfitkit: { env: s.env } }));
-    assert.equal(s.sealed(), '0.1.125', 'the seal is what the gate installs, not the local checkout');
-    assert.ok(s.bundle().includes('npm-0.1.125'), 'and the bundle carries THAT OutfitKit, not the checkout');
+    assert.equal(s.sealed(), '0.0.125', 'the seal is what the gate installs, not the local checkout');
+    assert.ok(s.bundle().includes('npm-0.0.125'), 'and the bundle carries THAT OutfitKit, not the checkout');
     assert.ok(s.npmCalls().some((c) => c.startsWith('view @erplora/outfitkit@latest version')), s.npmCalls().join('\n'));
   } finally {
     s.clean();
@@ -111,14 +116,14 @@ test('build bakes and seals npm latest for a module that declares no version (al
 });
 
 test('build follows the version the module declares, like the gate does; workspace:* means latest', async () => {
-  const pinned = sandbox({ declared: '0.1.110' });
+  const pinned = sandbox({ declared: '0.0.110' });
   const workspace = sandbox({ declared: 'workspace:*' });
   try {
     await quietly(() => build(pinned.mod, { sdk: NO_SDK, outfitkit: { env: pinned.env } }));
-    assert.equal(pinned.sealed(), '0.1.110');
-    assert.ok(pinned.bundle().includes('npm-0.1.110'));
+    assert.equal(pinned.sealed(), '0.0.110');
+    assert.ok(pinned.bundle().includes('npm-0.0.110'));
     await quietly(() => build(workspace.mod, { sdk: NO_SDK, outfitkit: { env: workspace.env } }));
-    assert.equal(workspace.sealed(), '0.1.125');
+    assert.equal(workspace.sealed(), '0.0.125');
   } finally {
     pinned.clean();
     workspace.clean();
@@ -126,10 +131,10 @@ test('build follows the version the module declares, like the gate does; workspa
 });
 
 test('a declared range takes the highest match, as npm install does', async () => {
-  const s = sandbox({ declared: '^0.1.100' });
+  const s = sandbox({ declared: '^0.0.100' });
   try {
     const ok = resolveOutfitkit(s.mod, { env: s.env });
-    assert.equal(ok.version, '0.1.125');
+    assert.equal(ok.version, '0.0.125');
   } finally {
     s.clean();
   }
@@ -161,12 +166,12 @@ test('without npm the build STOPS before touching dist/ — it never falls back 
 });
 
 test('build --check rebuilds with the SEALED OutfitKit from npm, whatever the toolkit resolves locally', async () => {
-  // Built with 0.1.110 (declared), then the declaration is dropped: the check must still rebuild
-  // with the 0.1.110 the bundle seals — not latest, and not the local checkout.
-  const s = sandbox({ declared: '0.1.110' });
+  // Built with 0.0.110 (declared), then the declaration is dropped: the check must still rebuild
+  // with the 0.0.110 the bundle seals — not latest, and not the local checkout.
+  const s = sandbox({ declared: '0.0.110' });
   try {
     await quietly(() => build(s.mod, { sdk: NO_SDK, outfitkit: { env: s.env } }));
-    assert.equal(s.sealed(), '0.1.110');
+    assert.equal(s.sealed(), '0.0.110');
     rmSync(join(s.mod, 'package.json'));
     const result = await checkDistReproducible(s.mod, { outfitkit: { env: s.env }, env: {} });
     assert.equal(result.status, 'reproducible', JSON.stringify(result));
@@ -176,12 +181,12 @@ test('build --check rebuilds with the SEALED OutfitKit from npm, whatever the to
 });
 
 test('build --check catches a bundle whose seal is not the OutfitKit it carries', async () => {
-  // Baked with latest (0.1.125), then the seal is edited to claim 0.1.110: the rebuild with the
+  // Baked with latest (0.0.125), then the seal is edited to claim 0.0.110: the rebuild with the
   // claimed version is other bytes. Comparing against the local checkout could never tell.
   const s = sandbox();
   try {
     await quietly(() => build(s.mod, { sdk: NO_SDK, outfitkit: { env: s.env } }));
-    write(join(s.mod, 'dist', 'outfitkit.json'), '{"outfitkit":"0.1.110"}\n');
+    write(join(s.mod, 'dist', 'outfitkit.json'), '{"outfitkit":"0.0.110"}\n');
     const result = await checkDistReproducible(s.mod, { outfitkit: { env: s.env }, env: {} });
     assert.equal(result.status, 'differs', JSON.stringify(result));
   } finally {
@@ -190,16 +195,16 @@ test('build --check catches a bundle whose seal is not the OutfitKit it carries'
 });
 
 test('build --check says so when npm cannot give the sealed OutfitKit (unpublished or offline)', async () => {
-  const s = sandbox({ published: ['0.1.125'] });
+  const s = sandbox({ published: ['0.0.125'] });
   try {
     await quietly(() => build(s.mod, { sdk: NO_SDK, outfitkit: { env: s.env } }));
-    write(join(s.mod, 'dist', 'outfitkit.json'), '{"outfitkit":"0.1.42"}\n');
+    write(join(s.mod, 'dist', 'outfitkit.json'), '{"outfitkit":"0.0.42"}\n');
     const result = await checkDistReproducible(s.mod, { outfitkit: { env: s.env }, env: {} });
     assert.equal(result.status, 'outfitkit_unavailable');
-    assert.equal(result.sealed, '0.1.42');
+    assert.equal(result.sealed, '0.0.42');
     await assert.rejects(
       assertDistReproducible(s.mod, { outfitkit: { env: s.env }, env: {} }),
-      (e) => e.code === 'dist_outfitkit_unavailable' && e.message.includes('@erplora/outfitkit@0.1.42'),
+      (e) => e.code === 'dist_outfitkit_unavailable' && e.message.includes('@erplora/outfitkit@0.0.42'),
     );
   } finally {
     s.clean();
@@ -215,14 +220,14 @@ test('which spec each side asks npm for: build refreshes, the gate tests what sh
     assert.equal(gateOutfitkitSpec(mod), 'latest', 'no package.json, no seal');
     write(join(mod, 'package.json'), JSON.stringify({ dependencies: { '@erplora/outfitkit': 'workspace:*' } }));
     assert.equal(buildOutfitkitSpec(mod), 'latest');
-    write(join(mod, 'package.json'), JSON.stringify({ devDependencies: { '@erplora/outfitkit': '~0.1.110' } }));
-    assert.equal(buildOutfitkitSpec(mod), '~0.1.110');
-    assert.equal(gateOutfitkitSpec(mod), '~0.1.110', 'no seal: what the module declares');
+    write(join(mod, 'package.json'), JSON.stringify({ devDependencies: { '@erplora/outfitkit': '~0.0.110' } }));
+    assert.equal(buildOutfitkitSpec(mod), '~0.0.110');
+    assert.equal(gateOutfitkitSpec(mod), '~0.0.110', 'no seal: what the module declares');
     write(join(mod, 'dist', 'outfitkit.json'), '{"outfitkit":"0.1.79"}\n');
     assert.equal(gateOutfitkitSpec(mod), '0.1.79', 'a seal wins: the tests run against what ships');
-    assert.equal(buildOutfitkitSpec(mod), '~0.1.110', 'but a rebuild never sticks to an old seal');
+    assert.equal(buildOutfitkitSpec(mod), '~0.0.110', 'but a rebuild never sticks to an old seal');
     write(join(mod, 'dist', 'outfitkit.json'), '{"outfitkit":"unknown"}\n');
-    assert.equal(gateOutfitkitSpec(mod), '~0.1.110', 'a seal that is not a version is no seal');
+    assert.equal(gateOutfitkitSpec(mod), '~0.0.110', 'a seal that is not a version is no seal');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

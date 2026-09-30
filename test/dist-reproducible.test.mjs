@@ -11,15 +11,17 @@
 // still walks through.
 //
 // No network and no lit: the fixture module imports only `@erplora/module-sdk`, and each SDK is a
-// directory on disk handed over with `sdkDir` — the same way the gate hands over develop's.
+// directory on disk handed over with `sdkDir` — the same way the gate hands over develop's. The
+// OutfitKit the check fetches for the seal (module-toolkit#423) comes from a private cache already
+// holding it, and `build` asks a fake `npm` on PATH which one is `latest`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { assertDistReproducible, checkDistReproducible, resolvedOutfitkitVersion } from '../src/dist-reproducible.mjs';
+import { assertDistReproducible, checkDistReproducible } from '../src/dist-reproducible.mjs';
 import { bundleWebComponent } from '../src/bundle-web-component.mjs';
 
 const CLI = fileURLToPath(new URL('../bin/erplora.mjs', import.meta.url));
@@ -65,8 +67,16 @@ async function fixture({ builtWith = 'old', sealed = '0.1.79' } = {}) {
   return { root, mod, dist, sdks };
 }
 
-// The seal of the fixtures and the OutfitKit the "toolkit" resolves, so the SDK is the only variable.
-const SAME_OUTFITKIT = { outfitkitVersion: '0.1.79' };
+// The fixtures' seal is the OutfitKit the rebuild gets, so the SDK is the only variable: a private
+// cache that already holds it (the check fetches nothing) and a fake `npm` that calls it `latest`
+// (what `build` bakes). Shared by every test in the file; removed when the process exits.
+const OK_ROOT = mkdtempSync(join(tmpdir(), 'erplora-dist-repro-ok-'));
+write(join(OK_ROOT, 'cache', '0.1.79', 'node_modules', '@erplora', 'outfitkit'), 'package.json', '{"name":"@erplora/outfitkit","version":"0.1.79"}\n');
+write(join(OK_ROOT, 'bin'), 'npm', '#!/usr/bin/env bash\n[ "$1" = view ] && { echo \'"0.1.79"\'; exit 0; }\nexit 1\n');
+chmodSync(join(OK_ROOT, 'bin', 'npm'), 0o755);
+process.on('exit', () => rmSync(OK_ROOT, { recursive: true, force: true }));
+const OK_ENV = { ...process.env, PATH: `${join(OK_ROOT, 'bin')}:${process.env.PATH}`, ERPLORA_OUTFITKIT_CACHE: join(OK_ROOT, 'cache') };
+const SAME_OUTFITKIT = { outfitkit: { env: OK_ENV } };
 
 test('a bundle built with an OLD SDK is not what develop gives: red, and dist/ is left untouched', async () => {
   const f = await fixture({ builtWith: 'old' });
@@ -102,23 +112,9 @@ test('a bundle built with develop SDK is reproducible byte for byte', async () =
   }
 });
 
-test('a bundle sealed with ANOTHER OutfitKit cannot be judged by a rebuild: red, naming the version to install', async () => {
-  // Otherwise a difference in OutfitKit would be blamed on the SDK, or — worse — two different
-  // bundles would be compared and the verdict would be noise.
-  const f = await fixture({ builtWith: 'develop', sealed: '0.1.70' });
-  try {
-    const result = await checkDistReproducible(f.mod, { sdkDir: f.sdks.develop, ...SAME_OUTFITKIT });
-    assert.equal(result.status, 'outfitkit_mismatch');
-    assert.equal(result.sealed, '0.1.70');
-    assert.equal(result.resolved, '0.1.79');
-    await assert.rejects(
-      assertDistReproducible(f.mod, { sdkDir: f.sdks.develop, ...SAME_OUTFITKIT }),
-      (e) => e.code === 'dist_outfitkit_mismatch' && e.message.includes('@erplora/outfitkit@0.1.70'),
-    );
-  } finally {
-    rmSync(f.root, { recursive: true, force: true });
-  }
-});
+// A seal npm cannot give (`dist_outfitkit_unavailable`) and a rebuild with the SEALED OutfitKit
+// rather than the toolkit's own: test/outfitkit-ci.test.mjs (module-toolkit#423). The old verdict,
+// «the toolkit resolves another version, refuse to compare», is gone with the local copy.
 
 test('a bundle without the OutfitKit seal is red: nothing says what it was built with', async () => {
   const f = await fixture({ builtWith: 'develop', sealed: null });
@@ -193,24 +189,23 @@ test('the SDK the check rebuilds with goes through the #387 freshness door: a hu
 });
 
 test('`erplora build <dir> --check --sdk <dir>`: exit 1 with the code on an old bundle, exit 0 on a fresh one', async () => {
-  // Sealed with the OutfitKit the toolkit itself resolves, so the SDK is the only variable.
-  const sealed = resolvedOutfitkitVersion();
-  assert.ok(sealed, 'the toolkit must resolve an OutfitKit for this test (CI installs it)');
+  // Sealed with the OutfitKit the private cache holds, so the SDK is the only variable.
+  const sealed = '0.1.79';
   const stale = await fixture({ builtWith: 'old', sealed });
   const fresh = await fixture({ builtWith: 'develop', sealed });
   try {
-    const red = spawnSync(process.execPath, [CLI, 'build', stale.mod, '--check', '--sdk', stale.sdks.develop], { encoding: 'utf8' });
+    const red = spawnSync(process.execPath, [CLI, 'build', stale.mod, '--check', '--sdk', stale.sdks.develop], { encoding: 'utf8', env: OK_ENV });
     assert.equal(red.status, 1, red.stdout + red.stderr);
     assert.match(red.stderr, /dist_not_reproducible/);
     assert.ok(red.stderr.includes(`erplora build ${stale.mod}`), 'it prints the command that regenerates it');
     assert.ok(!readFileSync(stale.dist, 'utf8').includes('currency_decimals'), 'the CLI check did not rebuild dist/ either');
 
-    const green = spawnSync(process.execPath, [CLI, 'build', fresh.mod, '--check', '--sdk', fresh.sdks.develop], { encoding: 'utf8' });
+    const green = spawnSync(process.execPath, [CLI, 'build', fresh.mod, '--check', '--sdk', fresh.sdks.develop], { encoding: 'utf8', env: OK_ENV });
     assert.equal(green.status, 0, green.stdout + green.stderr);
     assert.match(green.stdout, /✓ dist demo: dist\/demo\.esm\.js/);
 
     // The `--sdk=<dir>` spelling is the same flag (rv-393): it has to hand over the SAME SDK.
-    const equals = spawnSync(process.execPath, [CLI, 'build', fresh.mod, '--check', `--sdk=${fresh.sdks.develop}`], { encoding: 'utf8' });
+    const equals = spawnSync(process.execPath, [CLI, 'build', fresh.mod, '--check', `--sdk=${fresh.sdks.develop}`], { encoding: 'utf8', env: OK_ENV });
     assert.equal(equals.status, 0, equals.stdout + equals.stderr);
   } finally {
     rmSync(stale.root, { recursive: true, force: true });
@@ -225,14 +220,14 @@ test('`erplora build <dir> --check --sdk <dir>`: exit 1 with the code on an old 
 test('`erplora build <dir> --sdk <dir>` bakes THAT SDK: the gate\'s rebuild matches it right after', async () => {
   const f = await fixture({ builtWith: 'old' });
   try {
-    const built = spawnSync(process.execPath, [CLI, 'build', f.mod, '--sdk', f.sdks.develop], { encoding: 'utf8' });
+    const built = spawnSync(process.execPath, [CLI, 'build', f.mod, '--sdk', f.sdks.develop], { encoding: 'utf8', env: OK_ENV });
     assert.equal(built.status, 0, built.stderr + built.stdout);
     assert.match(readFileSync(f.dist, 'utf8'), /list_money_filters_need_currency_decimals/);
-    const check = spawnSync(process.execPath, [CLI, 'build', f.mod, '--check', '--sdk', f.sdks.develop], { encoding: 'utf8' });
+    const check = spawnSync(process.execPath, [CLI, 'build', f.mod, '--check', '--sdk', f.sdks.develop], { encoding: 'utf8', env: OK_ENV });
     assert.equal(check.status, 0, check.stderr + check.stdout);
 
     // And back: the flag is what decides, not whatever the toolkit happens to resolve.
-    const old = spawnSync(process.execPath, [CLI, 'build', f.mod, `--sdk=${f.sdks.old}`], { encoding: 'utf8' });
+    const old = spawnSync(process.execPath, [CLI, 'build', f.mod, `--sdk=${f.sdks.old}`], { encoding: 'utf8', env: OK_ENV });
     assert.equal(old.status, 0, old.stderr + old.stdout);
     assert.doesNotMatch(readFileSync(f.dist, 'utf8'), /list_money_filters_need_currency_decimals/);
   } finally {

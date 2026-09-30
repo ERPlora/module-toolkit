@@ -111,19 +111,23 @@ export function erploraResolvePlugin({ sdkDir, outfitkitPrefix } = {}) {
   return {
     name: 'erplora-resolve',
     setup(build) {
-      build.onResolve({ filter: PINNED }, async (args) => {
-        // The nested resolve below comes back through this hook: let esbuild answer it.
-        if (args.pluginData?.erploraOutfitkit) return undefined;
-        if (outfitkitPrefix && OUTFITKIT.test(args.path)) {
-          // esbuild's own resolver from that prefix honours the package's `exports` map; Lit
-          // imported from inside OutfitKit still comes back here and is pinned to the toolkit's copy.
+      if (outfitkitPrefix) {
+        // Registered first, so it answers OutfitKit before the pin below. esbuild's own resolver
+        // from that prefix honours the package's `exports` map; Lit imported from inside OutfitKit
+        // still goes through the pin and bakes the toolkit's copy.
+        build.onResolve({ filter: OUTFITKIT }, async (args) => {
+          if (args.pluginData?.erploraOutfitkit) return undefined;
           const found = await build.resolve(args.path, {
             kind: args.kind,
             resolveDir: outfitkitPrefix,
             pluginData: { erploraOutfitkit: true },
           });
           return found.errors.length ? { errors: found.errors } : { path: found.path };
-        }
+        });
+      }
+      build.onResolve({ filter: PINNED }, (args) => {
+        // The nested resolve above comes back through here: let esbuild answer it from the prefix.
+        if (args.pluginData?.erploraOutfitkit) return undefined;
         if (TOOLKIT.test(args.path)) {
           try {
             return { path: toolkitPiece(args.path) };
