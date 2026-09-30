@@ -228,3 +228,13 @@ test('a toolkit without @ionic/core is a resolution error that says to reinstall
     (err) => err.errors.some((e) => /@erplora\/module-toolkit/.test(e.text) && /ionicons/.test(e.text)),
   );
 });
+
+test('a toolkit whose @ionic/core has no ionicons beside it is the same reinstall error, not a workspace fallback', async () => {
+  const { ionicFromToolkitPlugin } = await import('../src/resolve-plugin.mjs');
+  const { toolkit, ws } = pnpmToolkit('pnpm-ionic-no-icons');
+  rmSync(join(toolkit, '..', 'store', 'node_modules', 'ionicons'), { recursive: true, force: true });
+  await assert.rejects(
+    bundleFrom(ws, [ionicFromToolkitPlugin({ toolkitDir: toolkit })], "import 'ionicons';\n"),
+    (err) => err.errors.some((e) => /@erplora\/module-toolkit/.test(e.text) && /ionicons/.test(e.text)),
+  );
+});
