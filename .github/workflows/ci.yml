@@ -287,6 +287,7 @@ jobs:
           test/sdk-freshness.test.mjs
           test/dist-reproducible.test.mjs
           test/bundle-web-component.test.mjs
+          test/bundle-real-path.test.mjs
           test/check-dist-reproducible-script.test.mjs
           test/outfitkit-ci.test.mjs
           test/rebake-catalog-script.test.mjs
