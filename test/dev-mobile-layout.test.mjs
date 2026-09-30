@@ -68,6 +68,16 @@ test('the folded drawer is hidden for real: no shadow bleeding in from the left 
   assert.match(open, /box-shadow:/, open);
 });
 
+test('the open drawer sits above the scrim, spans the full height and leaves a strip of scrim to tap', () => {
+  const zIndex = (decl) => Number((decl.match(/z-index:(-?\d+)/) || [])[1]);
+  const side = rules(mobileBlock().body)['.tk-sidebar'] || '';
+  const scrim = rules(mobileBlock().outside)['.tk-scrim'] || '';
+  // Both are position:fixed; without a higher z-index the scrim paints over the drawer and swallows its clicks.
+  assert.ok(zIndex(side) > zIndex(scrim), `drawer z-index ${zIndex(side)} vs scrim ${zIndex(scrim)}`);
+  assert.match(side, /height:100%/, side);
+  assert.match(side, /max-width:\d+vw/, side);
+});
+
 test('on desktop the sidebar keeps its column and the menu button stays hidden', () => {
   const r = rules(mobileBlock().outside);
   assert.match(r['.tk-sidebar'] || '', /flex:00240px/);
@@ -194,6 +204,15 @@ test('closing is closing, never a toggle: Escape, the scrim or a desktop sidebar
   // not reveal one that a click left "open".
   h.entry('Demo').click();
   assert.equal(h.body.classList.contains('tk-menu-open'), false, 'a sidebar click opened the drawer');
+});
+
+test('the shared scrim still closes the inspector drawer', () => {
+  const h = bootHarness();
+  const end = h.header.find((n) => n.tagName === 'ion-buttons' && n.getAttribute('slot') === 'end');
+  end.find((n) => n.tagName === 'ion-button').click();
+  assert.equal(h.body.classList.contains('tk-overlay-open'), true, 'the inspector button did not open the inspector');
+  h.scrim.click();
+  assert.equal(h.body.classList.contains('tk-overlay-open'), false);
 });
 
 test('the scrim and Escape close the drawer', () => {
