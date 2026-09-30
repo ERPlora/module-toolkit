@@ -78,6 +78,23 @@ test('the open drawer sits above the scrim, spans the full height and leaves a s
   assert.match(side, /max-width:\d+vw/, side);
 });
 
+// module-toolkit#437: the closed inspector sat off-canvas with its shadow still on, so 8+24 px of
+// grey bled in at the right edge over the module at every size.
+test('the closed inspector is hidden for real: no shadow bleeding in from the right edge, no Tab stops in it', () => {
+  const r = rules(mobileBlock().outside);
+  const closed = r['.tk-overlay'] || '';
+  const open = r['body.tk-overlay-open .tk-overlay'] || '';
+  assert.match(closed, /transform:translateX\(100%\)/, closed);
+  assert.doesNotMatch(closed, /box-shadow/, 'an off-canvas box-shadow paints a grey band over the module');
+  assert.match(closed, /visibility:hidden/, closed);
+  // Hiding waits for the slide-out, and showing is immediate: visibility has to transition too.
+  assert.match(closed, /transition:[^;]*visibility/, closed);
+  assert.match(open, /transform:translateX\(0\)/, open);
+  assert.match(open, /visibility:visible/, open);
+  assert.match(open, /box-shadow:/, open);
+  assert.doesNotMatch(rules(mobileBlock().body)['.tk-overlay'] || '', /box-shadow/, 'the breakpoint must not bring the shadow back');
+});
+
 test('on desktop the sidebar keeps its column and the menu button stays hidden', () => {
   const r = rules(mobileBlock().outside);
   assert.match(r['.tk-sidebar'] || '', /flex:00240px/);

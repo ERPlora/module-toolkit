@@ -546,10 +546,11 @@ export const INDEX_HTML = (label) => `<!doctype html>
     .tk-mono { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12.5px; }
     /* Drawer derecho */
     .tk-scrim { position:fixed; inset:0; background:rgba(0,0,0,.32); opacity:0; pointer-events:none; transition:.18s; z-index:50; }
-    .tk-overlay { position:fixed; top:0; right:0; height:100%; width:360px; max-width:88vw; background:var(--tk-surface); border-left:1px solid var(--tk-border); box-shadow:-8px 0 24px rgba(0,0,0,.08); transform:translateX(100%); transition:.2s; z-index:51; display:flex; flex-direction:column; }
+    /* Closed = hidden for real (module-toolkit#437): no shadow bleeding in at the right edge and no Tab stops inside. */
+    .tk-overlay { position:fixed; top:0; right:0; height:100%; width:360px; max-width:88vw; background:var(--tk-surface); border-left:1px solid var(--tk-border); transform:translateX(100%); visibility:hidden; transition:transform .2s, visibility .2s; z-index:51; display:flex; flex-direction:column; }
     .tk-overlay ion-content { flex:1; }
     body.tk-overlay-open .tk-scrim { opacity:1; pointer-events:auto; }
-    body.tk-overlay-open .tk-overlay { transform:translateX(0); }
+    body.tk-overlay-open .tk-overlay { transform:translateX(0); visibility:visible; box-shadow:-8px 0 24px rgba(0,0,0,.08); }
     /* Phone and tablet (module-toolkit#434): below the hub's split-pane breakpoint (lg, 992px) the
        sidebar folds into a drawer behind the menu button and the module takes the whole width. */
     .tk-menu-btn { display:none; }
