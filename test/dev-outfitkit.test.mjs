@@ -48,7 +48,7 @@ function linkIonic(root) {
   symlinkSync(icons, join(root, 'node_modules', 'ionicons'));
 }
 
-function sandbox({ modules = { demo: null }, offline = false } = {}) {
+function sandbox({ modules = { demo: null }, offline = false, installFails = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'erplora-dev-ok-'));
   const bin = join(root, 'bin');
   const log = join(root, 'npm.log');
@@ -65,7 +65,7 @@ if [ "$1" = view ]; then
   echo "npm error 404 No match for $2" >&2; exit 1
 fi
 if [ "$1" = install ]; then
-  prefix=""; prev=""
+${installFails ? '  echo "npm error code ENOSPC" >&2; exit 1\n' : ''}  prefix=""; prev=""
   for a in "$@"; do [ "$prev" = "--prefix" ] && prefix="$a"; prev="$a"; done
   want="\${@: -1}"; v="\${want##*@}"
   pkg="$prefix/node_modules/@erplora/outfitkit"
@@ -186,6 +186,22 @@ test('without npm the preview still comes up with the local copy — and says so
       p.warn.some((w) => w.includes('outfitkit_unresolvable') && w.includes(LOCAL)),
       `the terminal warns that this is not what build publishes:\n${p.warn.join('\n')}`,
     );
+  } finally {
+    s.clean();
+  }
+});
+
+test('npm names the version but cannot install it: the preview still comes up with the local copy and says why', async () => {
+  // `outfitkit_unavailable` (install) as well as `outfitkit_unresolvable` (view): a preview publishes
+  // nothing, so neither stops it — but a registry that answers `view` and fails `install` must not
+  // leave the preview down or silent.
+  const s = sandbox({ installFails: true });
+  try {
+    const p = await preview(s, join(s.ws, 'demo'));
+    assert.ok(s.npmCalls().some((c) => c.startsWith('install ')), s.npmCalls().join('\n'));
+    assert.equal(p.outfitkit.source, 'local');
+    assert.ok(headerSays(p.harness, `OutfitKit ${LOCAL} · local`));
+    assert.ok(p.warn.some((w) => w.includes('outfitkit_unavailable') && w.includes(LOCAL)), p.warn.join('\n'));
   } finally {
     s.clean();
   }
