@@ -348,8 +348,11 @@ test('a bundle sealed with an older OutfitKit than build bakes today gets its ow
     assert.deepEqual(c.builds('oldkit').map((a) => a.slice(a.indexOf('--outfitkit'))), [['--outfitkit', '0.1.79']]);
     const log = c.ghLog();
     assert.match(log, new RegExp(`pr create --repo ERPlora/oldkit --base main --head ${branch} `));
+    assert.match(log, /pr create --repo ERPlora\/oldkit .*--title .*OutfitKit 0\.1\.79 \(llevaba la 0\.1\.70\)/);
     // The PR says which OutfitKit it leaves and which it takes.
-    assert.match(readFileSync(join(c.root, 'work', 'pr-oldkit.md'), 'utf8'), /0\.1\.70.*0\.1\.79/);
+    const body = readFileSync(join(c.root, 'work', 'pr-oldkit.md'), 'utf8');
+    assert.match(body, /^- Motivo: outfitkit 0\.1\.70 → 0\.1\.79\.$/m);
+    assert.match(body, /^- OutfitKit: `0\.1\.70` en `main` → `0\.1\.79` en esta rama/m);
     assert.match(log, /pr close 43 --repo ERPlora\/oldkit .*--delete-branch/);
     assert.match(log, /pr close 44 --repo ERPlora\/oldkit .*--delete-branch/);
     assert.doesNotMatch(log, /pr close 12 /);
@@ -423,6 +426,20 @@ test('a rebuild that does not seal the OutfitKit it was asked for is never pushe
     assert.match(r.stdout, /^oldseal\terror\t.*sealed 0\.1\.75, not 0\.1\.79/m);
     assert.deepEqual(c.remoteBranches(c.m.oldseal), ['main']);
     assert.doesNotMatch(c.ghLog(), /^pr /m);
+  } finally {
+    rmSync(c.root, { recursive: true, force: true });
+  }
+});
+
+test('a toolkit that answers nothing about OutfitKit is an error, never read as fresh', () => {
+  const c = catalog();
+  try {
+    // What the symlinked-TMPDIR entry guard did: exit 0 and not a word.
+    write(join(c.root, 'toolkit', 'src', 'outfitkit-ci.mjs'), 'process.exit(0);\n');
+    const r = c.run({ REBAKE_ONLY: 'oldkit' });
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stdout, /^oldkit\terror\tthe toolkit did not say which OutfitKit/m);
+    assert.deepEqual(c.remoteBranches(c.m.oldkit), ['main']);
   } finally {
     rmSync(c.root, { recursive: true, force: true });
   }
