@@ -1080,7 +1080,7 @@ La regla, en `src/outfitkit-ci.mjs`, una por lado y las dos cuadran por construc
 
 Por qué no «sello == `latest`» en el gate: `latest` se publica ~10 veces al día y pondría en rojo PRs
 por algo que nadie hizo. Consecuencia: un módulo con sello viejo prueba en CI contra ese sello hasta
-que alguien lo rehornea con `erplora build`.
+que alguien lo rehornea con `erplora build` (la pasada por el catálogo entero es module-toolkit#424).
 
 **Qué NO cubre el gate: producir el artefacto wasm32.** El validador **sí** compila el crate del
 handler, pero para el **host** —que es lo que caza un fuente que no compila— y el `cargo test` de
