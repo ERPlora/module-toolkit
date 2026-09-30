@@ -102,3 +102,31 @@ test('a preview removes its build folder when it closes', async () => {
   }
   assert.deepEqual(buildDirs(), before, 'the build folder is left behind after the preview closed');
 });
+
+// Ctrl-C right after a save: the watcher is rebuilding when the preview closes. The watch has to be
+// stopped BEFORE the folder goes, or the in-flight rebuild writes `harness.js` again and recreates
+// the folder after it was removed — a leftover in `$TMPDIR` on every such exit. Whether a rebuild is
+// in flight at the exact moment of close() is timing, so the component is made big enough for each
+// rebuild to take a while, and the save-then-close is repeated: a wrong order leaks on most rounds.
+test('a preview closed while it is rebuilding a save leaves no build folder behind', async () => {
+  const before = buildDirs();
+  const dir = workspace('saving');
+  const wc = join(dir, 'ui/components/erp-demo/erp-demo.ts');
+  const body = Array.from({ length: 20000 }, (_, i) => `export const v${i} = ${i};`).join('\n');
+  let n = 0;
+  const save = () => writeFileSync(wc, `globalThis.__previewOf = 'saving';\nexport const x = ${++n};\n${body}\n`);
+  save();
+  for (let round = 0; round < 3; round++) {
+    const handle = await open(dir);
+    const saving = setInterval(save, 10);
+    try {
+      await new Promise((r) => setTimeout(r, 400));
+      await handle.close();
+    } finally {
+      clearInterval(saving);
+    }
+    // A rebuild that outlived close() would land within this window.
+    await new Promise((r) => setTimeout(r, 500));
+    assert.deepEqual(buildDirs(), before, `round ${round}: a rebuild in flight recreated the build folder after the preview closed`);
+  }
+});
