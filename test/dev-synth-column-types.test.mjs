@@ -182,6 +182,15 @@ test('every declared kind is invented with its own JS type', async () => {
   }
 });
 
+test('a TEXT column with a number-like or flag-like name stays text: the declared kind beats the name', async () => {
+  // cash_register's `count_type` and services' `discount_type` are TEXT whose names match /count/.
+  const rows = await inventedRows({ 'tables.tables.list': { table_count: 'text', is_active: 'text' } });
+  for (const row of rows) {
+    assert.equal(typeof row.table_count, 'string', `table_count is TEXT: ${JSON.stringify(row.table_count)}`);
+    assert.equal(typeof row.is_active, 'string', `is_active is TEXT: ${JSON.stringify(row.is_active)}`);
+  }
+});
+
 test('an INTEGER amount with a flag-like name (paid_total in cents) is a number, not a 0/1 flag', async () => {
   const rows = await inventedRows({ 'tables.tables.list': { paid_total: 'integer' } });
   assert.ok(rows.some((r) => r.paid_total > 1), JSON.stringify(rows.map((r) => r.paid_total)));
