@@ -5,7 +5,7 @@
 // module repos, where every package is installed by hand: `build.mjs` also generates icons and
 // compiles handlers and would pull `@iconify/*` in just to load. Here it is esbuild and nothing else.
 import { build as esbuild } from 'esbuild';
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { erploraResolvePlugin } from './resolve-plugin.mjs';
 import { normalizeBundlePaths } from './bundle-freshness.mjs';
@@ -25,7 +25,13 @@ const TSCONFIG_RAW = {
  *   `@erplora/module-sdk` instead of the toolkit's installed one; `outfitkitPrefix`: bake the
  *   `@erplora/outfitkit` under `<prefix>/node_modules` (module-toolkit#423).
  */
-export async function bundleWebComponent(dir, id, outfile, { sdkDir, outfitkitPrefix } = {}) {
+export async function bundleWebComponent(moduleDir, id, outfile, { sdkDir, outfitkitPrefix } = {}) {
+  // module-toolkit#438: esbuild resolves every input to its REAL path. A module reached through a
+  // link (macOS `$TMPDIR` is `/var/folders/…`, and `/var` links to `/private/var`) no longer
+  // contained its own files, so the annotations below fell back to the package name
+  // (`// @erplora/module-tables/locales/es.json`) and the bundle depended on the folder it was built
+  // from — a rebake under `$TMPDIR` baked bytes the Linux gate rejects. Same module, same bytes.
+  const dir = realpathSync(moduleDir);
   const common = {
     bundle: true,
     format: 'esm',
