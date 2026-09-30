@@ -12,10 +12,12 @@
 import { context as esContext } from 'esbuild';
 import { readFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { resolve, join, extname } from 'node:path';
+import { resolve, join, extname, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { erploraResolvePlugin } from './resolve-plugin.mjs';
+import { buildOutfitkitSpec, fetchOutfitkit, npmOutfitkitVersion } from './outfitkit-ci.mjs';
+import { resolvedOutfitkitVersion } from './dist-reproducible.mjs';
 import {
   createBuildStatus,
   buildStatusPlugin,
@@ -67,6 +69,7 @@ function loadFixtures(dir, into) {
 // Reúne los módulos a cargar. Con `single` activo, solo ese; si no, todos los del workspace.
 function collectModules(rootDir, single) {
   const mods = [];
+  const modDirs = [];
   const fixtures = {};
   const wcFiles = [];
   const dirs = single
@@ -81,16 +84,61 @@ function collectModules(rootDir, single) {
     if (!ts.length) continue; // módulos sin UI no se montan en el preview
     const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
     mods.push(manifest);
+    modDirs.push(dir);
     wcFiles.push(...ts);
     loadFixtures(dir, fixtures);
   }
-  return { mods, fixtures, wcFiles };
+  return { mods, modDirs, fixtures, wcFiles };
+}
+
+// A preview that runs offline is still useful — it publishes nothing — so these two fall back to the
+// local copy, loudly. `build` refuses on them instead: there, the local copy is the bug (#423).
+const NPM_OUTFITKIT_FAILURES = new Set(['outfitkit_unresolvable', 'outfitkit_unavailable']);
+
+/**
+ * The OutfitKit the preview bundles: the one `erplora build` bakes (module-toolkit#426) — npm's,
+ * by the rule of `buildOutfitkitSpec` and from the same per-version cache — never the toolkit's
+ * own copy, which on a laptop is the shared `outfitkit/` checkout (0.1.79 while build baked 0.1.126).
+ *
+ * One bundle holds one OutfitKit: when the previewed modules ask for different ones it takes npm
+ * `latest` and says so. Returns `{ version, prefix, source: 'npm'|'local', warnings }`; `prefix` is
+ * what `erploraResolvePlugin` resolves OutfitKit from (undefined = the toolkit's copy).
+ */
+export function devOutfitkit(moduleDirs, { env = process.env } = {}) {
+  const warnings = [];
+  const specs = moduleDirs.map((dir) => ({ dir, spec: buildOutfitkitSpec(dir) }));
+  const distinct = [...new Set(specs.map((s) => s.spec))];
+  const spec = distinct.length === 1 ? distinct[0] : 'latest';
+  if (distinct.length > 1) {
+    warnings.push(
+      `outfitkit_specs_differ: ${specs.map((s) => `${basename(s.dir)} asks for ${s.spec}`).join(', ')} — ` +
+        'one preview bundles one OutfitKit, so this one paints with npm latest; build bakes each ' +
+        "module's own (`erplora dev <module>` previews exactly that)",
+    );
+  }
+  try {
+    const version = npmOutfitkitVersion(spec, { env });
+    return { version, prefix: fetchOutfitkit(version, { env }), source: 'npm', warnings };
+  } catch (err) {
+    if (!NPM_OUTFITKIT_FAILURES.has(err.code)) throw err;
+    const version = resolvedOutfitkitVersion() ?? 'unknown';
+    warnings.push(
+      `${err.message} — previewing with this machine's OutfitKit ${version} instead; build bakes ` +
+        "npm's, so the hub may not get what this preview shows",
+    );
+    return { version, prefix: undefined, source: 'local', warnings };
+  }
+}
+
+/** What the preview header says it paints with. */
+export function outfitkitLabel({ version, source }) {
+  return `OutfitKit ${version}${source === 'local' ? ' · local' : ''}`;
 }
 
 // Exportada para test (module-toolkit#133): la fuente generada es lo que corre en el navegador, y
 // la única forma honesta de probar que el preview resuelve `emit` en sus dos formas
 // (ERPlora/hub#1076) es ejecutar ESTE texto, no una reimplementación en el test.
-export function harnessEntry(manifests, fixtures, wcFiles, preselect) {
+export function harnessEntry(manifests, fixtures, wcFiles, preselect, okLabel = null) {
   const ionicImports = IONIC.map(
     (c, i) => `import { defineCustomElement as i${i} } from '@ionic/core/components/ion-${c}.js';`,
   ).join('\n');
@@ -116,6 +164,7 @@ ${wcImports}
 const MODULES = ${JSON.stringify(manifests)};
 const FIXTURES = ${JSON.stringify(fixtures)};
 const PRESELECT = ${JSON.stringify(preselect || null)};
+const OUTFITKIT_LABEL = ${JSON.stringify(okLabel)};
 
 // ── Cliente mock (transport en memoria) ─────────────────────────────────────────────────────
 const listeners = new Map();
@@ -257,7 +306,9 @@ window.addEventListener('DOMContentLoaded', () => {
       el('ion-item', { button: 'true', detail: 'false', onclick: () => openModule(m.id) }, el('ion-label', { text: m.name || m.id }))),
   );
   const sidebar = el('aside', { class: 'tk-sidebar' },
-    el('div', { class: 'tk-brand' }, 'ERPlora · módulos', el('div', { class: 'tk-brand-sub', text: 'dev preview' })),
+    el('div', { class: 'tk-brand' }, 'ERPlora · módulos', el('div', { class: 'tk-brand-sub', text: 'dev preview' }),
+      // module-toolkit#426: the OutfitKit this preview paints with (the one build bakes, or the local copy).
+      ...(OUTFITKIT_LABEL ? [el('div', { class: 'tk-brand-sub', text: OUTFITKIT_LABEL })] : [])),
     el('div', { class: 'tk-side-scroll' }, sideList));
 
   // Header Ionic con botón inspector (abre el drawer derecho).
@@ -424,8 +475,12 @@ const CSP = [
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.map': 'application/json' };
 
-export async function dev(moduleDir, opts = {}) {
-  const port = opts.port || 4321;
+/**
+ * Starts the preview and hands back `{ port, close }` once it listens. `port: 0` takes a free one
+ * (tests); `dev` below is the CLI's wrapper that stays up until Ctrl-C.
+ */
+export async function startDev(moduleDir, opts = {}) {
+  const port = opts.port ?? 4321;
   const argDir = moduleDir ? resolve(process.cwd(), moduleDir) : null;
   const single = argDir && existsSync(join(argDir, 'module.json')) ? argDir : null;
   const rootDir = single
@@ -434,9 +489,14 @@ export async function dev(moduleDir, opts = {}) {
       ? join(process.cwd(), 'modules')
       : process.cwd();
 
-  const { mods, fixtures, wcFiles } = collectModules(rootDir, single);
+  const { mods, modDirs, fixtures, wcFiles } = collectModules(rootDir, single);
   if (!mods.length) throw new Error(`No encontré módulos con UI en ${rootDir}`);
   const preselect = single ? JSON.parse(readFileSync(join(single, 'module.json'), 'utf8')).id : null;
+
+  // Resolved once, before the watcher: a new OutfitKit on npm mid-session is picked up on restart.
+  // `opts.outfitkit.env` is for tests.
+  const outfitkit = devOutfitkit(modDirs, opts.outfitkit);
+  for (const w of outfitkit.warnings) console.warn(`⚠ ${w}`);
 
   const outDir = join(tmpdir(), `erplora-dev-${preselect || 'workspace'}`);
   mkdirSync(outDir, { recursive: true });
@@ -449,7 +509,7 @@ export async function dev(moduleDir, opts = {}) {
   const firstBuild = new Promise((r) => { firstBuilt = r; });
 
   const ctx = await esContext({
-    stdin: { contents: harnessEntry(mods, fixtures, wcFiles, preselect), resolveDir: rootDir, sourcefile: 'workspace.dev.ts', loader: 'ts' },
+    stdin: { contents: harnessEntry(mods, fixtures, wcFiles, preselect, outfitkitLabel(outfitkit)), resolveDir: rootDir, sourcefile: 'workspace.dev.ts', loader: 'ts' },
     bundle: true,
     format: 'esm',
     target: 'es2022',
@@ -458,7 +518,7 @@ export async function dev(moduleDir, opts = {}) {
     assetNames: '[name]',
     loader: { '.css': 'css', '.svg': 'dataurl', '.woff2': 'dataurl', '.woff': 'dataurl', '.ttf': 'dataurl', '.png': 'dataurl' },
     tsconfigRaw: TSCONFIG_RAW,
-    plugins: [erploraResolvePlugin(), buildStatusPlugin({ status, onFirstBuild: firstBuilt })],
+    plugins: [erploraResolvePlugin({ outfitkitPrefix: outfitkit.prefix }), buildStatusPlugin({ status, onFirstBuild: firstBuilt })],
     logLevel: 'silent',
   });
   // ONE startup build, not two. `ctx.watch()` performs its own initial build, so the `ctx.rebuild()`
@@ -496,11 +556,22 @@ export async function dev(moduleDir, opts = {}) {
   });
 
   await new Promise((r) => server.listen(port, r));
-  console.log(`▶ erplora dev → http://localhost:${port}  (${mods.length} módulo(s)${preselect ? `, abre '${preselect}'` : ', página main'}; CSP estricta, watch)`);
-  console.log('   Ctrl-C para salir.');
+  const { port: listening } = server.address();
+  console.log(`▶ erplora dev → http://localhost:${listening}  (${mods.length} módulo(s)${preselect ? `, abre '${preselect}'` : ', página main'}; CSP estricta, watch)`);
+  console.log(`   ${outfitkitLabel(outfitkit)}${outfitkit.source === 'npm' ? ' (npm: the one erplora build bakes)' : ''}`);
 
+  const close = async () => {
+    await ctx.dispose();
+    await new Promise((r) => server.close(r));
+  };
+  return { port: listening, outfitkit, close };
+}
+
+export async function dev(moduleDir, opts = {}) {
+  const { close } = await startDev(moduleDir, opts);
+  console.log('   Ctrl-C para salir.');
   await new Promise(() => {
-    const stop = async () => { await ctx.dispose(); server.close(); process.exit(0); };
+    const stop = async () => { await close(); process.exit(0); };
     process.on('SIGINT', stop);
     process.on('SIGTERM', stop);
   });
