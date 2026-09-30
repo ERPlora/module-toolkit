@@ -625,3 +625,55 @@ test('WIRED: `erplora validate` rejects the message text used as the state of a 
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// inventory#134: `<module>.<snake_case>` is also the shape of a two-segment EVENT name
+// (`inventory.stock_changed`). A handler that emits its own event, or matches one it listens to,
+// names it literally — that is not a domain rejection, and the catalog must not be asked to
+// declare it (the first module with such events and a catalog went red on the gate).
+const EMITS_ITS_OWN_EVENTS = `
+pub fn decrease() -> Output {
+    if short { return Output::error(DomainError::new("appointments.cannot_cancel", "closed")); }
+    if event.name == "appointments.reminder_due" { remind(); }
+    Output::new().with_event(Event::new("appointments.slot_freed", payload))
+}
+`;
+
+test('PASSES in strict mode: emitted and listened EVENT names are not error codes (inventory#134)', () => {
+  const manifest = base({
+    errors: catalog(['appointments.cannot_cancel']),
+    events: {
+      emits: ['appointments.slot_freed'],
+      listen: { 'appointments.reminder_due': { handler: 'remind' } },
+    },
+  });
+  const dir = mod(manifest, {
+    rust: EMITS_ITS_OWN_EVENTS,
+    en: locales(['appointments.cannot_cancel']),
+    es: locales(['appointments.cannot_cancel']),
+  });
+  try {
+    assert.deepEqual(checkErrorsCatalog(dir, manifest), { errors: [], warnings: [] });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('STILL FAILS: an event-shaped literal the manifest does not declare as an event is a code (inventory#134)', () => {
+  const manifest = base({
+    errors: catalog(['appointments.cannot_cancel']),
+    events: { emits: ['appointments.other_event'] },
+  });
+  const dir = mod(manifest, {
+    rust: EMITS_ITS_OWN_EVENTS,
+    en: locales(['appointments.cannot_cancel']),
+    es: locales(['appointments.cannot_cancel']),
+  });
+  try {
+    const out = checkErrorsCatalog(dir, manifest);
+    assert.equal(out.errors.length, 2, out.errors.join('\n'));
+    assert.match(out.errors.join('\n'), /appointments\.slot_freed/);
+    assert.match(out.errors.join('\n'), /appointments\.reminder_due/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
