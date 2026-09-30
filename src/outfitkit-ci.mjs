@@ -21,7 +21,7 @@
 // No npm, no build: falling back to the local copy is exactly the bug, so `outfitkit_unresolvable`
 // stops before `dist/` is touched.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,11 +149,26 @@ export function resolveOutfitkit(moduleDir, { env = process.env, version: named 
 }
 
 // `node src/outfitkit-ci.mjs gate-spec <module-dir>`: the spec the module gate's screen tests install.
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// `node src/outfitkit-ci.mjs drift <module-dir>`: `<sealed>\t<version build bakes today>` (`-` when
+// unsealed) — what the catalog rebake compares (module-toolkit#424); exit 1 when npm cannot tell.
+// Real paths on both sides: run through a symlink (macOS's /tmp and /var/folders are ones), argv
+// keeps the link while import.meta.url is resolved, and the CLI would print nothing with exit 0.
+if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url))) {
   const [cmd, dir] = process.argv.slice(2);
-  if (cmd !== 'gate-spec' || !dir) {
-    process.stderr.write('usage: outfitkit-ci.mjs gate-spec <module-dir>\n');
+  if (!['gate-spec', 'drift'].includes(cmd) || !dir) {
+    process.stderr.write('usage: outfitkit-ci.mjs gate-spec|drift <module-dir>\n');
     process.exit(2);
   }
-  process.stdout.write(gateOutfitkitSpec(resolve(dir)));
+  const mod = resolve(dir);
+  if (cmd === 'gate-spec') {
+    process.stdout.write(gateOutfitkitSpec(mod));
+  } else {
+    try {
+      const target = npmOutfitkitVersion(buildOutfitkitSpec(mod));
+      process.stdout.write(`${sealedOutfitkit(mod) ?? '-'}\t${target}`);
+    } catch (err) {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(1);
+    }
+  }
 }
