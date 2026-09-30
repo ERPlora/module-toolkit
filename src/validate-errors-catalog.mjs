@@ -216,9 +216,20 @@ export function handlerErrorLiterals(dir, moduleId, { notCodes = [] } = {}) {
   return found;
 }
 
-/** The query and command names the manifest declares - same shape as a code, never a code. */
+/**
+ * The query, command and event names the manifest declares - same shape as a code, never a code.
+ * A two-segment event (`inventory.stock_changed`) is named literally by the handler that emits it
+ * or matches it on delivery (inventory#134). `events.emits` and `events.listen` come as an array
+ * of names or as a map keyed by name.
+ */
 function manifestNames(manifest) {
-  return [...Object.keys(manifest.queries ?? {}), ...Object.keys(manifest.commands ?? {})];
+  const eventNames = (decl) => (Array.isArray(decl) ? decl : Object.keys(decl ?? {}));
+  return [
+    ...Object.keys(manifest.queries ?? {}),
+    ...Object.keys(manifest.commands ?? {}),
+    ...eventNames(manifest.events?.emits),
+    ...eventNames(manifest.events?.listen),
+  ];
 }
 
 /** `locales/<lang>.json → errors` as a map, or `null` when the file is absent/unreadable. */
