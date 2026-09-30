@@ -259,6 +259,7 @@ jobs:
           test/contracts.test.mjs
           test/bundle-freshness.test.mjs
           test/dev-build-status.test.mjs
+          test/dev-preview-outdir.test.mjs
           test/bin-*.test.mjs
           test/manifest-schema.test.mjs
           test/canonical-mirrors.test.mjs
