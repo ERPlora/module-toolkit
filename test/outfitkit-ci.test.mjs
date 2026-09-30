@@ -19,9 +19,15 @@ import { build } from '../src/build.mjs';
 import { checkDistReproducible, assertDistReproducible } from '../src/dist-reproducible.mjs';
 import { buildOutfitkitSpec, gateOutfitkitSpec, resolveOutfitkit } from '../src/outfitkit-ci.mjs';
 import { resolvedOutfitkitVersion } from '../src/dist-reproducible.mjs';
+import { resolvedSdkDir } from '../src/sdk-freshness.mjs';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NO_SDK = { sdkDir: null };
+// Where the real SDK is baked (the CLI, `--check`), the #387 door compares it with hub develop. These
+// tests are about OutfitKit, so develop is pinned to the checkout's own HEAD: otherwise they go red
+// whenever develop moves ahead of the shared hub checkout, for a reason that is not theirs.
+const SDK_DIR = resolvedSdkDir();
+const HUB_HEAD = SDK_DIR ? (spawnSync('git', ['-C', SDK_DIR, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout ?? '').trim() : '';
 
 function write(file, body) {
   mkdirSync(dirname(file), { recursive: true });
@@ -153,7 +159,7 @@ test('build --outfitkit <version> bakes and seals THAT version from npm, over wh
     for (const flag of [['--outfitkit', '0.0.100'], ['--outfitkit=0.0.42']]) {
       const cli = spawnSync(process.execPath, [join(REPO, 'bin', 'erplora.mjs'), 'build', s.mod, ...flag], {
         encoding: 'utf8',
-        env: { ...s.env, ERPLORA_HUB_DEVELOP_SHA: '' },
+        env: { ...s.env, ERPLORA_HUB_DEVELOP_SHA: HUB_HEAD },
       });
       const want = flag.join('=').split('=').pop();
       assert.equal(cli.status, 0, cli.stdout + cli.stderr);
@@ -216,7 +222,7 @@ test('build --check rebuilds with the SEALED OutfitKit from npm, whatever the to
     await quietly(() => build(s.mod, { sdk: NO_SDK, outfitkit: { env: s.env } }));
     assert.equal(s.sealed(), '0.0.110');
     rmSync(join(s.mod, 'package.json'));
-    const result = await checkDistReproducible(s.mod, { outfitkit: { env: s.env }, env: {} });
+    const result = await checkDistReproducible(s.mod, { outfitkit: { env: s.env }, developSha: HUB_HEAD || undefined, env: {} });
     assert.equal(result.status, 'reproducible', JSON.stringify(result));
   } finally {
     s.clean();
@@ -230,7 +236,7 @@ test('build --check catches a bundle whose seal is not the OutfitKit it carries'
   try {
     await quietly(() => build(s.mod, { sdk: NO_SDK, outfitkit: { env: s.env } }));
     write(join(s.mod, 'dist', 'outfitkit.json'), '{"outfitkit":"0.0.110"}\n');
-    const result = await checkDistReproducible(s.mod, { outfitkit: { env: s.env }, env: {} });
+    const result = await checkDistReproducible(s.mod, { outfitkit: { env: s.env }, developSha: HUB_HEAD || undefined, env: {} });
     assert.equal(result.status, 'differs', JSON.stringify(result));
   } finally {
     s.clean();
@@ -242,11 +248,11 @@ test('build --check says so when npm cannot give the sealed OutfitKit (unpublish
   try {
     await quietly(() => build(s.mod, { sdk: NO_SDK, outfitkit: { env: s.env } }));
     write(join(s.mod, 'dist', 'outfitkit.json'), '{"outfitkit":"0.0.42"}\n');
-    const result = await checkDistReproducible(s.mod, { outfitkit: { env: s.env }, env: {} });
+    const result = await checkDistReproducible(s.mod, { outfitkit: { env: s.env }, developSha: HUB_HEAD || undefined, env: {} });
     assert.equal(result.status, 'outfitkit_unavailable');
     assert.equal(result.sealed, '0.0.42');
     await assert.rejects(
-      assertDistReproducible(s.mod, { outfitkit: { env: s.env }, env: {} }),
+      assertDistReproducible(s.mod, { outfitkit: { env: s.env }, developSha: HUB_HEAD || undefined, env: {} }),
       (e) => e.code === 'dist_outfitkit_unavailable' && e.message.includes('@erplora/outfitkit@0.0.42'),
     );
   } finally {
