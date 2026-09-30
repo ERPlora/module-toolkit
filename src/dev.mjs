@@ -299,11 +299,12 @@ window.addEventListener('DOMContentLoaded', () => {
   seg.addEventListener('ionChange', (e) => showView(e.detail.value));
 
   // Sidebar: contenedor flex (layout) con ion-list/ion-item Ionic dentro.
+  // module-toolkit#434: on phone and tablet the sidebar is a drawer, so picking an entry closes it.
   const sideList = el('ion-list', { lines: 'none' },
-    el('ion-item', { button: 'true', detail: 'false', onclick: () => openHome() }, el('ion-label', { text: 'Inicio' })),
+    el('ion-item', { button: 'true', detail: 'false', onclick: () => { openHome(); toggleMenu(false); } }, el('ion-label', { text: 'Inicio' })),
     el('ion-list-header', {}, el('ion-label', { text: 'Módulos' })),
     ...MODULES.map((m) =>
-      el('ion-item', { button: 'true', detail: 'false', onclick: () => openModule(m.id) }, el('ion-label', { text: m.name || m.id }))),
+      el('ion-item', { button: 'true', detail: 'false', onclick: () => { openModule(m.id); toggleMenu(false); } }, el('ion-label', { text: m.name || m.id }))),
   );
   const sidebar = el('aside', { class: 'tk-sidebar' },
     el('div', { class: 'tk-brand' }, 'ERPlora · módulos', el('div', { class: 'tk-brand-sub', text: 'dev preview' }),
@@ -313,11 +314,14 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Header Ionic con botón inspector (abre el drawer derecho).
   const inspBtn = el('ion-button', { fill: 'clear', onclick: () => toggleOverlay() }, el('ion-icon', { name: 'information-circle-outline', slot: 'icon-only' }));
-  const header = el('ion-header', {}, el('ion-toolbar', {}, title, el('ion-buttons', { slot: 'end' }, inspBtn)));
+  // Menu button (module-toolkit#434): only shown below the hub's split-pane breakpoint (CSS).
+  const menuBtn = el('ion-button', { fill: 'clear', class: 'tk-menu-btn', 'aria-label': 'Menú', onclick: () => toggleMenu() }, el('ion-icon', { name: 'menu-outline', slot: 'icon-only' }));
+  const header = el('ion-header', {}, el('ion-toolbar', {}, el('ion-buttons', { slot: 'start' }, menuBtn), title, el('ion-buttons', { slot: 'end' }, inspBtn)));
   const main = el('div', { class: 'tk-main' }, header, view, footer);
 
   // Drawer derecho (inspector): panel CSS con contenido Ionic (ion-header + ion-list).
-  const scrim = el('div', { class: 'tk-scrim', onclick: () => toggleOverlay(false) });
+  // One scrim for both drawers: the inspector (right) and, on phone and tablet, the sidebar (left).
+  const scrim = el('div', { class: 'tk-scrim', onclick: () => { toggleOverlay(false); toggleMenu(false); } });
   const inspList = el('ion-list', {});
   const inspector = el('aside', { class: 'tk-overlay' },
     el('ion-header', {}, el('ion-toolbar', {},
@@ -399,7 +403,11 @@ window.addEventListener('DOMContentLoaded', () => {
     const open = force != null ? force : !document.body.classList.contains('tk-overlay-open');
     document.body.classList.toggle('tk-overlay-open', open);
   }
-  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') toggleOverlay(false); });
+  function toggleMenu(force) {
+    const open = force != null ? force : !document.body.classList.contains('tk-menu-open');
+    document.body.classList.toggle('tk-menu-open', open);
+  }
+  window.addEventListener('keydown', (e) => { if (e.key === 'Escape') { toggleOverlay(false); toggleMenu(false); } });
 
   // Arranque: módulo preseleccionado o página main.
   if (PRESELECT && MODULES.some((m) => m.id === PRESELECT)) openModule(PRESELECT);
@@ -408,7 +416,7 @@ window.addEventListener('DOMContentLoaded', () => {
 `;
 }
 
-const INDEX_HTML = (label) => `<!doctype html>
+export const INDEX_HTML = (label) => `<!doctype html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
@@ -454,6 +462,16 @@ const INDEX_HTML = (label) => `<!doctype html>
     .tk-overlay ion-content { flex:1; }
     body.tk-overlay-open .tk-scrim { opacity:1; pointer-events:auto; }
     body.tk-overlay-open .tk-overlay { transform:translateX(0); }
+    /* Phone and tablet (module-toolkit#434): below the hub's split-pane breakpoint (lg, 992px) the
+       sidebar folds into a drawer behind the menu button and the module takes the whole width. */
+    .tk-menu-btn { display:none; }
+    @media (max-width: 991.98px) {
+      .tk-menu-btn { display:block; }
+      /* Closed = hidden for real: no shadow bleeding in at the left edge and no Tab stops inside. */
+      .tk-sidebar { position:fixed; top:0; left:0; height:100%; width:280px; max-width:85vw; transform:translateX(-100%); visibility:hidden; transition:transform .2s, visibility .2s; z-index:51; }
+      body.tk-menu-open .tk-sidebar { transform:translateX(0); visibility:visible; box-shadow:8px 0 24px rgba(0,0,0,.08); }
+      body.tk-menu-open .tk-scrim { opacity:1; pointer-events:auto; }
+    }
   </style>
 </head>
 <body>
