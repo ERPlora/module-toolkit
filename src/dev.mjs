@@ -18,6 +18,8 @@ import { createServer } from 'node:http';
 import { erploraResolvePlugin, ionicFromToolkitPlugin } from './resolve-plugin.mjs';
 import { buildOutfitkitSpec, fetchOutfitkit, npmOutfitkitVersion } from './outfitkit-ci.mjs';
 import { resolvedOutfitkitVersion } from './dist-reproducible.mjs';
+import { declaredColumnTypes } from './validate-filter-ops.mjs';
+import { migrationFiles } from './validate-migrations.mjs';
 import {
   createBuildStatus,
   buildStatusPlugin,
@@ -66,12 +68,76 @@ function loadFixtures(dir, into) {
   }
 }
 
+/**
+ * `column -> Set<declared type>` over the module's postgres migrations, STATEMENT by statement:
+ * `declaredColumnTypes` keeps the first declaration of a column per text, and two tables of the same
+ * migration declaring \`code\` as TEXT and as INTEGER must both be seen to be left out.
+ */
+function declaredTypesByColumn(dir, manifest) {
+  const types = new Map();
+  for (const rel of migrationFiles(manifest, 'postgres')) {
+    let sql;
+    try {
+      sql = readFileSync(join(dir, rel), 'utf8');
+    } catch {
+      continue; // a missing migration is validate's finding, not the preview's
+    }
+    for (const statement of sql.replace(/--[^\n]*/g, '').split(';')) {
+      for (const [col, type] of declaredColumnTypes(statement)) {
+        if (!types.has(col)) types.set(col, new Set());
+        types.get(col).add(type);
+      }
+    }
+  }
+  return types;
+}
+
+/** The kind of value the preview invents for a declared SQL type, or null when it cannot tell. */
+function columnKind(type) {
+  const base = String(type).replace(/"/g, '').trim().split(/[\s(]/)[0].toUpperCase();
+  if (/^(TEXT|VARCHAR|CHAR|CHARACTER|CITEXT|UUID)$/.test(base)) return 'text';
+  if (/^(INTEGER|INT|INT2|INT4|INT8|SMALLINT|BIGINT|SERIAL|SMALLSERIAL|BIGSERIAL)$/.test(base)) return 'integer';
+  if (/^(NUMERIC|DECIMAL|REAL|DOUBLE|FLOAT|FLOAT4|FLOAT8)$/.test(base)) return 'decimal';
+  if (/^(BOOLEAN|BOOL)$/.test(base)) return 'boolean';
+  if (base === 'DATE') return 'date';
+  if (/^TIMESTAMPTZ?$/.test(base)) return 'timestamp';
+  return null;
+}
+
+/**
+ * `query -> column -> kind` for the columns of every `list` query of the module, read from the types
+ * its postgres migrations DECLARE (module-toolkit#431). The invented rows used to guess the type from
+ * the column NAME, and /num/ made `tables`' TEXT table number a number: the floor plan died in the
+ * preview on `(label ?? '').replace` while working in every real hub. A column no migration declares
+ * (a query alias), or that two tables declare with different kinds, is left out: `synth` falls back
+ * to its name for it.
+ */
+export function listColumnKinds(dir, manifest) {
+  const types = declaredTypesByColumn(dir, manifest);
+  const out = {};
+  for (const [name, query] of Object.entries(manifest?.queries || {})) {
+    const cfg = query && query.list;
+    if (!cfg) continue;
+    const kinds = {};
+    for (const col of new Set([...(cfg.search || []), ...(cfg.sort || [])])) {
+      if (col === 'id') continue; // synth always invents the id itself
+      const declared = types.get(String(col).toLowerCase());
+      if (!declared) continue;
+      const found = new Set([...declared].map(columnKind));
+      if (found.size === 1 && !found.has(null)) kinds[col] = [...found][0];
+    }
+    if (Object.keys(kinds).length) out[name] = kinds;
+  }
+  return out;
+}
+
 // Reúne los módulos a cargar. Con `single` activo, solo ese; si no, todos los del workspace.
 function collectModules(rootDir, single) {
   const mods = [];
   const modDirs = [];
   const fixtures = {};
   const wcFiles = [];
+  const columnKinds = {};
   const dirs = single
     ? [single]
     : readdirSync(rootDir)
@@ -87,8 +153,9 @@ function collectModules(rootDir, single) {
     modDirs.push(dir);
     wcFiles.push(...ts);
     loadFixtures(dir, fixtures);
+    Object.assign(columnKinds, listColumnKinds(dir, manifest));
   }
-  return { mods, modDirs, fixtures, wcFiles };
+  return { mods, modDirs, fixtures, wcFiles, columnKinds };
 }
 
 // A preview that runs offline is still useful — it publishes nothing — so these two fall back to the
@@ -138,7 +205,7 @@ export function outfitkitLabel({ version, source }) {
 // Exportada para test (module-toolkit#133): la fuente generada es lo que corre en el navegador, y
 // la única forma honesta de probar que el preview resuelve `emit` en sus dos formas
 // (ERPlora/hub#1076) es ejecutar ESTE texto, no una reimplementación en el test.
-export function harnessEntry(manifests, fixtures, wcFiles, preselect, okLabel = null) {
+export function harnessEntry(manifests, fixtures, wcFiles, preselect, okLabel = null, columnKinds = {}) {
   const ionicImports = IONIC.map(
     (c, i) => `import { defineCustomElement as i${i} } from '@ionic/core/components/ion-${c}.js';`,
   ).join('\n');
@@ -165,6 +232,8 @@ const MODULES = ${JSON.stringify(manifests)};
 const FIXTURES = ${JSON.stringify(fixtures)};
 const PRESELECT = ${JSON.stringify(preselect || null)};
 const OUTFITKIT_LABEL = ${JSON.stringify(okLabel)};
+// \`query -> column -> kind\` the module's migrations declare (module-toolkit#431, listColumnKinds).
+const COLUMN_KINDS = ${JSON.stringify(columnKinds || {})};
 
 // ── Cliente mock (transport en memoria) ─────────────────────────────────────────────────────
 const listeners = new Map();
@@ -176,18 +245,35 @@ const QByName = {};
 const CByName = {};
 for (const m of MODULES) { Object.assign(QByName, m.queries || {}); Object.assign(CByName, m.commands || {}); }
 
+// module-toolkit#431: the kind the module DECLARES wins. The name is only the fallback for a column
+// no migration declares (a query alias), and there /num/ no longer means "number": \`number\` is the
+// TEXT table number of \`tables\` and \`number_sort\` its text sort key.
+const NUMBER_NAME = /price|amount|total|cost|stock|qty|quantity|count/i;
+const FLAG_NAME = /^is_|active|enabled|paid/i;
+function synthValue(c, kind, i, word, first) {
+  const day = '2026-01-' + String((i % 28) + 1).padStart(2, '0');
+  if (kind === 'date') return day;
+  if (kind === 'timestamp') return day + 'T10:00:00Z';
+  if (kind === 'boolean') return i % 2 === 0;
+  if (kind === 'decimal') return Math.round((i + 1) * 12.5 * 100) / 100;
+  // ADR-0007: flags are 0/1 INTEGER columns, so an integer with a flag's name stays a flag.
+  if (kind === 'integer') return FLAG_NAME.test(c) && !NUMBER_NAME.test(c) ? i % 2 : i + 1;
+  if (/_at$/.test(c)) return day + 'T10:00:00Z'; // dates are ISO TEXT (ADR-0007)
+  // A reference points at a row the preview invents too (every invented list is row-1 … row-12), three
+  // children per parent: a TEXT \`zone_id\` of "Alfa zone_id" left the floor plan of every zone empty.
+  if (/_id$/.test(c)) return 'row-' + ((i % 3) + 1);
+  if (kind == null && NUMBER_NAME.test(c)) return Math.round((i + 1) * 12.5 * 100) / 100;
+  if (kind == null && FLAG_NAME.test(c)) return i % 2;
+  return word + (c === first ? '' : ' ' + c);
+}
 function synth(name) {
   const cfg = (QByName[name] && QByName[name].list) || {};
+  const kinds = COLUMN_KINDS[name] || {};
   const cols = [...new Set([...(cfg.search || []), ...(cfg.sort || [])])].filter((c) => c !== 'id');
   const words = ['Alfa','Bravo','Charlie','Delta','Echo','Foxtrot','Golf','Hotel','India','Juliet','Kilo','Lima'];
   return words.map((w, i) => {
     const row = { id: 'row-' + (i + 1) };
-    for (const c of cols) {
-      if (/_at$/.test(c)) row[c] = '2026-01-' + String((i % 28) + 1).padStart(2, '0') + 'T10:00:00Z';
-      else if (/price|amount|total|cost|stock|qty|quantity|count|num/i.test(c)) row[c] = Math.round((i + 1) * 12.5 * 100) / 100;
-      else if (/^is_|active|enabled|paid/i.test(c)) row[c] = i % 2;
-      else row[c] = w + (c === (cfg.search || [])[0] ? '' : ' ' + c);
-    }
+    for (const c of cols) row[c] = synthValue(c, kinds[c], i, w, (cfg.search || [])[0]);
     return row;
   });
 }
@@ -507,7 +593,7 @@ export async function startDev(moduleDir, opts = {}) {
       ? join(process.cwd(), 'modules')
       : process.cwd();
 
-  const { mods, modDirs, fixtures, wcFiles } = collectModules(rootDir, single);
+  const { mods, modDirs, fixtures, wcFiles, columnKinds } = collectModules(rootDir, single);
   if (!mods.length) throw new Error(`No encontré módulos con UI en ${rootDir}`);
   const preselect = single ? JSON.parse(readFileSync(join(single, 'module.json'), 'utf8')).id : null;
 
@@ -527,7 +613,7 @@ export async function startDev(moduleDir, opts = {}) {
   const firstBuild = new Promise((r) => { firstBuilt = r; });
 
   const ctx = await esContext({
-    stdin: { contents: harnessEntry(mods, fixtures, wcFiles, preselect, outfitkitLabel(outfitkit)), resolveDir: rootDir, sourcefile: 'workspace.dev.ts', loader: 'ts' },
+    stdin: { contents: harnessEntry(mods, fixtures, wcFiles, preselect, outfitkitLabel(outfitkit), columnKinds), resolveDir: rootDir, sourcefile: 'workspace.dev.ts', loader: 'ts' },
     bundle: true,
     format: 'esm',
     target: 'es2022',
