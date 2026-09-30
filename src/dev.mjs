@@ -15,7 +15,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, join, extname, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
-import { erploraResolvePlugin } from './resolve-plugin.mjs';
+import { erploraResolvePlugin, ionicFromToolkitPlugin } from './resolve-plugin.mjs';
 import { buildOutfitkitSpec, fetchOutfitkit, npmOutfitkitVersion } from './outfitkit-ci.mjs';
 import { resolvedOutfitkitVersion } from './dist-reproducible.mjs';
 import {
@@ -518,7 +518,7 @@ export async function startDev(moduleDir, opts = {}) {
     assetNames: '[name]',
     loader: { '.css': 'css', '.svg': 'dataurl', '.woff2': 'dataurl', '.woff': 'dataurl', '.ttf': 'dataurl', '.png': 'dataurl' },
     tsconfigRaw: TSCONFIG_RAW,
-    plugins: [erploraResolvePlugin({ outfitkitPrefix: outfitkit.prefix }), buildStatusPlugin({ status, onFirstBuild: firstBuilt })],
+    plugins: [erploraResolvePlugin({ outfitkitPrefix: outfitkit.prefix }), ionicFromToolkitPlugin(), buildStatusPlugin({ status, onFirstBuild: firstBuilt })],
     logLevel: 'silent',
   });
   // ONE startup build, not two. `ctx.watch()` performs its own initial build, so the `ctx.rebuild()`
