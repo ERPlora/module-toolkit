@@ -32,23 +32,16 @@ function write(file, body) {
   writeFileSync(file, body);
 }
 
-// The harness imports Ionic and ionicons from the workspace it previews (a `startproject` workspace
-// installs them). Link the toolkit's copies into the sandbox; ionicons is resolved from @ionic/core,
-// whose dependency it is, so this also holds on CI where only @ionic/core is linked at the top.
-function linkIonic(root) {
-  const req = createRequire(join(REPO, 'package.json'));
-  const core = realpathSync(dirname(req.resolve('@ionic/core/package.json')));
-  // ionicons exports no `./package.json`: walk up from its entry to the package root.
-  let icons = realpathSync(dirname(createRequire(join(core, 'package.json')).resolve('ionicons')));
-  while (!existsSync(join(icons, 'package.json')) || JSON.parse(readFileSync(join(icons, 'package.json'), 'utf8')).name !== 'ionicons') {
-    icons = dirname(icons);
-  }
+// The harness resolves Ionic and ionicons from the toolkit (module-toolkit#430), so the sandbox
+// workspace installs neither. This lays out the monorepo's pnpm shape instead: the toolkit's
+// @ionic/core at the top of the workspace, with ionicons hidden behind it.
+function linkIonicCoreOnly(root) {
+  const core = realpathSync(dirname(createRequire(join(REPO, 'package.json')).resolve('@ionic/core/package.json')));
   mkdirSync(join(root, 'node_modules', '@ionic'), { recursive: true });
   symlinkSync(core, join(root, 'node_modules', '@ionic', 'core'));
-  symlinkSync(icons, join(root, 'node_modules', 'ionicons'));
 }
 
-function sandbox({ modules = { demo: null }, offline = false, installFails = false } = {}) {
+function sandbox({ modules = { demo: null }, offline = false, installFails = false, ionic = 'none' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'erplora-dev-ok-'));
   const bin = join(root, 'bin');
   const log = join(root, 'npm.log');
@@ -85,12 +78,25 @@ exit 2
     write(join(ws, id, 'ui/components', `erp-${id}`, `erp-${id}.ts`), "import '@erplora/outfitkit/define';\nexport const x = 1;\n");
     if (declared) write(join(ws, id, 'package.json'), JSON.stringify({ devDependencies: { '@erplora/outfitkit': declared } }));
   }
-  linkIonic(root);
+  if (ionic === 'decoy') decoyIonicons(ws);
+  if (ionic === 'core-only') linkIonicCoreOnly(root);
 
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, ERPLORA_OUTFITKIT_CACHE: join(root, 'cache') };
   const npmCalls = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []);
   return { root, ws, env, npmCalls, clean: () => rmSync(root, { recursive: true, force: true }) };
 }
+
+// A workspace that installs its OWN ionicons, which is not the one the toolkit ships. Its entry
+// marks the bundle, so a preview that resolves Ionic from the workspace is caught baking it.
+function decoyIonicons(ws) {
+  const pkg = join(ws, 'node_modules', 'ionicons');
+  write(join(pkg, 'package.json'), JSON.stringify({ name: 'ionicons', version: '0.0.1', type: 'module', exports: { '.': './index.js', './icons': './icons.js' } }));
+  write(join(pkg, 'index.js'), "globalThis.__workspaceIonicons = true;\nexport const addIcons = () => {};\n");
+  write(join(pkg, 'icons.js'), 'export const decoy = "workspace";\n');
+}
+
+// What the server hands out while the build is broken (dev-build-status.mjs, module-toolkit#81).
+const isErrorOverlay = (harness) => harness.includes('erplora-dev-error');
 
 /**
  * Starts the preview on a free port, captures what it prints, and hands back the served harness.
@@ -202,6 +208,43 @@ test('npm names the version but cannot install it: the preview still comes up wi
     assert.equal(p.outfitkit.source, 'local');
     assert.ok(headerSays(p.harness, `OutfitKit ${LOCAL} · local`));
     assert.ok(p.warn.some((w) => w.includes('outfitkit_unavailable') && w.includes(LOCAL)), p.warn.join('\n'));
+  } finally {
+    s.clean();
+  }
+});
+
+// module-toolkit#430: in the monorepo's modules workspace (pnpm) ionicons is only a dependency of
+// @ionic/core, hidden under `node_modules/.pnpm`, so the harness's own `import 'ionicons'` found
+// nothing and every module previewed as the error overlay. `build` never depended on what the
+// workspace installs; the preview must not either.
+test('a workspace that installs no Ionic still previews: Ionic and ionicons come from the toolkit (mt#430)', async () => {
+  const s = sandbox({ ionic: 'none' });
+  try {
+    const p = await preview(s, join(s.ws, 'demo'));
+    assert.ok(!isErrorOverlay(p.harness), `the preview served the error overlay:\n${p.harness.slice(0, 600)}`);
+    assert.ok(p.harness.includes('ion-icon'), 'the Ionic components are in the bundle');
+    assert.ok(p.harness.includes('npm-0.0.125'), 'and so is the module, with its OutfitKit');
+  } finally {
+    s.clean();
+  }
+});
+
+test('the monorepo shape: @ionic/core at the top of the workspace, ionicons hidden behind it (mt#430)', async () => {
+  const s = sandbox({ ionic: 'core-only' });
+  try {
+    const p = await preview(s, join(s.ws, 'demo'));
+    assert.ok(!isErrorOverlay(p.harness), `the preview served the error overlay:\n${p.harness.slice(0, 600)}`);
+  } finally {
+    s.clean();
+  }
+});
+
+test("the workspace's own ionicons is never what the preview bundles (mt#430)", async () => {
+  const s = sandbox({ ionic: 'decoy' });
+  try {
+    const p = await preview(s, join(s.ws, 'demo'));
+    assert.ok(!isErrorOverlay(p.harness), `the preview served the error overlay:\n${p.harness.slice(0, 600)}`);
+    assert.ok(!p.harness.includes('__workspaceIonicons'), "the workspace's ionicons was bundled");
   } finally {
     s.clean();
   }

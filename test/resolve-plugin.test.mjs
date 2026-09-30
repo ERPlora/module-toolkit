@@ -7,7 +7,7 @@
 // nobody chose. `vendor/` is only for the install that has nothing else — a vendor's `npm install`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,4 +149,82 @@ test('only the toolkit\'s RUNTIME pieces can be bundled: a test guard or a CLI f
     assert.equal(res.path, undefined, `${spec} resolved to ${res.path}`);
     assert.equal(res.errors?.length, 1, spec);
   }
+});
+
+// ── Ionic for the `erplora dev` harness (module-toolkit#430) ─────────────────────────────────────
+//
+// The harness imports @ionic/core and ionicons; they have to come from the toolkit, whatever the
+// previewed workspace installs. ionicons is a dependency of @ionic/core, not of the toolkit: under
+// pnpm (and in CI, where only @ionic/core is linked at the top) it sits NEXT TO @ionic/core's real
+// directory, never at the top of the toolkit's node_modules.
+
+/** A toolkit whose @ionic/core is a symlink into a pnpm-like store holding ionicons beside it. */
+function pnpmToolkit(name) {
+  const root = join(scratch, name);
+  const store = join(root, 'store', 'node_modules');
+  const core = join(store, '@ionic', 'core');
+  mkdirSync(join(core, 'components'), { recursive: true });
+  writeFileSync(join(core, 'package.json'), JSON.stringify({ name: '@ionic/core', version: '8.0.0' }));
+  writeFileSync(join(core, 'components', 'ion-app.js'), 'globalThis.__storeIonApp = true;\n');
+  const icons = join(store, 'ionicons');
+  mkdirSync(icons, { recursive: true });
+  writeFileSync(
+    join(icons, 'package.json'),
+    JSON.stringify({ name: 'ionicons', type: 'module', exports: { '.': './index.js', './icons': './icons.mjs' } }),
+  );
+  writeFileSync(join(icons, 'index.js'), 'globalThis.__storeIonicons = true;\n');
+  writeFileSync(join(icons, 'icons.mjs'), 'export const storeIcon = "store";\n');
+  const toolkit = join(root, 'toolkit');
+  mkdirSync(join(toolkit, 'node_modules', '@ionic'), { recursive: true });
+  writeFileSync(join(toolkit, 'package.json'), JSON.stringify({ name: '@erplora/module-toolkit' }));
+  symlinkSync(core, join(toolkit, 'node_modules', '@ionic', 'core'));
+  // A workspace that installs a DIFFERENT ionicons and no @ionic/core at all.
+  const ws = join(root, 'ws');
+  mkdirSync(join(ws, 'node_modules', 'ionicons'), { recursive: true });
+  writeFileSync(join(ws, 'node_modules', 'ionicons', 'package.json'), JSON.stringify({ name: 'ionicons', main: 'index.js' }));
+  writeFileSync(join(ws, 'node_modules', 'ionicons', 'index.js'), 'globalThis.__workspaceIonicons = true;\n');
+  return { toolkit, ws };
+}
+
+async function bundleFrom(ws, plugins, contents) {
+  const { build } = await import('esbuild');
+  const out = await build({
+    stdin: { contents, resolveDir: ws, loader: 'js' },
+    bundle: true,
+    write: false,
+    format: 'esm',
+    logLevel: 'silent',
+    plugins,
+  });
+  return out.outputFiles[0].text;
+}
+
+test('the harness bakes Ionic and ionicons from the toolkit, found beside @ionic/core, never from the workspace', async () => {
+  const { ionicFromToolkitPlugin } = await import('../src/resolve-plugin.mjs');
+  const { toolkit, ws } = pnpmToolkit('pnpm-ionic');
+  const js = await bundleFrom(
+    ws,
+    [ionicFromToolkitPlugin({ toolkitDir: toolkit })],
+    "import '@ionic/core/components/ion-app.js';\nimport 'ionicons';\nimport * as I from 'ionicons/icons';\nconsole.log(I);\n",
+  );
+  assert.ok(js.includes('__storeIonApp'), '@ionic/core comes from the toolkit');
+  assert.ok(js.includes('__storeIonicons'), 'ionicons comes from beside the toolkit\'s @ionic/core');
+  assert.ok(js.includes('storeIcon'), 'ionicons/icons honours the package exports map');
+  assert.ok(!js.includes('__workspaceIonicons'), "the workspace's ionicons was bundled");
+});
+
+test('the positive control: without the plugin that same workspace bakes its own ionicons', async () => {
+  const { ws } = pnpmToolkit('pnpm-ionic-control');
+  const js = await bundleFrom(ws, [], "import 'ionicons';\n");
+  assert.ok(js.includes('__workspaceIonicons'));
+});
+
+test('a toolkit without @ionic/core is a resolution error that says to reinstall the toolkit', async () => {
+  const { ionicFromToolkitPlugin } = await import('../src/resolve-plugin.mjs');
+  const empty = join(scratch, 'no-ionic-toolkit');
+  mkdirSync(empty, { recursive: true });
+  await assert.rejects(
+    bundleFrom(empty, [ionicFromToolkitPlugin({ toolkitDir: empty })], "import 'ionicons';\n"),
+    (err) => err.errors.some((e) => /@erplora\/module-toolkit/.test(e.text) && /ionicons/.test(e.text)),
+  );
 });

@@ -10,7 +10,7 @@
 // SIEMPRE desde este módulo del toolkit, garantizamos una sola copia, sea cual sea el gestor
 // de paquetes o el anidamiento (symlinks de `file:` incluidos).
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // The hub packages the tarball carries in `vendor/` (`scripts/bundle-hub-sdk.mjs`, `prepack`),
@@ -149,6 +149,51 @@ export function erploraResolvePlugin({ sdkDir, outfitkitPrefix } = {}) {
             ],
           };
         }
+      });
+    },
+  };
+}
+
+// What the `erplora dev` harness imports to paint the hub's shell around a module (module-toolkit#430).
+const IONIC = /^(@ionic\/core|ionicons)($|\/)/;
+const TOOLKIT_DIR = fileURLToPath(new URL('..', import.meta.url));
+
+const incomplete = (spec, errors) =>
+  errors.map((e) => ({
+    text:
+      `Could not resolve '${spec}' from the toolkit: its installation is incomplete. ` +
+      `Reinstall @erplora/module-toolkit (npm install). (${e.text})`,
+  }));
+
+/**
+ * Resolves `@ionic/core` and `ionicons` from the toolkit, never from the previewed workspace: in the
+ * monorepo's pnpm workspace ionicons is hidden under `node_modules/.pnpm` and the preview could not
+ * compile (module-toolkit#430). ionicons is a dependency of @ionic/core, not of the toolkit, so it is
+ * looked up beside @ionic/core's real directory — where npm hoists it, pnpm stores it and CI links it.
+ *
+ * @param {{toolkitDir?: string}} [options] `toolkitDir`: the toolkit root (injected in tests)
+ */
+export function ionicFromToolkitPlugin({ toolkitDir = TOOLKIT_DIR } = {}) {
+  return {
+    name: 'erplora-ionic',
+    setup(build) {
+      const from = (spec, kind, resolveDir) =>
+        build.resolve(spec, { kind, resolveDir, pluginData: { erploraIonic: true } });
+      let coreDir;
+      build.onResolve({ filter: IONIC }, async (args) => {
+        // The nested resolves below come back through here: let esbuild answer them.
+        if (args.pluginData?.erploraIonic) return undefined;
+        let resolveDir = toolkitDir;
+        if (args.path.startsWith('ionicons')) {
+          if (!coreDir) {
+            const core = await from('@ionic/core/package.json', args.kind, toolkitDir);
+            if (core.errors.length) return { errors: incomplete(args.path, core.errors) };
+            coreDir = dirname(core.path);
+          }
+          resolveDir = coreDir;
+        }
+        const found = await from(args.path, args.kind, resolveDir);
+        return found.errors.length ? { errors: incomplete(args.path, found.errors) } : { path: found.path };
       });
     },
   };
