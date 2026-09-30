@@ -25,23 +25,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { newestKnownHub } from '../src/validate-outfitkit-floor.mjs';
-import { stampOutfitkit } from '../src/outfitkit-stamp.mjs';
 import { resolvedSdkDir } from '../src/sdk-freshness.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CLI = join(ROOT, 'bin', 'erplora.mjs');
 
-/** What `build` will stamp on this machine — the shared `../outfitkit`, whatever it is today. */
-function localOutfitkit() {
-  const probe = mkdtempSync(join(tmpdir(), 'ok-probe-'));
-  mkdirSync(join(probe, 'dist'));
-  return stampOutfitkit(probe);
-}
+// What `build` stamps: npm's `latest` OutfitKit since module-toolkit#423, no longer the shared
+// `../outfitkit`. A fake `npm` on PATH calls a version AHEAD of every hub `latest`, and a private
+// cache already holds it (the fixture bakes no `ok-*`, so its package.json is all a bake reads).
+// Before #423 these two tests skipped whenever the local checkout was not ahead of the fleet —
+// that is, almost always; now the situation under test is built, not waited for.
+const AHEAD = '9.0.0';
+const OK_ROOT = mkdtempSync(join(tmpdir(), 'erplora-packfloor-ok-'));
+mkdirSync(join(OK_ROOT, 'bin'));
+mkdirSync(join(OK_ROOT, 'cache', AHEAD, 'node_modules', '@erplora', 'outfitkit'), { recursive: true });
+writeFileSync(
+  join(OK_ROOT, 'cache', AHEAD, 'node_modules', '@erplora', 'outfitkit', 'package.json'),
+  JSON.stringify({ name: '@erplora/outfitkit', version: AHEAD }),
+);
+writeFileSync(join(OK_ROOT, 'bin', 'npm'), `#!/usr/bin/env bash\n[ "$1" = view ] && { echo '"${AHEAD}"'; exit 0; }\nexit 1\n`);
+chmodSync(join(OK_ROOT, 'bin', 'npm'), 0o755);
+process.on('exit', () => rmSync(OK_ROOT, { recursive: true, force: true }));
+const OK_ENV = { PATH: `${join(OK_ROOT, 'bin')}:${process.env.PATH}`, ERPLORA_OUTFITKIT_CACHE: join(OK_ROOT, 'cache') };
 
 /**
  * A module `pack` accepts: a real Lit component, its manifest, and a STALE stamp — the shape of the
@@ -94,7 +104,7 @@ function hubHeadEnv() {
 function erplora(command, dir) {
   const res = spawnSync(process.execPath, [CLI, command, dir], {
     encoding: 'utf8',
-    env: { ...process.env, ...hubHeadEnv() },
+    env: { ...process.env, ...hubHeadEnv(), ...OK_ENV },
   });
   return { ...res, out: `${res.stdout}\n${res.stderr}` };
 }
@@ -103,23 +113,15 @@ function erplora(command, dir) {
 // re-stamps with the shared checkout that there is anything to catch — which is the whole point.
 const STALE = '0.1.36';
 
-test('pack JUDGES the stamp it ships, not the stale one it is about to overwrite (#201 N-0)', (t) => {
-  const local = localOutfitkit();
-  if (!local) return t.skip('no @erplora/outfitkit resolvable: nothing would be stamped');
-  const ahead = compareAhead(local, newestKnownHub().outfitkit);
-  if (!ahead) {
-    return t.skip(
-      `the local ../outfitkit (${local}) is not ahead of the newest hub ` +
-        `(${newestKnownHub().outfitkit}), so packing cannot produce the situation under test — ` +
-        'this suite proves nothing today, and says so instead of passing',
-    );
-  }
+test('pack JUDGES the stamp it ships, not the stale one it is about to overwrite (#201 N-0)', () => {
+  // The positive control: what build will stamp really is ahead of every hub the table knows.
+  assert.ok(compareAhead(AHEAD, newestKnownHub().outfitkit), `${AHEAD} vs ${newestKnownHub().outfitkit}`);
   const { dir, id } = packableModule({ staleStamp: STALE });
   const res = erplora('pack', dir);
 
   assert.equal(res.status, 1, `pack shipped a module no hub can paint:\n${res.out}`);
   assert.match(res.out, /module-toolkit#201/, `it must say WHY:\n${res.out}`);
-  assert.match(res.out, new RegExp(local.replace(/\./g, '\\.')), 'it must name the stamp it SHIPS');
+  assert.match(res.out, new RegExp(AHEAD.replace(/\./g, '\\.')), 'it must name the stamp it SHIPS');
   // And the zip must not exist: a blocked publication does not leave an artifact behind.
   assert.equal(
     existsSync(join(dir, 'build', `${id}-v1.0.0.zip`)),
@@ -128,10 +130,7 @@ test('pack JUDGES the stamp it ships, not the stale one it is about to overwrite
   );
 });
 
-test('the same module, declaring the floor its bake needs, packs fine (#201 N-0)', (t) => {
-  const local = localOutfitkit();
-  if (!local) return t.skip('no @erplora/outfitkit resolvable');
-  if (!compareAhead(local, newestKnownHub().outfitkit)) return t.skip('local outfitkit not ahead of the fleet');
+test('the same module, declaring the floor its bake needs, packs fine (#201 N-0)', () => {
   // The way out has to work, or the gate above is just a wall. `9.9.9` is a floor newer than the
   // table knows: the honest declaration for «this needs a hub that has not shipped yet».
   const { dir, id } = packableModule({ staleStamp: STALE, compatibility: { min_erplora_version: '9.9.9' } });
@@ -141,7 +140,7 @@ test('the same module, declaring the floor its bake needs, packs fine (#201 N-0)
   assert.ok(existsSync(zip), 'a green pack has to produce the zip');
   // And what travels is the FRESH stamp — the one that was judged.
   const shipped = JSON.parse(execFileSync('unzip', ['-p', zip, 'dist/outfitkit.json'], { encoding: 'utf8' }));
-  assert.equal(shipped.outfitkit, local, 'the zip must carry the stamp the gate looked at');
+  assert.equal(shipped.outfitkit, AHEAD, 'the zip must carry the stamp the gate looked at');
 });
 
 /** `a` strictly newer than `b`, by number. Local to this suite: it only orders two known versions. */

@@ -24,7 +24,7 @@ aporta las dependencias y la configuración de build.
 | `erplora g module <id>` | ✅ | Genera un módulo (repo propio): manifest + WC Lit (`ok-data-table`) + SQL + fixtures. |
 | `erplora g view\|command\|query <id> <n>` | ✅ | Añade piezas dentro de un módulo existente. |
 | `erplora dev <id\|dir> [puerto]` | ✅ | Preview del WC con Ionic + transport mock (fixtures/sintético), CSP estricta, watch. |
-| `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe, con las rutas normalizadas para que salga igual desde cualquier cwd — module-toolkit#93), deja el sello `dist/<id>.build.json` **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). **Se niega** si el `@erplora/module-sdk` que va a hornear está por detrás de `develop` del hub (module-toolkit#387). Con `--check [--sdk <dir>]` **no escribe nada**: recompila aparte con ese SDK y falla (`dist_not_reproducible`, `dist_missing`, `dist_unsealed`, `dist_outfitkit_mismatch`) si `dist/<id>.esm.js` no son exactamente esos bytes — es lo que corre el gate (module-toolkit#389). |
+| `erplora build <id\|dir>` | ✅ | Compila el WC (Lit) a `dist/<id>.esm.js` (auto-contenido, CSP-safe, con las rutas normalizadas para que salga igual desde cualquier cwd — module-toolkit#93), deja el sello `dist/<id>.build.json` **y recompila el handler WASM** a `dist/handler.wasm` si hace falta (module-toolkit#26). **Se niega** si el `@erplora/module-sdk` que va a hornear está por detrás de `develop` del hub (module-toolkit#387). Hornea y **sella** (`dist/outfitkit.json`) la OutfitKit **de npm** que declara el `package.json` del módulo, o `latest` si no declara ninguna —nunca la copia local del toolkit—; sin npm se para con `outfitkit_unresolvable` antes de tocar `dist/` (module-toolkit#423). Con `--check [--sdk <dir>]` **no escribe nada**: recompila aparte con ese SDK y con la OutfitKit **sellada** bajada de npm, y falla (`dist_not_reproducible`, `dist_missing`, `dist_unsealed`, `dist_outfitkit_unavailable`) si `dist/<id>.esm.js` no son exactamente esos bytes — es lo que corre el gate (module-toolkit#389). |
 | `erplora validate <id\|dir> [--pg]` | ✅ | Valida el manifest (contrato `architecture/hub/module-system.md`) + CSP del bundle + handlers WASM (si `handler.type === "wasm"`, rechaza un `dist/handler.wasm` desincronizado del fuente — guardarraíles module-toolkit#135 y #26). Con `--pg`, además **PREPARA** cada SQL declarado contra un Postgres efímero (§ *Que el SQL prepare de verdad*). Rechaza también un `dist/<id>.esm.js` con rutas de la máquina que lo compiló o desfasado respecto de `ui/` (§ *El bundle publicado*), un canal de `host.notify` sin transporte, una guarda de filas que no se puede armar (`min_affected_rows` sobre un lote, un ancla `expect_rows.statement` colgando — hub#1091) y avisa del techo de permisos de los handlers (§ *Dos guardas del contrato del runtime*), un `fill` de Ionic que el hub no va a pintar (§ *El `fill` que el hub NUNCA pinta*), un `color=` en un `ion-*` que sale invisible dentro del componente (§ *El `color=` que no cruza el shadow root*), la **tenancy** que el SQL del módulo tiene que escribir con binds `:hub_id` (ADR-0423, `validate-hub-scope.mjs`), el catálogo `errors` del manifest (ADR-0398) y los filtros de lista muertos o con la caja equivocada (ADR-0125). |
 | `erplora test <id\|dir> [--list] [--against-hub [<imagen>]]` | ✅ | Corre **los tests que el módulo ya trae**: sus baterías `tests/**/*.test.py|.sh` (las que necesitan Postgres usan el contenedor de `ERPLORA_TEST_PG_CONTAINER`), **sus tests de TypeScript** `ui/**/*.test.ts` bajo vitest + happy-dom **y los tests Rust del handler** (`#[cfg(test)]` en `handler/**`, bajo `cargo test`; fuera del monorepo, con el checkout del hub de `ERPLORA_HUB_DIR`) (§ *Los tests que el módulo ya tenía*). Falla si queda un test que **nadie** va a ejecutar. `--list` los enumera sin correrlos — es lo que el gate lee para decidir qué instalar. Con `--against-hub` levanta el **kernel real** y corre contra él las baterías `*.hub.test.py|.sh` (§ *La batería contra el kernel REAL*). |
 | `erplora contracts <id\|dir>` | ✅ | (Re)genera `.erplora/contracts.json`: la superficie de OTROS módulos que este consume, extraída por AST de las llamadas al SDK (ADR-0127). |
@@ -501,6 +501,10 @@ mismo:
    OutfitKit del hub más nuevo que existe → **aviso en `validate`, error en `erplora pack`**.
 
 Por qué el (2) no puede ser rojo en `validate`, **medido**: el sello no lo elige el autor.
+(Desde module-toolkit#423 el sello es la OutfitKit **de npm** —`latest`, o la que declare el
+`package.json` del módulo— y no el checkout `../outfitkit` que cuenta el párrafo; el razonamiento
+sigue igual: `latest` va por delante de la flota por diseño. La salida (b) del error de `pack` es
+ahora declarar la versión en el `package.json` del módulo y volver a `erplora build`.)
 `stampOutfitkit()` lo resuelve desde `node_modules/@erplora/outfitkit`, que aquí es
 `file:../outfitkit` —el checkout de desarrollo compartido, que cuando esto se midió iba por 0.1.59
 con npm en 0.1.65, o sea por delante de la flota (0.1.58) *por la propia premisa*— y `validate`
@@ -1043,14 +1047,37 @@ céntimos). #387 lo impide en la máquina de quien construye; esta es la puerta 
 
 Tras `erplora validate`, la action corre `.github/scripts/check-dist-reproducible.sh <dir> <sdk>`,
 que instala en un prefijo de scratch **lo mismo que entró en el bundle** —esbuild y la familia Lit a
-las versiones del `package-lock.json` del toolkit, y `@erplora/outfitkit` a la versión que el módulo
-**selló** en `dist/outfitkit.json` (hub#1024)— y ejecuta `erplora build <dir> --check --sdk <sdk>`
-con el `module-sdk` que el gate ya tiene en disco (el de `ERPlora/hub@develop`). El SDK pasa antes
+las versiones del `package-lock.json` del toolkit— y ejecuta `erplora build <dir> --check --sdk <sdk>`
+con el `module-sdk` que el gate ya tiene en disco (el de `ERPlora/hub@develop`). La OutfitKit la baja
+el propio `--check`: la versión que el módulo **selló** en `dist/outfitkit.json` (hub#1024), de npm a
+la caché compartida (ver abajo), nunca la copia del toolkit (module-toolkit#423). El SDK pasa antes
 por la puerta de frescura de #387. Rojo si el bundle difiere en un solo byte, si falta, si no tiene
 sello o si su OutfitKit no se puede instalar; la salida es siempre la misma orden: `erplora build
 <dir>` con el hub en `develop`, y commitear `dist/`. Sin interruptor: corre en todos los módulos.
 Guardas: `test/dist-reproducible.test.mjs`, `test/check-dist-reproducible-script.test.mjs` y el
 cableado en `test/gate-wiring.test.mjs`.
+
+### Qué OutfitKit hornea `build`: la de npm, la misma que prueba el gate (module-toolkit#423)
+
+En un portátil el `node_modules/@erplora/outfitkit` del toolkit es un enlace al checkout compartido
+`../outfitkit`. El 30/09 estaba en 0.1.79 con npm en 0.1.125: cada `erplora build` local horneaba y
+**sellaba** 0.1.79 mientras los tests de pantalla del gate corrían contra la de npm, y `--check` no
+lo veía porque reconstruía con la misma versión sellada. 21 de 27 módulos llevaban 0.1.79 en `main`.
+
+La regla, en `src/outfitkit-ci.mjs`, una por lado y las dos cuadran por construcción:
+
+- **`build`** pregunta a npm por lo que declara el `package.json` del módulo (versión o rango) o por
+  `latest` si no declara nada (`workspace:*` cuenta como nada), la instala una vez por versión en la
+  caché `${XDG_CACHE_HOME:-~/.cache}/erplora/outfitkit/<v>` (`ERPLORA_OUTFITKIT_CACHE` la cambia; la
+  comparte con `outfitkit-ci.sh` de la flota, pm#547), la hornea y la sella. Sin npm se para con
+  `outfitkit_unresolvable` **antes** de tocar `dist/`: caer a la copia local es justo el bug.
+- **El gate** —`build --check` y los tests de pantalla (`vitest`) de `validate-module`— usa la versión
+  **sellada** (`node src/outfitkit-ci.mjs gate-spec <dir>`): se prueba lo que se publica. Si npm no
+  puede darla, `dist_outfitkit_unavailable`.
+
+Por qué no «sello == `latest`» en el gate: `latest` se publica ~10 veces al día y pondría en rojo PRs
+por algo que nadie hizo. Consecuencia: un módulo con sello viejo prueba en CI contra ese sello hasta
+que alguien lo rehornea con `erplora build`.
 
 **Qué NO cubre el gate: producir el artefacto wasm32.** El validador **sí** compila el crate del
 handler, pero para el **host** —que es lo que caza un fuente que no compila— y el `cargo test` de
