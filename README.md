@@ -766,9 +766,25 @@ mergeaba en verde. `erplora test` cierra las tres familias, con la misma regla e
 
 | Familia | Qué recoge | Cómo se corre |
 |---|---|---|
-| Baterías | cualquier `tests/**/*.test.py` o `*.test.sh` | el intérprete que toque; las que necesitan Postgres (por nombre `.pg.`/`.postgres.` **o porque leen el contenedor**) usan `ERPLORA_TEST_PG_CONTAINER` |
+| Baterías | cualquier `tests/**/*.test.py` o `*.test.sh` | el intérprete que toque (Python **≥3.10**, § *Con qué Python*); las que necesitan Postgres (por nombre `.pg.`/`.postgres.` **o porque leen el contenedor**) usan `ERPLORA_TEST_PG_CONTAINER` |
 | TypeScript | `ui/**/*.test.ts` — los Web Components, donde vive casi toda la lógica de pantalla | vitest + happy-dom, con la **config del toolkit** (`src/vitest.module.config.mjs`) |
 | Rust | `handler/**/*.rs` con `#[cfg(test)]` — la lógica de negocio de un módulo Tier 2 | `cargo test` sobre el crate del handler; fuera del monorepo necesita un checkout del hub en `ERPLORA_HUB_DIR` (§ *Los tests del handler*) |
+
+### Con qué Python
+
+Las baterías escriben `str | None`, que es Python **3.10**: con 3.9 revientan con `TypeError:
+unsupported operand type(s) for |` **antes** de probar nada. Un Mac trae dos intérpretes —
+`/usr/bin/python3` es el 3.9 de las Command Line Tools y suele ir delante de Homebrew en el `PATH`—,
+así que `erplora test` no se fía del primero (module-toolkit#417):
+
+- Con **`ERPLORA_PYTHON`** usa ese y **ningún otro**; si es menor que 3.10, falla una sola vez con
+  `python_too_old` sin correr ninguna batería (el gate le pasa un venv con `jsonschema`, y cambiarlo
+  por otro sin el paquete cambiaría un rojo por otro peor).
+- Sin ella prueba `python3`, después `python3.14` … `python3.10` (el más nuevo primero) y por último
+  `/opt/homebrew/bin/python3` y `/usr/local/bin/python3`. Si tuvo que saltarse uno viejo, lo dice:
+  `→ Python 3.14.5 (`python3.14`) para las baterías; saltado por viejo (<3.10): python3 3.9.6`.
+- Si no encuentra ninguno ≥3.10: `python_too_old` (o `python_missing` si no hay Python) con el
+  remedio — `brew install python` o `ERPLORA_PYTHON=<ruta>`.
 
 ### Las migraciones te las da el entorno: `ERPLORA_MIGRATION_FILES`
 
