@@ -306,6 +306,28 @@ export function selectOutputs(sql) {
   return { star, map };
 }
 
+/** Words that can follow a table in FROM/JOIN and are not its alias: a lookahead, so the next JOIN is still read. */
+const NOT_AN_ALIAS = String.raw`(?!(?:ON|USING|WHERE|LEFT|RIGHT|INNER|OUTER|FULL|CROSS|NATURAL|JOIN|GROUP|ORDER|HAVING|LIMIT|OFFSET|WINDOW|UNION|INTERSECT|EXCEPT|FETCH|FOR)\b)`;
+const FROM_TABLE = new RegExp(String.raw`\b(?:FROM|JOIN)\s+(?!LATERAL\b)("?[\w.]+"?)(?:\s+(?:AS\s+)?${NOT_AN_ALIAS}"?(\w+)"?)?`, 'gi');
+
+/**
+ * The tables the outermost statement reads, `Map<alias or table name, table>` — what a qualifier of
+ * `selectOutputs` resolves through. Only `FROM <table>` and `JOIN <table>` at depth 0 count: a
+ * `JOIN LATERAL ( … )` or a `FROM ( … )` is a subquery, and the tables inside it are not the ones the
+ * list's columns come from. Names are lowercase and lose their quotes and schema.
+ */
+export function sourceTables(sql) {
+  const code = blankNonCode(sql);
+  const depth = depths(code);
+  const out = new Map();
+  for (const m of atTopLevel(code, depth, FROM_TABLE)) {
+    const table = m[1].replace(/"/g, '').split('.').pop().toLowerCase();
+    out.set(table, table);
+    if (m[2]) out.set(m[2].toLowerCase(), table);
+  }
+  return out;
+}
+
 /**
  * Every dead filter of a module. `queries` is `[{ name, sql, filters }]`; returns
  * `{ errors, warnings }`, the shape the other `erplora validate` checks use.
@@ -391,7 +413,7 @@ export function deadFilterFindings(moduleId, queries, { columnTypes = null, decl
 }
 
 /** The SQL of a query, when it is one readable statement — otherwise null (nothing to judge). */
-function querySql(dir, value) {
+export function querySql(dir, value) {
   const items = Array.isArray(value) ? value : value == null ? [] : [value];
   if (items.length !== 1 || typeof items[0] !== 'string') return null;
   const item = items[0].trim();
