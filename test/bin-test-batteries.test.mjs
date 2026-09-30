@@ -7,7 +7,7 @@
 // imports in the CLI exist to avoid.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, symlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -98,5 +98,38 @@ test('la CLI honra `ERPLORA_PYTHON` (el gate corre un venv con jsonschema)', { s
   const r = run(m.dir, { ERPLORA_PYTHON: 'python3-que-no-existe' });
   assert.equal(r.status, 1, 'si el intérprete elegido no existe, falla — no cae a otro en silencio');
   assert.match(r.stdout + r.stderr, /python3-que-no-existe/);
+  m.clean();
+});
+
+// ── module-toolkit#417 ───────────────────────────────────────────────────────────────────────
+
+const REAL_PYTHON = (() => {
+  const r = spawnSync('python3', ['-c', 'import sys; print(sys.executable) if sys.version_info >= (3, 10) else None'], {
+    encoding: 'utf8',
+  });
+  return r.status === 0 && r.stdout.trim() && r.stdout.trim() !== 'None' ? r.stdout.trim() : null;
+})();
+
+test('en un Mac con el `python3` 3.9 del sistema DELANTE, la suite corre con el que llega y lo dice', { skip: !REAL_PYTHON && 'no hay python ≥3.10' }, () => {
+  // The PATH a fleet session had: `python3` is the Command Line Tools 3.9 and the good one only
+  // answers to its versioned name. Before #417 every battery with `str | None` went red here.
+  const m = mod({
+    'tests/union.contract.test.py': 'import sys\ndef f(a: str | None = None) -> str | None:\n    return a\nsys.exit(0)\n',
+  });
+  const bin = mkdtempSync(join(tmpdir(), 'erplora-bin-python-'));
+  writeFileSync(
+    join(bin, 'python3'),
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Python 3.9.6"; exit 0; fi\n' +
+      'echo "TypeError: unsupported operand type(s) for |" >&2\nexit 1\n',
+  );
+  chmodSync(join(bin, 'python3'), 0o755);
+  symlinkSync(REAL_PYTHON, join(bin, 'python3.12'));
+  const env = { ...process.env, PATH: bin };
+  delete env.ERPLORA_PYTHON;
+  const r = spawnSync(process.execPath, [BIN, 'test', m.dir], { encoding: 'utf8', env });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout + r.stderr, /python3\.12/, 'dice con qué intérprete corrió');
+  assert.match(r.stdout + r.stderr, /3\.9\.6/, 'y cuál se saltó');
+  rmSync(bin, { recursive: true, force: true });
   m.clean();
 });
