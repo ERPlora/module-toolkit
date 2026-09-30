@@ -416,11 +416,15 @@ test('resolvePython: fuera de PATH también mira el Python de Homebrew', () => {
 });
 
 test('resolvePython: ninguno llega al suelo → python_too_old, con lo que encontró', () => {
-  const r = resolvePython({ probe: probeFrom({ python3: '3.9.6', 'python3.9': '3.9.6' }) });
+  // `python3` and `/usr/local/bin/python3` are the same interpreter here: named once, not twice.
+  const r = resolvePython({
+    probe: probeFrom({ python3: '3.9.6', '/usr/local/bin/python3': '3.9.6', '/opt/homebrew/bin/python3': '3.8.10' }),
+  });
   assert.equal(r.error, 'python_too_old');
   assert.equal(r.python, undefined);
   assert.deepEqual(r.passedOver, [
     { python: 'python3', version: '3.9.6' },
+    { python: '/opt/homebrew/bin/python3', version: '3.8.10' },
   ]);
 });
 
