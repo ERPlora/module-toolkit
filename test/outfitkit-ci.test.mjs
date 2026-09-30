@@ -10,7 +10,7 @@
 // and a private cache, so no test touches the network or the real `~/.cache`.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -292,6 +292,58 @@ test('the gate CLI prints the spec the screen tests install', () => {
     assert.equal(res.stdout, '0.1.98');
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// `drift` is what the catalog rebake reads (module-toolkit#424): the version the bundle ships next to
+// the one `build` would bake today. A module sealed with an old OutfitKit is `reproducible` for the
+// gate, so only this comparison sees it.
+test('the drift CLI prints the sealed OutfitKit and the one build would bake today from npm', () => {
+  const s = sandbox({ published: SANDBOX_VERSIONS });
+  const drift = (env = s.env) =>
+    spawnSync(process.execPath, [join(REPO, 'src', 'outfitkit-ci.mjs'), 'drift', s.mod], { encoding: 'utf8', env });
+  try {
+    write(join(s.mod, 'dist', 'outfitkit.json'), '{"outfitkit":"0.0.42"}\n');
+    let res = drift();
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(res.stdout, '0.0.42\t0.0.125', 'no declared version: npm latest');
+    // A module that declares its OutfitKit on purpose is compared with that, not with latest.
+    write(join(s.mod, 'package.json'), JSON.stringify({ devDependencies: { '@erplora/outfitkit': '0.0.100' } }));
+    res = drift();
+    assert.equal(res.stdout, '0.0.42\t0.0.100');
+    write(join(s.mod, 'dist', 'outfitkit.json'), '{"outfitkit":"unknown"}\n');
+    assert.equal(drift().stdout, '-\t0.0.100', 'a seal that is not a version is no seal');
+  } finally {
+    s.clean();
+  }
+});
+
+test('the CLI answers when it is run through a symlink (macOS /tmp, /var/folders), never an empty exit 0', () => {
+  const s = sandbox({ published: SANDBOX_VERSIONS });
+  try {
+    write(join(s.mod, 'dist', 'outfitkit.json'), '{"outfitkit":"0.0.42"}\n');
+    // The catalog rebake runs a scratch copy of the toolkit from TMPDIR: a symlinked path there made
+    // the entry guard miss, so `drift` printed nothing and the rebake read it as «fresh».
+    const link = join(s.root, 'toolkit-link');
+    symlinkSync(join(REPO, 'src'), link);
+    const res = spawnSync(process.execPath, [join(link, 'outfitkit-ci.mjs'), 'drift', s.mod], { encoding: 'utf8', env: s.env });
+    assert.equal(res.status, 0, res.stderr);
+    assert.equal(res.stdout, '0.0.42\t0.0.125');
+  } finally {
+    s.clean();
+  }
+});
+
+test('the drift CLI fails with outfitkit_unresolvable when npm cannot say what build would bake', () => {
+  const s = sandbox({ published: SANDBOX_VERSIONS, offline: true });
+  try {
+    write(join(s.mod, 'dist', 'outfitkit.json'), '{"outfitkit":"0.0.42"}\n');
+    const res = spawnSync(process.execPath, [join(REPO, 'src', 'outfitkit-ci.mjs'), 'drift', s.mod], { encoding: 'utf8', env: s.env });
+    assert.equal(res.status, 1);
+    assert.equal(res.stdout, '');
+    assert.match(res.stderr, /outfitkit_unresolvable/);
+  } finally {
+    s.clean();
   }
 });
 
