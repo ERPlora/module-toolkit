@@ -313,6 +313,12 @@ runs:
         # A scratch prefix, never the module itself: `npm install` inside the module would try to
         # resolve its `workspace:*` dependencies and fail as a whole.
         #
+        # `@erplora/outfitkit` is the version `dist/outfitkit.json` SEALS — the one baked into the bundle
+        # that ships and the one `build --check` just rebuilt with — so the screen tests pass or fail
+        # against what the hubs receive. Without a seal, what `erplora build` would bake (the module's
+        # declared version, or `latest`). Until module-toolkit#423 this was always `latest`: tests
+        # green on 0.1.125 while 21 modules shipped 0.1.79. One rule, in `src/outfitkit-ci.mjs`.
+        #
         # `@ionic/core` is imported by nothing: `ui/lib/ionic-fill-needs-md.test.ts` (the mirror of
         # hub#760 that `inventory`, `pricing` and `staff` carry) reads Ionic's own CSS through
         # `require.resolve`, to prove the rule it enforces still has a reason to exist. Without it
@@ -329,7 +335,7 @@ runs:
           "happy-dom@$(ver happy-dom ^20.0.0)" \
           "lit@$(ver lit ^3.2.0)" \
           "@ionic/core@$(ver @ionic/core ^8.8.0)" \
-          "@erplora/outfitkit@$(ver @erplora/outfitkit latest)"
+          "@erplora/outfitkit@$(node "$ERPLORA_TOOLKIT/src/outfitkit-ci.mjs" gate-spec "$mod")"
         # ESM ignores NODE_PATH, so the packages have to be physically resolvable from the module.
         mkdir -p "$mod/node_modules/@erplora" "$mod/node_modules/@ionic"
         for pkg in vitest happy-dom lit; do

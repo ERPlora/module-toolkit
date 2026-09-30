@@ -21,10 +21,11 @@ const TSCONFIG_RAW = {
  * `build` and `build --check`: a check that bundled any other way would be comparing against a
  * bundle nobody ships.
  *
- * @param {{sdkDir?: string}} [options] `sdkDir`: bake this `@erplora/module-sdk` instead of the
- *   toolkit's installed one.
+ * @param {{sdkDir?: string, outfitkitPrefix?: string}} [options] `sdkDir`: bake this
+ *   `@erplora/module-sdk` instead of the toolkit's installed one; `outfitkitPrefix`: bake the
+ *   `@erplora/outfitkit` under `<prefix>/node_modules` (module-toolkit#423).
  */
-export async function bundleWebComponent(dir, id, outfile, { sdkDir } = {}) {
+export async function bundleWebComponent(dir, id, outfile, { sdkDir, outfitkitPrefix } = {}) {
   const common = {
     bundle: true,
     format: 'esm',
@@ -33,7 +34,7 @@ export async function bundleWebComponent(dir, id, outfile, { sdkDir } = {}) {
     minify: false,
     legalComments: 'none',
     tsconfigRaw: TSCONFIG_RAW,
-    plugins: [erploraResolvePlugin({ sdkDir })],
+    plugins: [erploraResolvePlugin({ sdkDir, outfitkitPrefix })],
   };
 
   const entry = resolveEntry(dir);

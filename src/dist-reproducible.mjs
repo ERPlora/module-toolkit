@@ -16,32 +16,24 @@
 // declares a stale bundle «reproducible».
 //
 // WHAT ELSE HAS TO MATCH. The bundle also carries OutfitKit, and `build` seals which version in
-// `dist/outfitkit.json` (hub#1024). A rebuild with another OutfitKit differs for a reason that is not
-// the SDK, so the check refuses to compare and names the version to install instead; the gate
-// installs exactly the sealed one. No seal means nothing says what the bundle was built with.
+// `dist/outfitkit.json` (hub#1024). The rebuild bakes exactly that version, installed from npm into
+// the shared cache (`outfitkit-ci.mjs`) — never the copy this toolkit resolves, which on a laptop is
+// the shared `outfitkit/` checkout (module-toolkit#423) — and the gate's screen tests install the
+// same one, so what ships is what was tested. No seal means nothing says what the bundle was built with.
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { bundleWebComponent, resolveEntry } from './bundle-web-component.mjs';
 import { OUTFITKIT_STAMP, toolkitOutfitkitDir } from './outfitkit-stamp.mjs';
+import { fetchOutfitkit, sealedOutfitkit } from './outfitkit-ci.mjs';
 import { assertSdkFresh, resolvedSdkDir } from './sdk-freshness.mjs';
 
-/** The OutfitKit version the toolkit bakes into a bundle, or null when none resolves. */
+/** The OutfitKit version the toolkit's own copy is at, or null when none resolves. */
 export function resolvedOutfitkitVersion() {
   const pkg = join(toolkitOutfitkitDir(), 'package.json');
   if (!existsSync(pkg)) return null;
   try {
     return JSON.parse(readFileSync(pkg, 'utf8')).version ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function sealedOutfitkit(dir) {
-  const seal = join(dir, 'dist', OUTFITKIT_STAMP);
-  if (!existsSync(seal)) return null;
-  try {
-    return JSON.parse(readFileSync(seal, 'utf8')).outfitkit ?? null;
   } catch {
     return null;
   }
@@ -67,15 +59,15 @@ function firstDifferentLine(a, b) {
 
 /**
  * @param {string} moduleDir
- * @param {{sdkDir?: string, outfitkitVersion?: string|null, developSha?: string,
+ * @param {{sdkDir?: string, outfitkit?: {env?: NodeJS.ProcessEnv}, developSha?: string,
  *   env?: NodeJS.ProcessEnv}} [options]
  *   `sdkDir`: the `@erplora/module-sdk` to rebuild with (default: the toolkit's own);
- *   `outfitkitVersion`: the OutfitKit the toolkit resolves (injected in tests);
+ *   `outfitkit.env`: npm and cache environment for the sealed OutfitKit (injected in tests);
  *   `developSha`/`env`: passed to the #387 freshness check.
- * @returns {Promise<{status: 'reproducible'|'differs'|'missing'|'unsealed'|'outfitkit_mismatch'|
- *   'no_web_component', id: string, file?: string, line?: number, sealed?: string, resolved?: string|null}>}
+ * @returns {Promise<{status: 'reproducible'|'differs'|'missing'|'unsealed'|'outfitkit_unavailable'|
+ *   'no_web_component', id: string, file?: string, line?: number, sealed?: string, reason?: string}>}
  */
-export async function checkDistReproducible(moduleDir, { sdkDir, outfitkitVersion, developSha, env } = {}) {
+export async function checkDistReproducible(moduleDir, { sdkDir, outfitkit = {}, developSha, env } = {}) {
   const dir = resolve(process.cwd(), moduleDir);
   const { id } = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
   if (!hasWebComponent(dir)) return { status: 'no_web_component', id };
@@ -84,14 +76,19 @@ export async function checkDistReproducible(moduleDir, { sdkDir, outfitkitVersio
   if (!existsSync(join(dir, file))) return { status: 'missing', id, file };
   const sealed = sealedOutfitkit(dir);
   if (!sealed) return { status: 'unsealed', id, file };
-  const resolved = outfitkitVersion === undefined ? resolvedOutfitkitVersion() : outfitkitVersion;
-  if (sealed !== resolved) return { status: 'outfitkit_mismatch', id, file, sealed, resolved };
+  let outfitkitPrefix;
+  try {
+    outfitkitPrefix = fetchOutfitkit(sealed, outfitkit);
+  } catch (err) {
+    if (err.code !== 'outfitkit_unavailable') throw err;
+    return { status: 'outfitkit_unavailable', id, file, sealed, reason: err.message };
+  }
 
   assertSdkFresh({ sdkDir: sdkDir ?? resolvedSdkDir(), developSha, env });
 
   const scratch = mkdtempSync(join(tmpdir(), 'erplora-dist-check-'));
   try {
-    const rebuilt = await bundleWebComponent(dir, id, join(scratch, `${id}.esm.js`), { sdkDir });
+    const rebuilt = await bundleWebComponent(dir, id, join(scratch, `${id}.esm.js`), { sdkDir, outfitkitPrefix });
     const committed = readFileSync(join(dir, file), 'utf8');
     if (rebuilt === committed) return { status: 'reproducible', id, file };
     return { status: 'differs', id, file, line: firstDifferentLine(committed, rebuilt) };
@@ -101,7 +98,7 @@ export async function checkDistReproducible(moduleDir, { sdkDir, outfitkitVersio
 }
 
 /**
- * Throws `dist_not_reproducible` / `dist_missing` / `dist_unsealed` / `dist_outfitkit_mismatch`
+ * Throws `dist_not_reproducible` / `dist_missing` / `dist_unsealed` / `dist_outfitkit_unavailable`
  * (each with `fix`, the command to run) unless the committed bundle is a rebuild's exact bytes;
  * returns the verdict of `checkDistReproducible` otherwise.
  */
@@ -130,13 +127,13 @@ export async function assertDistReproducible(moduleDir, options = {}) {
           `rebuild can vouch for it. Regenerate it and commit dist/:\n    ${fix}`,
       );
       break;
-    case 'outfitkit_mismatch':
+    case 'outfitkit_unavailable':
       fail(
-        'dist_outfitkit_mismatch',
-        `${result.file} was built with @erplora/outfitkit@${result.sealed} and this toolkit resolves ` +
-          `${result.resolved ?? 'none'}: a rebuild would differ for a reason that is not the SDK. Compare with ` +
-          `@erplora/outfitkit@${result.sealed} installed in the toolkit, or regenerate the bundle:\n    ${fix}`,
-        { sealed: result.sealed, resolved: result.resolved },
+        'dist_outfitkit_unavailable',
+        `${result.file} was built with @erplora/outfitkit@${result.sealed} (dist/${OUTFITKIT_STAMP}) and npm ` +
+          `could not give that version, so no rebuild can reproduce it (${result.reason}). If it was never ` +
+          `published, rebuild with the one the gate installs and commit dist/:\n    ${fix}`,
+        { sealed: result.sealed },
       );
       break;
     default:
