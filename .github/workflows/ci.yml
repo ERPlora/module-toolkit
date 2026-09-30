@@ -299,6 +299,7 @@ jobs:
           test/dev-collect.test.mjs
           test/dev-emit-dedup-key.test.mjs
           test/dev-outfitkit.test.mjs
+          test/dev-mobile-layout.test.mjs
           test/icons.test.mjs
           test/real-module-fixtures.test.mjs
           test/outfitkit-stamp.test.mjs
