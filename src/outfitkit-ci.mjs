@@ -132,8 +132,18 @@ export function fetchOutfitkit(version, { env = process.env } = {}) {
   return prefix;
 }
 
-/** `{ version, prefix }` of the OutfitKit `build` bakes into this module. Throws when npm cannot tell. */
-export function resolveOutfitkit(moduleDir, { env = process.env } = {}) {
+/**
+ * `{ version, prefix }` of the OutfitKit `build` bakes into this module. Throws when npm cannot tell.
+ * `version` names it instead (`build --outfitkit <v>`): `merge-pr.sh` rebakes a dist/ conflict with
+ * the version the two sides sealed (pm#547). Still from npm, never the toolkit's own copy.
+ */
+export function resolveOutfitkit(moduleDir, { env = process.env, version: named } = {}) {
+  if (named !== undefined) {
+    if (typeof named !== 'string' || !VERSION.test(named)) {
+      throw fail('outfitkit_version_invalid', `--outfitkit takes a published version like 0.1.125, not '${named}'`);
+    }
+    return { version: named, prefix: fetchOutfitkit(named, { env }) };
+  }
   const version = npmOutfitkitVersion(buildOutfitkitSpec(moduleDir), { env });
   return { version, prefix: fetchOutfitkit(version, { env }) };
 }

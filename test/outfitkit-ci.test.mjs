@@ -140,6 +140,49 @@ test('a declared range takes the highest match, as npm install does', async () =
   }
 });
 
+// `merge-pr.sh` (pm#547/pm#569) rebakes a module's dist/ when two branches collide only there, and
+// has to keep the OutfitKit the two sides SEALED — rebaking latest would ship a version neither
+// branch was tested with. So a caller can name the version, the way `--sdk <dir>` names the SDK;
+// it still comes from npm, never from the toolkit's own copy.
+test('build --outfitkit <version> bakes and seals THAT version from npm, over what the module declares', async () => {
+  const s = sandbox({ declared: '0.0.125', published: SANDBOX_VERSIONS });
+  try {
+    await quietly(() => build(s.mod, { sdk: NO_SDK, outfitkit: { env: s.env, version: '0.0.110' } }));
+    assert.equal(s.sealed(), '0.0.110');
+    assert.ok(s.bundle().includes('npm-0.0.110'), 'the bundle carries the named OutfitKit');
+    for (const flag of [['--outfitkit', '0.0.100'], ['--outfitkit=0.0.42']]) {
+      const cli = spawnSync(process.execPath, [join(REPO, 'bin', 'erplora.mjs'), 'build', s.mod, ...flag], {
+        encoding: 'utf8',
+        env: { ...s.env, ERPLORA_HUB_DEVELOP_SHA: '' },
+      });
+      const want = flag.join('=').split('=').pop();
+      assert.equal(cli.status, 0, cli.stdout + cli.stderr);
+      assert.equal(s.sealed(), want, `${flag.join(' ')} sealed ${s.sealed()}`);
+    }
+    const empty = spawnSync(process.execPath, [join(REPO, 'bin', 'erplora.mjs'), 'build', s.mod, '--outfitkit='], {
+      encoding: 'utf8',
+      env: s.env,
+    });
+    assert.equal(empty.status, 1, 'a flag with no version is an error, not «latest»');
+    assert.equal(s.sealed(), '0.0.42', 'and dist/ is left as it was');
+  } finally {
+    s.clean();
+  }
+});
+
+test('build --outfitkit with something that is not a version is refused before npm is asked', async () => {
+  const s = sandbox();
+  try {
+    await assert.rejects(
+      quietly(() => build(s.mod, { sdk: NO_SDK, outfitkit: { env: s.env, version: 'latest' } })),
+      (e) => e.code === 'outfitkit_version_invalid',
+    );
+    assert.deepEqual(s.npmCalls(), []);
+  } finally {
+    s.clean();
+  }
+});
+
 test('a version already in the cache is not installed again', async () => {
   const s = sandbox();
   try {
