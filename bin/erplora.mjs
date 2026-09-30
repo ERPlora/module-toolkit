@@ -168,7 +168,7 @@ try {
       const dir = target(rest[0]);
       const { readFileSync } = await import('node:fs');
       const { join } = await import('node:path');
-      const { discoverBatteries, runBatteries } = await import('../src/run-batteries.mjs');
+      const { discoverBatteries, runBatteries, PYTHON_FLOOR } = await import('../src/run-batteries.mjs');
       // module-toolkit#74: and the module's TypeScript tests — `ui/**/*.test.ts`, the Web Component
       // checks where nearly all of the screen logic lives. 210 of them across the 25 repos, and
       // until this the gate ran zero.
@@ -197,12 +197,22 @@ try {
       // `tests/schemas.contract.test.py` NEEDS `jsonschema` and REFUSES to skip without it
       // («skipping would turn a validation test into a green light for nothing»), so the gate hands
       // over the python of a venv that has it. Choosing the interpreter is what lets it do that
-      // without touching the 25 module repos.
-      const python = process.env.ERPLORA_PYTHON || 'python3';
+      // without touching the 25 module repos. Unset, the runner picks one that reaches the floor
+      // the batteries need (module-toolkit#417).
+      const python = process.env.ERPLORA_PYTHON || null;
       // One body, run either bare or inside a live kernel: the report has to read the same way in
       // both, and duplicating it is how the two would drift.
       const runEverything = (liveHub) => {
         const py = runBatteries(dir, manifest, { container, python, hub: liveHub });
+        // A Mac's `/usr/bin/python3` is 3.9: when the runner stepped over it, say with what it ran,
+        // so a red further down is never blamed on the wrong interpreter.
+        if (py.python?.python && py.python.passedOver.length) {
+          const skipped = py.python.passedOver.map((p) => `${p.python} ${p.version}`).join(', ');
+          console.log(
+            `  → Python ${py.python.version} (\`${py.python.python}\`) para las baterías; ` +
+              `saltado por viejo (<${PYTHON_FLOOR.join('.')}): ${skipped}`,
+          );
+        }
         // The TypeScript half runs under vitest, which the gate installs next to the module and
         // hands over through `ERPLORA_VITEST` — the same door `ERPLORA_PYTHON` opens for the
         // batteries.

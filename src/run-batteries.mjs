@@ -240,6 +240,63 @@ export function looksSkipped(output) {
 }
 
 /**
+ * The oldest Python the batteries load on (module-toolkit#417): they annotate with `str | None`,
+ * which 3.9 evaluates at definition time and rejects with a `TypeError` before testing anything.
+ */
+export const PYTHON_FLOOR = [3, 10];
+
+/**
+ * Where to look when nobody chose an interpreter: the `python3` on PATH first (an activated venv
+ * wins), then the versioned names newest first, then Homebrew's by absolute path — a Mac's
+ * `/usr/bin/python3` is the Command Line Tools 3.9 and often sits ahead of Homebrew on PATH.
+ */
+export const PYTHON_CANDIDATES = [
+  'python3',
+  'python3.14',
+  'python3.13',
+  'python3.12',
+  'python3.11',
+  'python3.10',
+  '/opt/homebrew/bin/python3',
+  '/usr/local/bin/python3',
+];
+
+/** `X.Y.Z` of an interpreter, or null when it does not run. */
+function pythonVersion(bin) {
+  const r = spawnSync(bin, ['--version'], { encoding: 'utf8' });
+  if (r.status !== 0) return null;
+  const m = /Python (\d+\.\d+(?:\.\d+)?)/.exec(`${r.stdout ?? ''}${r.stderr ?? ''}`);
+  return m ? m[1] : null;
+}
+
+function reachesFloor(version) {
+  const [major, minor] = version.split('.').map(Number);
+  return major > PYTHON_FLOOR[0] || (major === PYTHON_FLOOR[0] && minor >= PYTHON_FLOOR[1]);
+}
+
+/**
+ * Picks the interpreter the batteries run on. Returns `{ python, version, passedOver }` or
+ * `{ error: 'python_missing' | 'python_too_old', passedOver }`; `passedOver` lists the ones found
+ * below the floor, so the caller can say which it skipped.
+ *
+ * An `explicit` choice (`ERPLORA_PYTHON`) is never swapped for another: the gate hands over a venv
+ * that carries `jsonschema`, and a silent swap would trade this red for a worse one.
+ */
+export function resolvePython({ explicit = null, candidates = PYTHON_CANDIDATES, probe = pythonVersion } = {}) {
+  const passedOver = [];
+  const seen = new Set();
+  for (const bin of explicit ? [explicit] : candidates) {
+    const version = probe(bin);
+    if (!version) continue;
+    if (reachesFloor(version)) return { python: bin, version, passedOver };
+    // `python3` and `python3.9` are usually the same interpreter: name it once.
+    if (!seen.has(version)) passedOver.push({ python: bin, version });
+    seen.add(version);
+  }
+  return { error: passedOver.length ? 'python_too_old' : 'python_missing', passedOver };
+}
+
+/**
  * Runs the module's batteries. Returns `{ results, errors, notRun }`; never throws — the caller
  * decides. `results[]` carries `{ file, kind, ran, code, output }`.
  *
@@ -254,7 +311,7 @@ export function looksSkipped(output) {
 export function runBatteries(
   dir,
   manifest,
-  { container = null, python = 'python3', bash = 'bash', hub = null } = {},
+  { container = null, python = null, pythonCandidates = PYTHON_CANDIDATES, bash = 'bash', hub = null } = {},
 ) {
   const results = [];
   const errors = [];
@@ -277,14 +334,24 @@ export function runBatteries(
   if (!total) return { results, errors, notRun };
 
   const needsPython = Object.values(found).flat().some((f) => f.endsWith('.py'));
+  let chosen = null;
   if (needsPython) {
-    const probe = spawnSync(python, ['--version'], { encoding: 'utf8' });
-    if (probe.status !== 0) {
+    chosen = resolvePython({ explicit: python, candidates: pythonCandidates });
+    if (chosen.error === 'python_missing') {
       errors.push(
-        `no hay intérprete de Python (\`${python}\`): ${total} batería(s) del módulo NO se han ` +
-          'corrido. Una batería que no corre no puede salir en verde',
+        `python_missing: no hay intérprete de Python (\`${python ?? 'python3'}\`): ${total} ` +
+          'batería(s) del módulo NO se han corrido. Una batería que no corre no puede salir en verde',
       );
-      return { results, errors, notRun };
+      return { results, errors, notRun, python: chosen };
+    }
+    if (chosen.error === 'python_too_old') {
+      const seen = chosen.passedOver.map((p) => `\`${p.python}\` es ${p.version}`).join(', ');
+      errors.push(
+        `python_too_old: las baterías necesitan Python ≥${PYTHON_FLOOR.join('.')} (escriben ` +
+          `\`str | None\`) y ${seen}: ${total} batería(s) del módulo NO se han corrido. Instala ` +
+          `uno más nuevo (\`brew install python\`) o apunta \`ERPLORA_PYTHON\` a él`,
+      );
+      return { results, errors, notRun, python: chosen };
     }
   }
 
@@ -314,7 +381,7 @@ export function runBatteries(
       };
       // The interpreter follows the extension, never the file's own `+x` bit: a battery committed
       // without it (`taxes/tests/cashier_role.contract.test.py`) has to run just the same.
-      const interpreter = file.endsWith('.sh') ? bash : python;
+      const interpreter = file.endsWith('.sh') ? bash : chosen.python;
       const r = spawnSync(interpreter, [file], { cwd: dir, env, encoding: 'utf8' });
       const output = `${r.stdout ?? ''}${r.stderr ?? ''}`;
       const ran = r.status === 0 && !looksSkipped(output);
@@ -334,7 +401,7 @@ export function runBatteries(
     }
   }
 
-  return { results, errors, notRun };
+  return { results, errors, notRun, python: chosen };
 }
 
 function indent(text) {

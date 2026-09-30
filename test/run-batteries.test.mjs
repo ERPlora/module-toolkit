@@ -21,6 +21,8 @@ import {
   looksSkipped,
   pgContainerVars,
   migrationFilesVar,
+  PYTHON_FLOOR,
+  resolvePython,
   runBatteries,
   strayTestFiles,
 } from '../src/run-batteries.mjs';
@@ -365,5 +367,136 @@ test('runBatteries: un `tests/` con SOLO un huérfano tampoco pasa en silencio',
   const { errors } = runBatteries(m.dir, m.manifest, { container: 'pg-x' });
   assert.equal(errors.length, 1, JSON.stringify(errors));
   assert.match(errors[0], /forgotten_check\.py/);
+  m.clean();
+});
+
+// ── 🔴 module-toolkit#417: WHICH python runs the batteries ───────────────────────────────────
+//
+// A Mac carries two: `/usr/bin/python3` is 3.9 (Command Line Tools) and Homebrew's is 3.14. The
+// batteries write `str | None` (3.10+) in ~200 files across 27 modules, evaluated when the function
+// is DEFINED, so under 3.9 they die with `TypeError: unsupported operand type(s) for |` before
+// testing anything — and the suite reads «your battery FAILS» on a clean `main`. At least six fleet
+// sessions in one batch chased that red into their own change. The toolkit picks an interpreter
+// the batteries can run on, or says in ONE line that there is none; never N TypeErrors.
+
+/** A fake `--version` answer per interpreter name: what `resolvePython` sees on a given machine. */
+const probeFrom = (versions) => (bin) => versions[bin] ?? null;
+
+test('resolvePython: el suelo es 3.10 (la unión `X | None` de las baterías)', () => {
+  assert.deepEqual(PYTHON_FLOOR, [3, 10]);
+});
+
+test('resolvePython: un `python3` que ya llega al suelo es el elegido, sin rodeos', () => {
+  const r = resolvePython({ probe: probeFrom({ python3: '3.12.3', 'python3.14': '3.14.5' }) });
+  assert.equal(r.error, undefined, JSON.stringify(r));
+  assert.equal(r.python, 'python3');
+  assert.equal(r.version, '3.12.3');
+  assert.deepEqual(r.passedOver, []);
+});
+
+test('resolvePython: un `python3` 3.9 cede al más nuevo que llegue, y queda dicho a cuál saltó', () => {
+  const r = resolvePython({
+    probe: probeFrom({ python3: '3.9.6', 'python3.11': '3.11.9', 'python3.14': '3.14.5' }),
+  });
+  assert.equal(r.error, undefined, JSON.stringify(r));
+  assert.equal(r.python, 'python3.14');
+  assert.deepEqual(r.passedOver, [{ python: 'python3', version: '3.9.6' }]);
+});
+
+test('resolvePython: 3.10 llega al suelo — la versión se compara por números, no como texto', () => {
+  // As strings «3.10» < «3.9»: the comparison that would reject every 3.10 there is.
+  const r = resolvePython({ probe: probeFrom({ python3: '3.10.0' }) });
+  assert.equal(r.python, 'python3');
+  assert.equal(r.error, undefined);
+});
+
+test('resolvePython: fuera de PATH también mira el Python de Homebrew', () => {
+  const r = resolvePython({ probe: probeFrom({ python3: '3.9.6', '/opt/homebrew/bin/python3': '3.14.5' }) });
+  assert.equal(r.python, '/opt/homebrew/bin/python3');
+});
+
+test('resolvePython: ninguno llega al suelo → python_too_old, con lo que encontró', () => {
+  // `python3` and `/usr/local/bin/python3` are the same interpreter here: named once, not twice.
+  const r = resolvePython({
+    probe: probeFrom({ python3: '3.9.6', '/usr/local/bin/python3': '3.9.6', '/opt/homebrew/bin/python3': '3.8.10' }),
+  });
+  assert.equal(r.error, 'python_too_old');
+  assert.equal(r.python, undefined);
+  assert.deepEqual(r.passedOver, [
+    { python: 'python3', version: '3.9.6' },
+    { python: '/opt/homebrew/bin/python3', version: '3.8.10' },
+  ]);
+});
+
+test('resolvePython: sin ningún Python → python_missing', () => {
+  const r = resolvePython({ probe: probeFrom({}) });
+  assert.equal(r.error, 'python_missing');
+});
+
+test('resolvePython: el ELEGIDO (`ERPLORA_PYTHON`) no se cambia por otro, aunque sea viejo', () => {
+  // The gate hands over a venv with `jsonschema`; swapping it silently for a newer interpreter
+  // without the package would trade this red for a worse one.
+  const probe = probeFrom({ '/venv/bin/python': '3.9.6', python3: '3.14.5' });
+  const old = resolvePython({ explicit: '/venv/bin/python', probe });
+  assert.equal(old.error, 'python_too_old');
+  assert.deepEqual(old.passedOver, [{ python: '/venv/bin/python', version: '3.9.6' }]);
+  const missing = resolvePython({ explicit: '/nope/python', probe });
+  assert.equal(missing.error, 'python_missing');
+  const good = resolvePython({ explicit: '/venv/bin/python', probe: probeFrom({ '/venv/bin/python': '3.12.1' }) });
+  assert.equal(good.python, '/venv/bin/python');
+});
+
+/** An executable that answers `--version` like the macOS system python and fails like it. */
+function fakePython39(dir) {
+  const path = join(dir, 'python3');
+  writeFileSync(
+    path,
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Python 3.9.6"; exit 0; fi\n' +
+      'echo "TypeError: unsupported operand type(s) for |: \'type\' and \'NoneType\'" >&2\nexit 1\n',
+  );
+  chmodSync(path, 0o755);
+  return path;
+}
+
+/** The absolute path of a real python ≥ the floor, or null (the tests that need one skip). */
+const REAL_PYTHON = (() => {
+  const r = spawnSync('python3', ['-c', 'import sys; print(sys.executable) if sys.version_info >= (3, 10) else None'], {
+    encoding: 'utf8',
+  });
+  return r.status === 0 && r.stdout.trim() && r.stdout.trim() !== 'None' ? r.stdout.trim() : null;
+})();
+const UNION_BATTERY = 'import sys\ndef f(a: str | None = None) -> str | None:\n    return a\nprint("ok")\nsys.exit(0)\n';
+
+test('runBatteries: con un Python viejo ELEGIDO, UN error python_too_old y ninguna batería corrida', () => {
+  const m = mod({ 'tests/a.contract.test.py': UNION_BATTERY, 'tests/b.contract.test.py': UNION_BATTERY });
+  const fake = fakePython39(m.dir);
+  const { errors, results } = runBatteries(m.dir, m.manifest, { python: fake });
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /python_too_old/);
+  assert.match(errors[0], /3\.9\.6/);
+  assert.match(errors[0], /3\.10/);
+  assert.deepEqual(results, [], 'no batería corre con un intérprete que no las puede ni cargar');
+  m.clean();
+});
+
+test('runBatteries: sin elegido, salta el 3.9 y corre con uno que llega', { skip: !REAL_PYTHON && 'no hay python ≥3.10' }, () => {
+  const m = mod({ 'tests/a.contract.test.py': UNION_BATTERY });
+  const fake = fakePython39(m.dir);
+  const { errors, results, python } = runBatteries(m.dir, m.manifest, { pythonCandidates: [fake, REAL_PYTHON] });
+  assert.deepEqual(errors, []);
+  assert.equal(results.filter((r) => r.ran).length, 1);
+  assert.equal(python.python, REAL_PYTHON);
+  assert.deepEqual(python.passedOver, [{ python: fake, version: '3.9.6' }]);
+  m.clean();
+});
+
+test('runBatteries: sin elegido y sin ninguno ≥3.10, UN error python_too_old', () => {
+  const m = mod({ 'tests/a.contract.test.py': UNION_BATTERY });
+  const fake = fakePython39(m.dir);
+  const { errors, results } = runBatteries(m.dir, m.manifest, { pythonCandidates: [fake] });
+  assert.equal(errors.length, 1, JSON.stringify(errors));
+  assert.match(errors[0], /python_too_old/);
+  assert.match(errors[0], /ERPLORA_PYTHON/, 'el remedio se dice');
+  assert.deepEqual(results, []);
   m.clean();
 });
