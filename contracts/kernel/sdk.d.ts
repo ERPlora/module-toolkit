@@ -203,6 +203,12 @@ export interface WhatsappHeaderImage {
     mime_type: 'image/jpeg' | 'image/png';
     size: number;
 }
+export type WhatsappHeaderMediaKind = 'image' | 'video' | 'document';
+export interface WhatsappHeaderMedia {
+    ref: string;
+    mime_type: 'image/jpeg' | 'image/png' | 'video/mp4' | 'application/pdf';
+    size: number;
+}
 export declare const EVENTS_BASE_PATH = "/api/hub/events";
 export declare const RELEASE_REVOKED = "flow.release_revoked";
 export declare const MODULE_HEADER = "X-Erplora-Module";
@@ -266,6 +272,7 @@ export declare class FlowsApi {
     deleteSecret(name: string): Promise<unknown>;
     schema(): Promise<FlowSchema>;
     uploadWhatsappHeaderImage(file: Blob): Promise<WhatsappHeaderImage>;
+    uploadWhatsappHeaderMedia(file: Blob, kind: WhatsappHeaderMediaKind): Promise<WhatsappHeaderMedia>;
     templates(): Promise<ModuleFlowTemplate[]>;
     templateDiscards(): Promise<FlowTemplateDiscard[]>;
     activateTemplate(family: string): Promise<Flow>;
