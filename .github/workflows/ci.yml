@@ -303,6 +303,7 @@ jobs:
           test/dev-outfitkit.test.mjs
           test/dev-mobile-layout.test.mjs
           test/dev-synth-column-types.test.mjs
+          test/dev-synth-column-values.test.mjs
           test/icons.test.mjs
           test/real-module-fixtures.test.mjs
           test/outfitkit-stamp.test.mjs

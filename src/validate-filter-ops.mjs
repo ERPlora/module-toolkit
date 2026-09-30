@@ -707,7 +707,7 @@ function enclosingObject(code, at) {
 }
 
 /** The body between the outermost parentheses starting at `from`, or null when unbalanced. */
-function parenBody(text, from) {
+export function parenBody(text, from) {
   const open = text.indexOf('(', from);
   if (open < 0) return null;
   let depth = 0;
@@ -729,7 +729,7 @@ function parenBody(text, from) {
 }
 
 /** Splits a parenthesised body on the commas at depth 0, so `NUMERIC(10, 2)` survives whole. */
-function topLevelParts(body) {
+export function topLevelParts(body) {
   const parts = [];
   let current = '';
   let depth = 0;

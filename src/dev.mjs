@@ -18,9 +18,10 @@ import { createServer } from 'node:http';
 import { erploraResolvePlugin, ionicFromToolkitPlugin } from './resolve-plugin.mjs';
 import { buildOutfitkitSpec, fetchOutfitkit, npmOutfitkitVersion } from './outfitkit-ci.mjs';
 import { resolvedOutfitkitVersion } from './dist-reproducible.mjs';
-import { declaredColumnTypes } from './validate-filter-ops.mjs';
+import { declaredColumnTypes, parenBody, topLevelParts } from './validate-filter-ops.mjs';
+import { querySql, selectOutputs, sourceTables } from './validate-dead-filters.mjs';
 import { migrationFiles } from './validate-migrations.mjs';
-import { splitStatements } from './validate-migration-guard.mjs';
+import { splitStatements, stripComments } from './validate-migration-guard.mjs';
 import {
   createBuildStatus,
   buildStatusPlugin,
@@ -133,6 +134,195 @@ export function listColumnKinds(dir, manifest) {
   return out;
 }
 
+/** A quoted SQL literal, `''` escapes included. */
+const SQL_LITERAL = String.raw`'(?:[^']|'')*'`;
+const unquote = (literal) => literal.slice(1, -1).replace(/''/g, "'");
+const sqlName = (name) => name.replace(/"/g, '').split('.').pop().toLowerCase();
+
+/** `text` with every literal body blanked (same length), so words and parentheses inside it are not SQL. */
+const blankLiterals = (text) => text.replace(new RegExp(SQL_LITERAL, 'g'), (l) => "'" + ' '.repeat(l.length - 2) + "'");
+
+/**
+ * Every `col IN ('a', 'b')` a `CHECK` in `text` imposes: `{ lists: [{ column, values }], words }`, or
+ * null when `text` has no CHECK. Only a conjunct at the top level of the CHECK counts — services writes
+ * `CHECK (discount_type IN (...) AND discount_percent >= 0 …)` — and a CHECK with a top-level OR imposes
+ * none of its lists on every row. `words` are the names the CHECK reads at any depth: Postgres names an
+ * unnamed CHECK after the one column it reads, whatever else it says.
+ */
+function checkLists(text) {
+  const at = /\bCHECK\s*\(/i.exec(blankLiterals(text));
+  const body = at && parenBody(text, at.index);
+  if (body == null) return null;
+  const code = blankLiterals(body);
+  const words = (code.match(/"?\b[A-Za-z_]\w*\b"?/g) || []).map(sqlName);
+  let depth = 0;
+  const cuts = [];
+  for (let i = 0; i < code.length; i += 1) {
+    if (code[i] === '(') depth += 1;
+    else if (code[i] === ')') depth -= 1;
+    else if (depth === 0 && /\w/.test(code[i]) && (i === 0 || !/\w/.test(code[i - 1]))) {
+      const word = /^\w+/.exec(code.slice(i))[0].toUpperCase();
+      if (word === 'OR') return { lists: [], words };
+      if (word === 'AND') cuts.push(i);
+    }
+  }
+  const out = [];
+  let from = 0;
+  for (const cut of [...cuts, body.length]) {
+    const conjunct = body.slice(from, cut).trim();
+    from = cut + 3;
+    const m = new RegExp(String.raw`^"?(\w+)"?\s+IN\s*\(\s*(${SQL_LITERAL}(?:\s*,\s*${SQL_LITERAL})*)\s*\)$`, 'is').exec(conjunct);
+    if (m) out.push({ column: m[1].toLowerCase(), values: [...m[2].matchAll(new RegExp(SQL_LITERAL, 'g'))].map((v) => unquote(v[0])) });
+  }
+  return { lists: out, words };
+}
+
+/** The value of a `DEFAULT '<literal>'` that is only that literal (not `'a' || b`), or null. */
+function defaultLiteral(text) {
+  const m = new RegExp(String.raw`\bDEFAULT\s+(${SQL_LITERAL})(?:\s*::\s*\w+)?\s*(.*)$`, 'is').exec(text);
+  if (!m || !/^(?:$|(?:NOT|NULL|CHECK|CONSTRAINT|REFERENCES|UNIQUE|PRIMARY|COLLATE)\b)/i.test(m[2])) return null;
+  return unquote(m[1]);
+}
+
+/**
+ * `table -> column -> { type, def, checks: Map<constraint name, values> }` over the module's postgres
+ * migrations, in the order they run, so a later `ALTER` wins: `ADD COLUMN`, `ADD`/`DROP CONSTRAINT`,
+ * `ALTER COLUMN SET`/`DROP DEFAULT`, `DROP COLUMN`. Unlike `declaredTypesByColumn` it is keyed by
+ * TABLE: in `tables` three tables declare `status`, each with its own values (module-toolkit#440).
+ * An unnamed CHECK gets the name Postgres gives it — `<table>_<column>_check` when it reads one
+ * column, `<table>_check` otherwise, plus a number when taken, a CHECK with no list included — so a
+ * later `DROP CONSTRAINT` finds it.
+ */
+function declaredValuesByTable(dir, manifest) {
+  const tables = new Map();
+  const table = (name) => {
+    const key = sqlName(name);
+    if (!tables.has(key)) tables.set(key, new Map());
+    return tables.get(key);
+  };
+  const checkNames = new Map(); // table -> the CHECK names it holds, with a list or not
+  const namesOf = (tableName) => {
+    const key = sqlName(tableName);
+    if (!checkNames.has(key)) checkNames.set(key, new Set());
+    return checkNames.get(key);
+  };
+  const addCheck = (t, tableName, text, name) => {
+    const check = checkLists(text);
+    if (!check) return;
+    const taken = namesOf(tableName);
+    let key = name ? sqlName(name) : null;
+    if (!key) {
+      const read = new Set([...check.lists.map((l) => l.column), ...check.words.filter((w) => t.has(w))]);
+      const base = `${sqlName(tableName)}${read.size === 1 ? '_' + [...read][0] : ''}_check`;
+      key = base;
+      for (let n = 1; taken.has(key); n += 1) key = base + n;
+    }
+    taken.add(key);
+    for (const list of check.lists) t.get(list.column)?.checks.set(key, list.values);
+  };
+  const addColumn = (t, tableName, part) => {
+    const [name, ...rest] = part.split(/\s+/);
+    const spec = rest.join(' ');
+    t.set(sqlName(name), { type: spec, def: defaultLiteral(spec), checks: new Map() });
+    // An inline CHECK may constrain another column of the table: Postgres takes it, named after that one.
+    addCheck(t, tableName, spec, /\bCONSTRAINT\s+"?(\w+)"?\s+CHECK\b/i.exec(spec)?.[1]);
+  };
+
+  for (const rel of migrationFiles(manifest, 'postgres')) {
+    let sql;
+    try {
+      sql = readFileSync(join(dir, rel), 'utf8');
+    } catch {
+      continue; // a missing migration is validate's finding, not the preview's
+    }
+    for (const raw of splitStatements(sql)) {
+      const statement = stripComments(raw).trim();
+      const create = /^CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?("?[\w.]+"?)/i.exec(statement);
+      if (create) {
+        const t = table(create[1]);
+        for (const part of topLevelParts(parenBody(statement, create[0].length) ?? '')) {
+          const named = /^CONSTRAINT\s+"?(\w+)"?\s+(CHECK\b.*)$/is.exec(part);
+          if (named) addCheck(t, create[1], named[2], named[1]);
+          else if (/^CHECK\b/i.test(part)) addCheck(t, create[1], part, null);
+          else if (!/^(PRIMARY|FOREIGN|UNIQUE|CONSTRAINT|EXCLUDE|LIKE)\b/i.test(part)) addColumn(t, create[1], part);
+        }
+        continue;
+      }
+      const alter = /^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?("?[\w.]+"?)\s+/i.exec(statement);
+      if (!alter) continue;
+      const t = table(alter[1]);
+      for (const action of topLevelParts(statement.slice(alter[0].length))) {
+        let m;
+        if ((m = /^ADD\s+CONSTRAINT\s+"?(\w+)"?\s+(CHECK\b.*)$/is.exec(action))) addCheck(t, alter[1], m[2], m[1]);
+        else if (/^ADD\s+CHECK\b/i.test(action)) addCheck(t, alter[1], action.replace(/^ADD\s+/i, ''), null);
+        else if ((m = /^ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(.*)$/is.exec(action))) addColumn(t, alter[1], m[1]);
+        else if ((m = /^DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?(\w+)"?/i.exec(action))) {
+          namesOf(alter[1]).delete(m[1].toLowerCase());
+          for (const col of t.values()) col.checks.delete(m[1].toLowerCase());
+        } else if ((m = /^DROP\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?"?(\w+)"?/i.exec(action))) t.delete(m[1].toLowerCase());
+        else if ((m = /^ALTER\s+(?:COLUMN\s+)?"?(\w+)"?\s+(SET\s+DEFAULT\s+.*|DROP\s+DEFAULT\b.*)$/is.exec(action))) {
+          const col = t.get(m[1].toLowerCase());
+          if (col) col.def = /^SET/i.test(m[2]) ? defaultLiteral(m[2].replace(/^SET\s+/i, '')) : null;
+        }
+      }
+    }
+  }
+  return tables;
+}
+
+/**
+ * The values the module declares for a TEXT column: what every CHECK on it allows (their
+ * intersection), its DEFAULT first; or the DEFAULT alone when no CHECK lists a value.
+ */
+function declaredValues(col) {
+  if (columnKind(col.type) !== 'text') return null;
+  const def = col.def === '' ? null : col.def;
+  const [first, ...rest] = [...col.checks.values()];
+  const check = first && first.filter((v) => rest.every((other) => other.includes(v)));
+  if (check && check.length) return def != null && check.includes(def) ? [def, ...check.filter((v) => v !== def)] : check;
+  return def != null ? [def] : null;
+}
+
+/**
+ * `query -> column -> [values]` for the TEXT columns of every `list` query whose values the module
+ * declares — `CHECK (col IN (...))` and a literal `DEFAULT` — read on the table the query takes the
+ * column FROM (module-toolkit#440). The invented rows wrote "<Word> status" instead: `tables` drew
+ * every table as «Alfa status», its unknown-status branch, and the preview never showed a free or an
+ * occupied table. A column whose source cannot be told (an expression, two joined tables declaring
+ * it without a qualifier, a query that is not one readable statement) or with no values is left
+ * out: `synth` invents it as before. An empty DEFAULT is no value — `name TEXT DEFAULT ''` would
+ * blank every name.
+ */
+export function listColumnValues(dir, manifest) {
+  const declared = declaredValuesByTable(dir, manifest);
+  const out = {};
+  for (const [name, query] of Object.entries(manifest?.queries || {})) {
+    const cfg = query && query.list;
+    if (!cfg) continue;
+    const sql = querySql(dir, query.sql);
+    if (sql == null) continue;
+    const sources = sourceTables(sql);
+    const { star, map } = selectOutputs(sql);
+    const values = {};
+    for (const col of new Set([...(cfg.search || []), ...(cfg.sort || [])])) {
+      if (col === 'id') continue;
+      let ref = map.get(col);
+      if (ref === null) continue; // an expression, not a column
+      if (ref === undefined) {
+        if (!star) continue;
+        ref = { qualifier: null, column: col };
+      }
+      const from = ref.qualifier ? [sources.get(ref.qualifier.toLowerCase())].filter(Boolean) : [...new Set(sources.values())];
+      const found = from.map((t) => declared.get(t)?.get(String(ref.column).toLowerCase())).filter(Boolean);
+      if (found.length !== 1) continue;
+      const v = declaredValues(found[0]);
+      if (v) values[col] = v;
+    }
+    if (Object.keys(values).length) out[name] = values;
+  }
+  return out;
+}
+
 // Reúne los módulos a cargar. Con `single` activo, solo ese; si no, todos los del workspace.
 function collectModules(rootDir, single) {
   const mods = [];
@@ -140,6 +330,7 @@ function collectModules(rootDir, single) {
   const fixtures = {};
   const wcFiles = [];
   const columnKinds = {};
+  const columnValues = {};
   const dirs = single
     ? [single]
     : readdirSync(rootDir)
@@ -156,8 +347,9 @@ function collectModules(rootDir, single) {
     wcFiles.push(...ts);
     loadFixtures(dir, fixtures);
     Object.assign(columnKinds, listColumnKinds(dir, manifest));
+    Object.assign(columnValues, listColumnValues(dir, manifest));
   }
-  return { mods, modDirs, fixtures, wcFiles, columnKinds };
+  return { mods, modDirs, fixtures, wcFiles, columnKinds, columnValues };
 }
 
 // A preview that runs offline is still useful — it publishes nothing — so these two fall back to the
@@ -207,7 +399,7 @@ export function outfitkitLabel({ version, source }) {
 // Exportada para test (module-toolkit#133): la fuente generada es lo que corre en el navegador, y
 // la única forma honesta de probar que el preview resuelve `emit` en sus dos formas
 // (ERPlora/hub#1076) es ejecutar ESTE texto, no una reimplementación en el test.
-export function harnessEntry(manifests, fixtures, wcFiles, preselect, okLabel = null, columnKinds = {}) {
+export function harnessEntry(manifests, fixtures, wcFiles, preselect, okLabel = null, columnKinds = {}, columnValues = {}) {
   const ionicImports = IONIC.map(
     (c, i) => `import { defineCustomElement as i${i} } from '@ionic/core/components/ion-${c}.js';`,
   ).join('\n');
@@ -236,6 +428,8 @@ const PRESELECT = ${JSON.stringify(preselect || null)};
 const OUTFITKIT_LABEL = ${JSON.stringify(okLabel)};
 // \`query -> column -> kind\` the module's migrations declare (module-toolkit#431, listColumnKinds).
 const COLUMN_KINDS = ${JSON.stringify(columnKinds || {})};
+// \`query -> column -> [values]\` the module declares (CHECK/DEFAULT, module-toolkit#440, listColumnValues).
+const COLUMN_VALUES = ${JSON.stringify(columnValues || {})};
 
 // ── Cliente mock (transport en memoria) ─────────────────────────────────────────────────────
 const listeners = new Map();
@@ -271,11 +465,13 @@ function synthValue(c, kind, i, word, first) {
 function synth(name) {
   const cfg = (QByName[name] && QByName[name].list) || {};
   const kinds = COLUMN_KINDS[name] || {};
+  const values = COLUMN_VALUES[name] || {};
   const cols = [...new Set([...(cfg.search || []), ...(cfg.sort || [])])].filter((c) => c !== 'id');
   const words = ['Alfa','Bravo','Charlie','Delta','Echo','Foxtrot','Golf','Hotel','India','Juliet','Kilo','Lima'];
   return words.map((w, i) => {
     const row = { id: 'row-' + (i + 1) };
-    for (const c of cols) row[c] = synthValue(c, kinds[c], i, w, (cfg.search || [])[0]);
+    // module-toolkit#440: a value the module declares beats any invented one — row 1 the first, row 2 the second…
+    for (const c of cols) row[c] = values[c] ? values[c][i % values[c].length] : synthValue(c, kinds[c], i, w, (cfg.search || [])[0]);
     return row;
   });
 }
@@ -596,7 +792,7 @@ export async function startDev(moduleDir, opts = {}) {
       ? join(process.cwd(), 'modules')
       : process.cwd();
 
-  const { mods, modDirs, fixtures, wcFiles, columnKinds } = collectModules(rootDir, single);
+  const { mods, modDirs, fixtures, wcFiles, columnKinds, columnValues } = collectModules(rootDir, single);
   if (!mods.length) throw new Error(`No encontré módulos con UI en ${rootDir}`);
   const preselect = single ? JSON.parse(readFileSync(join(single, 'module.json'), 'utf8')).id : null;
 
@@ -617,7 +813,7 @@ export async function startDev(moduleDir, opts = {}) {
   const firstBuild = new Promise((r) => { firstBuilt = r; });
 
   const ctx = await esContext({
-    stdin: { contents: harnessEntry(mods, fixtures, wcFiles, preselect, outfitkitLabel(outfitkit), columnKinds), resolveDir: rootDir, sourcefile: 'workspace.dev.ts', loader: 'ts' },
+    stdin: { contents: harnessEntry(mods, fixtures, wcFiles, preselect, outfitkitLabel(outfitkit), columnKinds, columnValues), resolveDir: rootDir, sourcefile: 'workspace.dev.ts', loader: 'ts' },
     bundle: true,
     format: 'esm',
     target: 'es2022',
