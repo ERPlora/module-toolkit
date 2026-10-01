@@ -103,7 +103,8 @@ export declare class ErploraError extends Error {
     readonly code: string;
     readonly permission?: string | undefined;
     readonly fields?: readonly string[] | undefined;
-    constructor(code: string, message: string, permission?: string | undefined, fields?: readonly string[] | undefined);
+    readonly retryAfterSecs?: number | undefined;
+    constructor(code: string, message: string, permission?: string | undefined, fields?: readonly string[] | undefined, retryAfterSecs?: number | undefined);
 }
 export declare const REQUIRES_ELEVATION = "requires_elevation";
 export declare const ELEVATION_APPROVE_PATH = "/api/elevation/approve";
