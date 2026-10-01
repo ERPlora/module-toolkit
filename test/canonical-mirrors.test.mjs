@@ -52,7 +52,7 @@ import { REFUSED_PATHS, RETIRED_FIELDS } from '../src/validate-manifest-keys.mjs
 import { CORE_OPERATIONS } from '../src/contracts.mjs';
 import { GRANDFATHERED } from '../src/validate-migration-guard.mjs';
 import { controlsWithDeadFill } from '../src/validate-ionic-fill.mjs';
-import { SHELL_OUTFITKIT_COMPONENTS } from '../src/validate-outfitkit-api.mjs';
+import { GUARDED_SHELL_API, SHELL_OUTFITKIT_COMPONENTS } from '../src/validate-outfitkit-api.mjs';
 import {
   KERNEL_CONTRACT_FILES,
   KERNEL_CONTRACT_HUB_PATH,
@@ -259,6 +259,22 @@ test('every ok-* the Hub shell imports is in SHELL_OUTFITKIT_COMPONENTS (#346)',
   const missing = [...imported].filter((tag) => !SHELL_OUTFITKIT_COMPONENTS.includes(tag)).sort();
   assert.deepEqual(missing, [], 'the Hub shell defines these ok-* too: add them to SHELL_OUTFITKIT_COMPONENTS');
   assert.deepEqual(bareValueImports, [], 'a value import of the whole package defines every ok-* in the shell');
+});
+
+test('every detector in GUARDED_SHELL_API is a function of the hub SDK reading that API (#447)', (t) => {
+  // The floor lets a module use `ok-data-table .error`/`@retry` beyond its hub when the file calls
+  // `dataTableShowsLoadError()`. That exemption is only as good as the detector: renamed, it would
+  // silently stop being a guard; reading another property, it would vouch for API it never checks.
+  const index = hubPath(t, 'packages', 'module-sdk', 'src', 'index.ts');
+  if (!index) return;
+  const sdk = readFileSync(index, 'utf8');
+  for (const g of GUARDED_SHELL_API) {
+    assert.equal(g.from, '@erplora/module-sdk', `${g.detector}: only the module SDK is mirrored here`);
+    const body = new RegExp(`export function ${g.detector}\\(\\)[^{]*\\{([\\s\\S]*?)\\n\\}`).exec(sdk)?.[1];
+    assert.ok(body, `the hub SDK no longer exports ${g.detector}() — update GUARDED_SHELL_API`);
+    assert.match(body, new RegExp(`get\\(['"]${g.tag}['"]\\)`), `${g.detector} does not look up ${g.tag}`);
+    assert.match(body, new RegExp(`['"]${g.properties[0]}['"] in `), `${g.detector} does not test '${g.properties[0]}'`);
+  }
 });
 
 /**
