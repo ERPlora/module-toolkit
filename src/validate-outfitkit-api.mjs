@@ -71,6 +71,60 @@ export const SHELL_OUTFITKIT_COMPONENTS = [
 ];
 
 /**
+ * Shell API a module may use beyond its floor because the SDK can DETECT it at runtime — the
+ * `SDK_INT` check that silences Android's `NewApi` (module-toolkit#447). On a hub without it a lit
+ * `.prop` binding is a harmless expando and an event listener never fires; what makes that safe is
+ * the module switching its fallback on the detector, so the exemption holds only in a source file
+ * that imports `detector` from `from` and CALLS it. `properties` covers the `.prop` binding and the
+ * attribute alike. `test/canonical-mirrors.test.mjs` keeps each detector honest against the hub SDK.
+ */
+export const GUARDED_SHELL_API = [
+  // pm#533/pm#530: the table paints a failed load itself (OutfitKit ≥ 0.1.113, both together).
+  {
+    tag: 'ok-data-table',
+    properties: ['error'],
+    events: ['retry'],
+    detector: 'dataTableShowsLoadError',
+    from: '@erplora/module-sdk',
+  },
+];
+
+/**
+ * The shell API one source file has detected before using it, as `<tag> prop <name>` /
+ * `<tag> event <name>` keys: the `GUARDED_SHELL_API` entries whose detector the file imports (by
+ * name or under an alias, never a type-only import) and calls. A same-named function of the
+ * module's own is not the SDK's and guards nothing.
+ */
+function detectedShellApi(sf, guarded = GUARDED_SHELL_API) {
+  const byLocalName = new Map();
+  for (const statement of sf.statements) {
+    if (!ts.isImportDeclaration(statement) || statement.importClause?.isTypeOnly) continue;
+    const from = staticText(statement.moduleSpecifier);
+    const named = statement.importClause?.namedBindings;
+    if (!named || !ts.isNamedImports(named)) continue;
+    for (const element of named.elements) {
+      if (element.isTypeOnly) continue;
+      const imported = (element.propertyName ?? element.name).text;
+      const entries = guarded.filter((g) => g.from === from && g.detector === imported);
+      if (entries.length) byLocalName.set(element.name.text, entries);
+    }
+  }
+  const detected = new Set();
+  if (!byLocalName.size) return detected;
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+      for (const g of byLocalName.get(node.expression.text) ?? []) {
+        for (const name of g.properties) detected.add(`${g.tag} prop ${name}`);
+        for (const name of g.events) detected.add(`${g.tag} event ${name}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return detected;
+}
+
+/**
  * The `ok-*` a built bundle defines, sorted. OutfitKit registers through its guarded `define(tag, …)`
  * helper, which esbuild may rename on a collision (`define2`), and a few places call
  * `customElements.define` directly — both are read. A bare `"ok-close"` string is not a definition.
@@ -247,9 +301,10 @@ function diagnose(moduleDir, files, indexFile, bakedDir, shell) {
     }
     // `tsc` never looks inside a tagged template: what a module binds to `.actions=${…}` of a shell
     // table from an untyped getter is judged here, against THIS run's declaration of the element.
+    const detected = detectedShellApi(sf);
     for (const { tag, prop, expr } of okPropertyBindings(sf)) {
       const element = elements.get(tag);
-      if (!element) continue;
+      if (!element || detected.has(`${tag} prop ${prop}`)) continue;
       const line = sf.getLineAndCharacterOfPosition(expr.getStart(sf)).line + 1;
       const where = `${rel}:${line} — <${tag} .${prop}=\${…}>`;
       const property = element.getProperty(prop);
@@ -501,7 +556,9 @@ function attributeAndEventProblems(moduleDir, files, bakedDir, floorDir, shell, 
   for (const file of files) {
     const sf = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const rel = relative(moduleDir, file).split(sep).join('/');
+    const detected = detectedShellApi(sf);
     for (const use of shellTagUses(sf, shell)) {
+      if (detected.has(`${use.tag} ${use.kind === 'event' ? 'event' : 'prop'} ${use.name}`)) continue;
       const baked = cachedBundleApi(bakedDir, use.tag, cache);
       const floor = cachedBundleApi(floorDir, use.tag, cache);
       if (!baked || !floor) continue;

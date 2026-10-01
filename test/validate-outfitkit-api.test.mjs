@@ -25,6 +25,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
+  GUARDED_SHELL_API,
   SHELL_OUTFITKIT_COMPONENTS,
   bakedOutfitkitComponents,
   checkSharedOutfitkitApi,
@@ -426,6 +427,184 @@ test('a shell component whose bundle one side lacks is not judged on attributes 
     floorDir,
   });
   assert.deepEqual(problems, []);
+});
+
+// --- API the module DETECTS before using it — module-toolkit#447 -----------------------------------
+//
+// pm#533 taught list screens to say a failed load in the table itself (`<ok-data-table .error=${…}
+// @retry=${…}>`, OutfitKit ≥ 0.1.113) and, on a hub whose table cannot, in their own red banner —
+// switched by the SDK's `dataTableShowsLoadError()`. On an old hub the binding is a harmless expando
+// and the listener never fires, so the screen is right on both. Baked against a current OutfitKit,
+// the floor check still refused it ("'error' does not exist on ok-data-table"): verifactu, taxes and
+// whatsapp_inbox had to keep an old OutfitKit pinned (0.1.79/0.1.98) to publish any screen change.
+// Rule, as Android's `NewApi` with an `SDK_INT` check: shell API listed in `GUARDED_SHELL_API` is
+// not blamed on the floor in a file that imports the SDK detector for it and CALLS it.
+
+/** A package whose shell `ok-data-table` does (`loadError`) or does not paint a failed load. */
+function outfitkitWithTable({ loadError }) {
+  const root = outfitkitPackage({ dataTable: 'id: string; label: string;', lightbox: 'src: string;' });
+  writeFileSync(
+    join(root, 'dist', 'components', 'ok-data-table', 'ok-data-table.d.ts'),
+    `export interface DataTableAction { id: string; label: string; }
+export declare class OkDataTable { actions: DataTableAction[]; dense: boolean;${loadError ? ' error: string;' : ''} }
+`,
+  );
+  writeFileSync(
+    join(root, 'dist', 'ok-data-table.js'),
+    componentJs({
+      className: 'OkDataTable',
+      tag: 'ok-data-table',
+      props: [['actions', '{ attribute: false }'], ['dense', '{ type: Boolean }'], ...(loadError ? [['error']] : [])],
+      events: ['rowAction', ...(loadError ? ['retry'] : []), 'pageChange'],
+    }),
+  );
+  return root;
+}
+
+const DETECTOR_IMPORT = "import { dataTableShowsLoadError } from '@erplora/module-sdk';\n";
+
+/** A list screen binding the table's load error + retry; `banner` is the guarded fallback, if any. */
+const LIST_SCREEN = ({ header = '', banner = '' } = {}) =>
+  `${header}declare const html: (s: TemplateStringsArray, ...v: unknown[]) => unknown;
+export class X {
+  error = '';
+  load = () => {};
+  render() {
+    return html\`${banner}<ok-data-table .error=\${this.error} @retry=\${this.load}></ok-data-table>\`;
+  }
+}
+`;
+
+const GUARDED_BANNER = '${this.error && !dataTableShowsLoadError() ? html`<p>${this.error}</p>` : null}';
+
+const checkTable = (files) =>
+  checkSharedOutfitkitApi({
+    moduleDir: moduleWithUi(files),
+    bakedDir: outfitkitWithTable({ loadError: true }),
+    floorDir: outfitkitWithTable({ loadError: false }),
+  }).problems;
+
+test('the guarded list is shell API with an SDK detector: ok-data-table error + retry', () => {
+  const entry = GUARDED_SHELL_API.find((g) => g.tag === 'ok-data-table');
+  assert.deepEqual(entry, {
+    tag: 'ok-data-table',
+    properties: ['error'],
+    events: ['retry'],
+    detector: 'dataTableShowsLoadError',
+    from: '@erplora/module-sdk',
+  });
+  for (const g of GUARDED_SHELL_API) assert.ok(SHELL_OUTFITKIT_COMPONENTS.includes(g.tag), g.tag);
+});
+
+test('the table load error and retry, UNGUARDED, are still refused against a floor without them', () => {
+  const problems = checkTable({ 'components/x/x.ts': LIST_SCREEN() });
+  assert.equal(problems.length, 2, JSON.stringify(problems));
+  assert.ok(problems.some((p) => /\.error=.*'error' does not exist on ok-data-table/.test(p)), JSON.stringify(problems));
+  assert.ok(problems.some((p) => /@retry>.*'retry' is not an event/.test(p)), JSON.stringify(problems));
+});
+
+test('verifactu#160: a screen that imports and CALLS the SDK detector may bind error + retry', () => {
+  const problems = checkTable({
+    'components/x/x.ts': LIST_SCREEN({ header: DETECTOR_IMPORT, banner: GUARDED_BANNER }),
+  });
+  assert.deepEqual(problems, []);
+});
+
+test('an aliased import of the detector counts, as long as it is called', () => {
+  const problems = checkTable({
+    'components/x/x.ts': LIST_SCREEN({
+      header: "import { dataTableShowsLoadError as tableSaysIt } from '@erplora/module-sdk';\n",
+      banner: '${this.error && !tableSaysIt() ? html`<p>${this.error}</p>` : null}',
+    }),
+  });
+  assert.deepEqual(problems, []);
+});
+
+test('importing the detector without calling it is not a guard', () => {
+  const problems = checkTable({ 'components/x/x.ts': LIST_SCREEN({ header: DETECTOR_IMPORT }) });
+  assert.equal(problems.length, 2, JSON.stringify(problems));
+});
+
+test('a function of the module\'s own with the detector\'s name is not a guard', () => {
+  const problems = checkTable({
+    'components/x/x.ts': LIST_SCREEN({
+      header: 'const dataTableShowsLoadError = () => true;\n',
+      banner: GUARDED_BANNER,
+    }),
+  });
+  assert.equal(problems.length, 2, JSON.stringify(problems));
+});
+
+test('a type-only import of the detector is not a guard: it is erased, there is nothing to call', () => {
+  for (const header of [
+    "import type { dataTableShowsLoadError } from '@erplora/module-sdk';\n",
+    "import { type dataTableShowsLoadError } from '@erplora/module-sdk';\n",
+  ]) {
+    const problems = checkTable({ 'components/x/x.ts': LIST_SCREEN({ header, banner: GUARDED_BANNER }) });
+    assert.equal(problems.length, 2, `${header}${JSON.stringify(problems)}`);
+  }
+});
+
+test('the detector\'s name imported from anywhere but the SDK is not a guard', () => {
+  const problems = checkTable({
+    'components/x/x.ts': LIST_SCREEN({
+      header: "import { dataTableShowsLoadError } from '../../helpers/table';\n",
+      banner: GUARDED_BANNER,
+    }),
+  });
+  assert.equal(problems.length, 2, JSON.stringify(problems));
+});
+
+test('the detector guards only the component that calls it, not another screen of the module', () => {
+  const problems = checkTable({
+    'components/guarded/guarded.ts': LIST_SCREEN({ header: DETECTOR_IMPORT, banner: GUARDED_BANNER }),
+    'components/bare/bare.ts': LIST_SCREEN(),
+  });
+  assert.equal(problems.length, 2, JSON.stringify(problems));
+  for (const p of problems) assert.match(p, /^ui\/components\/bare\/bare\.ts:/);
+});
+
+test('the detector excuses only the API it detects: other new table API on the same tag still blocks', () => {
+  const floorDir = outfitkitWithTable({ loadError: false });
+  // The baked table also grows a `striped` attribute and a `rowExpand` event the detector says nothing about.
+  const bakedDir = outfitkitWithTable({ loadError: true });
+  writeFileSync(
+    join(bakedDir, 'dist', 'ok-data-table.js'),
+    componentJs({
+      className: 'OkDataTable',
+      tag: 'ok-data-table',
+      props: [['actions', '{ attribute: false }'], ['dense', '{ type: Boolean }'], ['error'], ['striped', '{ type: Boolean }']],
+      events: ['rowAction', 'retry', 'pageChange', 'rowExpand'],
+    }),
+  );
+  const screen = `${DETECTOR_IMPORT}declare const html: (s: TemplateStringsArray, ...v: unknown[]) => unknown;
+export class X {
+  error = '';
+  load = () => {};
+  render() {
+    return html\`${GUARDED_BANNER}<ok-data-table striped .error=\${this.error} @retry=\${this.load} @rowExpand=\${this.load}></ok-data-table>\`;
+  }
+}
+`;
+  const { problems } = checkSharedOutfitkitApi({ moduleDir: moduleWithUi({ 'components/x/x.ts': screen }), bakedDir, floorDir });
+  assert.equal(problems.length, 2, JSON.stringify(problems));
+  assert.ok(problems.some((p) => /'striped'/.test(p)), JSON.stringify(problems));
+  assert.ok(problems.some((p) => /'rowExpand'/.test(p)), JSON.stringify(problems));
+});
+
+test('the detector of ok-data-table does not excuse an error/retry on another shell component', () => {
+  const pill = (extra) => ({ props: [['tone'], ...extra.props], events: ['ok-dismiss', ...extra.events] });
+  const problems = checkSharedOutfitkitApi({
+    moduleDir: moduleWithUi({
+      'components/x/x.ts': `${DETECTOR_IMPORT}${RENDERS(
+        '${dataTableShowsLoadError() ? null : null}<ok-status-pill error="x" @retry=${this.handler}></ok-status-pill>',
+      )}`,
+    }),
+    bakedDir: outfitkitWithBundles({ pill: pill({ props: [['error']], events: ['retry'] }), lightbox: {} }),
+    floorDir: outfitkitWithBundles({ pill: pill({ props: [], events: [] }), lightbox: {} }),
+  }).problems;
+  assert.equal(problems.length, 2, JSON.stringify(problems));
+  for (const p of problems) assert.match(p, /<ok-status-pill /);
 });
 
 // --- The gate itself (`checkOutfitkitFloor`) ------------------------------------------------------
