@@ -304,12 +304,16 @@ function diagnose(moduleDir, files, indexFile, bakedDir, shell) {
     const detected = detectedShellApi(sf);
     for (const { tag, prop, expr } of okPropertyBindings(sf)) {
       const element = elements.get(tag);
-      if (!element || detected.has(`${tag} prop ${prop}`)) continue;
+      if (!element) continue;
       const line = sf.getLineAndCharacterOfPosition(expr.getStart(sf)).line + 1;
       const where = `${rel}:${line} — <${tag} .${prop}=\${…}>`;
       const property = element.getProperty(prop);
       if (!property) {
-        found.set(`${rel}:${line}:bind:${tag}.${prop}`, `${where}: '${prop}' does not exist on ${tag}`);
+        // The detector vouches for the property's PRESENCE only: where this run's table does have
+        // it, what the module binds is typed against it like any other binding.
+        if (!detected.has(`${tag} prop ${prop}`)) {
+          found.set(`${rel}:${line}:bind:${tag}.${prop}`, `${where}: '${prop}' does not exist on ${tag}`);
+        }
         continue;
       }
       const target = checker.getTypeOfSymbolAtLocation(property, expr);

@@ -441,12 +441,12 @@ test('a shell component whose bundle one side lacks is not judged on attributes 
 // not blamed on the floor in a file that imports the SDK detector for it and CALLS it.
 
 /** A package whose shell `ok-data-table` does (`loadError`) or does not paint a failed load. */
-function outfitkitWithTable({ loadError }) {
+function outfitkitWithTable({ loadError, errorType = 'string' }) {
   const root = outfitkitPackage({ dataTable: 'id: string; label: string;', lightbox: 'src: string;' });
   writeFileSync(
     join(root, 'dist', 'components', 'ok-data-table', 'ok-data-table.d.ts'),
     `export interface DataTableAction { id: string; label: string; }
-export declare class OkDataTable { actions: DataTableAction[]; dense: boolean;${loadError ? ' error: string;' : ''} }
+export declare class OkDataTable { actions: DataTableAction[]; dense: boolean;${loadError ? ` error: ${errorType};` : ''} }
 `,
   );
   writeFileSync(
@@ -464,10 +464,10 @@ export declare class OkDataTable { actions: DataTableAction[]; dense: boolean;${
 const DETECTOR_IMPORT = "import { dataTableShowsLoadError } from '@erplora/module-sdk';\n";
 
 /** A list screen binding the table's load error + retry; `banner` is the guarded fallback, if any. */
-const LIST_SCREEN = ({ header = '', banner = '' } = {}) =>
+const LIST_SCREEN = ({ header = '', banner = '', field = "error = '';" } = {}) =>
   `${header}declare const html: (s: TemplateStringsArray, ...v: unknown[]) => unknown;
 export class X {
-  error = '';
+  ${field}
   load = () => {};
   render() {
     return html\`${banner}<ok-data-table .error=\${this.error} @retry=\${this.load}></ok-data-table>\`;
@@ -590,6 +590,22 @@ export class X {
   assert.equal(problems.length, 2, JSON.stringify(problems));
   assert.ok(problems.some((p) => /'striped'/.test(p)), JSON.stringify(problems));
   assert.ok(problems.some((p) => /'rowExpand'/.test(p)), JSON.stringify(problems));
+});
+
+test('the detector vouches for the PRESENCE of the API, not its type: a floor table that has `error` still types it', () => {
+  // On a hub whose table already paints the load error, `dataTableShowsLoadError()` says yes and the
+  // module takes the table path — so what it binds has to fit THAT table. If a newer OutfitKit
+  // widened `error` (say to `string | null`) and the module bound the wider type, the floor hub's
+  // table would get a value it never declared; the exemption must only cover "does not exist".
+  const problems = checkSharedOutfitkitApi({
+    moduleDir: moduleWithUi({
+      'components/x/x.ts': LIST_SCREEN({ header: DETECTOR_IMPORT, banner: GUARDED_BANNER, field: 'error: string | null = null;' }),
+    }),
+    bakedDir: outfitkitWithTable({ loadError: true, errorType: 'string | null' }),
+    floorDir: outfitkitWithTable({ loadError: true, errorType: 'string' }),
+  }).problems;
+  assert.equal(problems.length, 1, JSON.stringify(problems));
+  assert.match(problems[0], /<ok-data-table \.error=\$\{…\}>: 'string \| null' is not assignable to 'string'/);
 });
 
 test('the detector of ok-data-table does not excuse an error/retry on another shell component', () => {
