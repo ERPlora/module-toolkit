@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { writeContractsFile } from '../src/contracts.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'erplora.mjs');
@@ -232,6 +233,10 @@ test('the workflow-doc action runs this subcommand with its inputs, installing n
   assert.match(action, /^\s{2}family:/m, 'the family is an input');
   assert.match(action, /^\s{2}strict:/m, 'strict mode is an input, off by default');
   assert.match(action, /--strict/);
+  const strictInput = /^ {2}strict:\n((?: {4}.*\n| {6}.*\n)+)/m.exec(action);
+  assert.ok(strictInput, 'the `strict` input block');
+  assert.match(strictInput[1], /^ {4}default: 'false'$/m, 'strict mode stays OFF unless a caller asks: the migration is open');
+  assert.match(action, /^ {4}- name: [\x00-\x7F]+$/m, 'the step name is English');
   assert.match(action, /node "\$toolkit\/bin\/erplora\.mjs" workflow-lint "\$WORKFLOW_PATH"/);
   assert.match(action, /--family "\$WORKFLOW_FAMILY"/);
   assert.match(action, /WORKFLOW_PATH: \$\{\{ inputs\.path \}\}/);
@@ -239,8 +244,72 @@ test('the workflow-doc action runs this subcommand with its inputs, installing n
   assert.doesNotMatch(action, /npm (install|ci)\b/, 'the lint is builtins only: nothing to install');
 });
 
+/** A module that passes `erplora validate` and has no WORKFLOW.md. */
+function moduleWithoutWorkflow() {
+  const dir = tree({});
+  const manifest = { id: 'demo', name: 'Demo', version: '1.0.0' };
+  writeFileSync(join(dir, 'module.json'), JSON.stringify(manifest));
+  writeContractsFile(dir, manifest);
+  return dir;
+}
+
+function cli(...args) {
+  const res = spawnSync(process.execPath, [BIN, ...args], { encoding: 'utf8' });
+  return { status: res.status, out: `${res.stdout}\n${res.stderr}` };
+}
+
+test('`erplora validate <dir> --strict`: a module without WORKFLOW.md exits 1 (and 0 without the flag)', () => {
+  const dir = moduleWithoutWorkflow();
+  try {
+    const plain = cli('validate', dir);
+    assert.equal(plain.status, 0, plain.out);
+    assert.match(plain.out, /workflow_missing/);
+    const strict = cli('validate', dir, '--strict');
+    assert.equal(strict.status, 1, strict.out);
+    assert.match(strict.out, /workflow_missing/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('`--family` belongs to workflow-lint only: `validate <dir> --family hub` is not refused', () => {
+  const dir = moduleWithoutWorkflow();
+  try {
+    const res = cli('validate', dir, '--family', 'hub');
+    assert.equal(res.status, 0, res.out);
+    assert.doesNotMatch(res.out, /--family/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the new CLI texts are English', () => {
+  const ok = tree({ 'WORKFLOW.md': doc('HUB') });
+  const bad = tree({ 'WORKFLOW.md': doc('HUB', { flowId: 'HUB-F1' }) });
+  try {
+    assert.match(run(ok, '--family', 'HUB').out, /✓ workflow-lint HUB: 1 file\(s\), 1 flow\(s\)/);
+    assert.match(run(bad, '--family', 'HUB').out, /✗ WORKFLOW\.md missing or malformed \(ERPlora\/pm#621\):/);
+    assert.match(cli('workflow-lint', join(ok, 'nope')).out, /✗ the folder .*nope does not exist/);
+    assert.match(cli('workflow-lint').out, /✗ workflow-lint needs the folder to walk/);
+  } finally {
+    rmSync(ok, { recursive: true, force: true });
+    rmSync(bad, { recursive: true, force: true });
+  }
+});
+
+test('`erplora validate` names a malformed or missing WORKFLOW.md in English', () => {
+  const dir = moduleWithoutWorkflow();
+  try {
+    assert.match(cli('validate', dir, '--strict').out, /✗ WORKFLOW\.md missing or malformed \(ERPlora\/pm#621\):/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('the usage text lists workflow-lint', () => {
   const res = spawnSync(process.execPath, [BIN, '--help'], { encoding: 'utf8' });
   assert.match(res.stdout, /workflow-lint <dir> \[--family HUB\|SAAS\|VFGW\|REC\] \[--strict\]/);
   assert.match(res.stdout, /validate <dir> \[--pg\] \[--strict\]/);
+  assert.match(res.stdout, /with --strict, a module without WORKFLOW\.md is an error/);
+  assert.match(res.stdout, /lints the grammar of every WORKFLOW\.md under <dir>/);
 });

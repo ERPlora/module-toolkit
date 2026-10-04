@@ -398,7 +398,7 @@ export async function validate(moduleDir, { pg = false, publishing = false, stri
   const workflowDoc = checkWorkflowDoc(dir, manifest, { strict });
   for (const w of workflowDoc.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (workflowDoc.errors.length) {
-    throw new Error('WORKFLOW.md ausente o mal formado (ERPlora/pm#621):\n  - ' + workflowDoc.errors.join('\n  - '));
+    throw new Error('WORKFLOW.md missing or malformed (ERPlora/pm#621):\n  - ' + workflowDoc.errors.join('\n  - '));
   }
 
   // ADR-0127: los contratos consumidos (queries/commands/eventos/slots que la UI usa de otros

@@ -18,7 +18,7 @@
 //
 // Naming. «flows» in this repository already means automations (`validate-flows.mjs`,
 // `flows/*.flow.json`). This is the `workflow-doc`, everywhere.
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const WORKFLOW_FILE = 'WORKFLOW.md';
@@ -113,13 +113,14 @@ export function lintWorkflowFile(text, { file = WORKFLOW_FILE, kind = 'principal
   }
   if (fence) {
     error('code_block_unclosed', '', fence.n, `the \`${fence.mark}\` block opened here is never closed: nothing after it can be read`);
-    return { findings, prefix: null, flows: [] };
+    return { findings, prefix: null, prefixLine: 1, flows: [] };
   }
 
   const firstSection = lines.find((l) => l.line.startsWith('## '))?.n ?? Infinity;
 
   // Prefijo.
   let prefix = null;
+  let prefixLine = 1;
   const prefixLines = lines.filter((l) => l.line.startsWith('Prefijo:'));
   if (!prefixLines.length) {
     error('prefix_missing', '', 1, `no \`Prefijo:\` line before the first \`## \` section`);
@@ -132,6 +133,7 @@ export function lintWorkflowFile(text, { file = WORKFLOW_FILE, kind = 'principal
       error('prefix_malformed', '', n, `\`${line}\` is not a prefix: upper case, digits and \`_\` (e.g. \`Prefijo: CASH_REGISTER\`)`);
     } else {
       prefix = line.slice('Prefijo: '.length);
+      prefixLine = n;
       if (rec && !prefix.startsWith('REC_')) {
         error('rec_prefix_misplaced', '', n, `prefix \`${prefix}\`: a journey of \`architecture/workflows/\` carries a \`REC_<SLUG>\` prefix`);
       } else if (!rec && prefix.startsWith('REC_')) {
@@ -211,7 +213,7 @@ export function lintWorkflowFile(text, { file = WORKFLOW_FILE, kind = 'principal
   }
   close();
 
-  return { findings, prefix, flows };
+  return { findings, prefix, prefixLine, flows };
 }
 
 /** The rules of one flow block (§5.4), reported through `error(code, id, line, text)`. */
@@ -288,14 +290,33 @@ function lintFlow(flow, prefix, error) {
   if (misplaced) error('pending_misplaced', id, misplaced.n, `flow \`${id}\`: \`${PENDING_LINE}\` lines go between \`Implicados:\` and \`QA:\``);
 }
 
+/**
+ * Whether `name` is a FILE inside `dir`, by its exact name. Exact because APFS and NTFS match names
+ * case-insensitively and the CI's filesystem does not: a lone `workflow.md` would be linted on a Mac
+ * and be missing on the runner. A symbolic link counts as what it points to (a linked
+ * `WORKFLOW.md` and a linked `workflow/*.md` are read alike); a folder, or a broken link, is no file.
+ */
+function isFileIn(dir, name) {
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return false;
+  }
+  return names.includes(name) && Boolean(statSync(join(dir, name), { throwIfNoEntry: false })?.isFile());
+}
+
+/** The `*.md` files of `dir` (links followed, `except` left out), sorted; none if it is no folder. */
+function markdownFiles(dir, except = []) {
+  if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return [];
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.md') && !except.includes(name) && isFileIn(dir, name))
+    .sort();
+}
+
 /** `workflow/*.md` of a folder, sorted. */
 function secondaryFiles(dir) {
-  const root = join(dir, 'workflow');
-  if (!existsSync(root) || !statSync(root).isDirectory()) return [];
-  return readdirSync(root, { withFileTypes: true })
-    .filter((e) => e.isFile() && e.name.endsWith('.md'))
-    .map((e) => e.name)
-    .sort();
+  return markdownFiles(join(dir, 'workflow'));
 }
 
 /**
@@ -309,7 +330,7 @@ export function lintWorkflowComponent(dir, { modulePrefix, family, label = '' } 
   const files = [];
   const flows = [];
   const main = join(dir, WORKFLOW_FILE);
-  const found = existsSync(main);
+  const found = isFileIn(dir, WORKFLOW_FILE);
   let prefix = null;
   let prefixLine = 1;
   if (found) {
@@ -320,7 +341,7 @@ export function lintWorkflowComponent(dir, { modulePrefix, family, label = '' } 
     flows.push(...r.flows);
     files.push(file);
     prefix = r.prefix;
-    prefixLine = lineOfPrefix(text);
+    prefixLine = r.prefixLine;
     if (prefix && modulePrefix && prefix !== modulePrefix) {
       findings.push({ level: 'error', code: 'module_prefix_mismatch', id: '', file, line: prefixLine,
         text: `prefix \`${prefix}\` is not this module's: expected \`${modulePrefix}\`, its \`id\` in upper case` });
@@ -337,7 +358,7 @@ export function lintWorkflowComponent(dir, { modulePrefix, family, label = '' } 
       findings.push({ level: 'error', code: 'orphan_subfile', id: '', file, line: 1,
         text: `no \`${WORKFLOW_FILE}\` next to its \`workflow/\` folder: a detail file belongs to an index` });
     } else if (prefix && r.prefix && r.prefix !== prefix) {
-      findings.push({ level: 'error', code: 'subfile_prefix_mismatch', id: '', file, line: lineOfPrefix(text),
+      findings.push({ level: 'error', code: 'subfile_prefix_mismatch', id: '', file, line: r.prefixLine,
         text: `prefix \`${r.prefix}\` is not the one of its index \`${prefix}\` (a detail file repeats it)` });
     }
     for (const f of r.flows) {
@@ -350,11 +371,6 @@ export function lintWorkflowComponent(dir, { modulePrefix, family, label = '' } 
     flows.push(...r.flows);
   }
   return { findings, found, prefix, prefixLine, files, flows };
-}
-
-function lineOfPrefix(text) {
-  const i = text.split('\n').findIndex((l) => l.startsWith('Prefijo:'));
-  return i === -1 ? 1 : i + 1;
 }
 
 /** `--family` of `erplora workflow-lint`: a toolkit option, not a rule of the contract. */
@@ -380,7 +396,7 @@ function missing(id, file, strict) {
 export function lintWorkflowText(text, { prefix, family, file = WORKFLOW_FILE, rec = false } = {}) {
   const r = lintWorkflowFile(text, { file, rec });
   const findings = [...r.findings];
-  const line = lineOfPrefix(text);
+  const line = r.prefixLine;
   if (r.prefix && prefix && r.prefix !== prefix) {
     findings.push({ level: 'error', code: 'module_prefix_mismatch', id: '', file, line,
       text: `prefix \`${r.prefix}\` is not this module's: expected \`${prefix}\`, its \`id\` in upper case` });
@@ -432,7 +448,7 @@ export function lintWorkflowTree(root, { family, strict = false, name = '.' } = 
   for (const rel of walkDirs(root)) {
     if (rel.split('/').pop() === 'workflow') continue;
     const dir = join(root, rel);
-    if (!existsSync(join(dir, WORKFLOW_FILE)) && !secondaryFiles(dir).length) continue;
+    if (!isFileIn(dir, WORKFLOW_FILE) && !secondaryFiles(dir).length) continue;
     const label = rel ? `${rel}/` : '';
     const r = lintWorkflowComponent(dir, { family, label });
     findings.push(...r.findings);
@@ -442,12 +458,7 @@ export function lintWorkflowTree(root, { family, strict = false, name = '.' } = 
   }
   if (family === 'REC') {
     const journeys = join(root, 'workflows');
-    const docs = existsSync(journeys)
-      ? readdirSync(journeys, { withFileTypes: true })
-          .filter((e) => e.isFile() && e.name.endsWith('.md') && e.name !== 'README.md')
-          .map((e) => e.name)
-          .sort()
-      : [];
+    const docs = markdownFiles(journeys, ['README.md']);
     for (const doc of docs) {
       const file = `workflows/${doc}`;
       const text = readFileSync(join(journeys, doc), 'utf8');
@@ -456,12 +467,12 @@ export function lintWorkflowTree(root, { family, strict = false, name = '.' } = 
       files.push(file);
       flows.push(...r.flows);
       if (r.prefix) {
-        mains.push({ prefix: r.prefix, file, line: lineOfPrefix(text) });
-        if (!inFamily(r.prefix, family)) findings.push(familyMismatch(r.prefix, family, file, lineOfPrefix(text)));
+        mains.push({ prefix: r.prefix, file, line: r.prefixLine });
+        if (!inFamily(r.prefix, family)) findings.push(familyMismatch(r.prefix, family, file, r.prefixLine));
       }
     }
     if (!docs.length) findings.push(missing(name, 'workflows/', strict));
-  } else if (!existsSync(join(root, WORKFLOW_FILE))) {
+  } else if (!isFileIn(root, WORKFLOW_FILE)) {
     findings.push(missing(name, WORKFLOW_FILE, strict));
   }
   for (const [i, m] of mains.entries()) {

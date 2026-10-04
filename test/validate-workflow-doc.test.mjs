@@ -16,11 +16,11 @@
 // error. Not to be confused with `validate-flows` — «flows» in this repository are automations.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { lintWorkflowText, checkWorkflowDoc } from '../src/validate-workflow-doc.mjs';
+import { lintWorkflowText, checkWorkflowDoc, lintWorkflowTree } from '../src/validate-workflow-doc.mjs';
 import { validate } from '../src/validate.mjs';
 import { writeContractsFile } from '../src/contracts.mjs';
 
@@ -238,6 +238,88 @@ test('module_prefix_mismatch: the prefix is not the module id in upper case', ()
     const out = checkWorkflowDoc(dir, { id: 'citas', name: 'Citas', version: '1.0.0' });
     assert.deepEqual(pairs(out.findings, 'error'), ['module_prefix_mismatch|']);
     assert.match(out.errors[0], /module_prefix_mismatch: .*`APPOINTMENTS`.*`CITAS`/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+// ── Reading the disk: what counts as «the file» ──────────────────────────────
+
+/** 1-based line of the first line of `text` that is exactly `needle`. */
+const lineOf = (text, needle) => text.split('\n').indexOf(needle) + 1;
+
+test('§5.2: trailing spaces are normalised away (`Prefijo: X  `, `## Flujos `)', () => {
+  assert.deepEqual(
+    errorPairs({ [APPT]: (t) => once('## Flujos\n', '## Flujos \n')(once('Prefijo: APPOINTMENTS\n', 'Prefijo: APPOINTMENTS  \n')(t)) }),
+    [],
+  );
+});
+
+test('a WORKFLOW.md that is a FOLDER is no file: workflow_missing, never an exception', () => {
+  const root = example({ [APPT]: () => null });
+  try {
+    mkdirSync(join(root, APPT));
+    const out = check(root, 'appointments');
+    assert.deepEqual(pairs(out.findings, 'warning'), ['workflow_missing|appointments']);
+    assert.deepEqual(out.errors, []);
+    const tree = lintWorkflowTree(join(root, 'appointments'), { name: 'appointments' });
+    assert.deepEqual(pairs(tree.findings, 'warning'), ['workflow_missing|appointments']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the name is exact on every filesystem: a lone `workflow.md` is not WORKFLOW.md (APFS ≠ the CI)', () => {
+  const root = example();
+  try {
+    renameSync(join(root, APPT), join(root, 'appointments', 'workflow.md'));
+    const out = check(root, 'appointments');
+    assert.deepEqual(pairs(out.findings, 'warning'), ['workflow_missing|appointments']);
+    const tree = lintWorkflowTree(join(root, 'appointments'), { name: 'appointments' });
+    assert.deepEqual(tree.files, []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the prefix line of module_prefix_mismatch skips a code block that holds another `Prefijo:`', () => {
+  const block = '~~~\nPrefijo: OTRO\n~~~\n';
+  const root = example({ [APPT]: once('Prefijo: APPOINTMENTS\n', `${block}Prefijo: APPOINTMENTS\n`) });
+  try {
+    const dir = join(root, 'appointments');
+    const out = checkWorkflowDoc(dir, { id: 'citas', name: 'Citas', version: '1.0.0' });
+    const line = lineOf(readFileSync(join(root, APPT), 'utf8'), 'Prefijo: APPOINTMENTS');
+    assert.deepEqual(out.errors.map((e) => e.split(': ')[0]), [`WORKFLOW.md:${line}`]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the prefix line of subfile_prefix_mismatch skips a code block too', () => {
+  const root = example({ [WA_DETAIL]: once('Prefijo: WHATSAPP_INBOX\n', '```\nPrefijo: WHATSAPP_INBOX\n```\nPrefijo: WHATSAPP\n') });
+  try {
+    const mismatch = check(root, 'whatsapp_inbox').findings.find((f) => f.code === 'subfile_prefix_mismatch');
+    assert.equal(mismatch.line, lineOf(readFileSync(join(root, WA_DETAIL), 'utf8'), 'Prefijo: WHATSAPP'));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('symbolic links: a linked WORKFLOW.md and a linked workflow/*.md are both read', () => {
+  const root = example();
+  try {
+    const store = join(root, 'store');
+    mkdirSync(store);
+    const wa = join(root, 'whatsapp_inbox');
+    renameSync(join(wa, 'WORKFLOW.md'), join(store, 'index.md'));
+    symlinkSync(join(store, 'index.md'), join(wa, 'WORKFLOW.md'));
+    const detail = readFileSync(join(root, WA_DETAIL), 'utf8');
+    writeFileSync(join(store, 'detail.md'), once('Vertical: peluqueria', 'Vertical: salon')(detail));
+    rmSync(join(root, WA_DETAIL));
+    symlinkSync(join(store, 'detail.md'), join(root, WA_DETAIL));
+    assert.deepEqual(pairs(check(root, 'whatsapp_inbox').findings, 'error'), ['vertical_malformed|WHATSAPP_INBOX-F01']);
+    const tree = lintWorkflowTree(wa, { name: 'whatsapp_inbox' });
+    assert.deepEqual(tree.files, ['WORKFLOW.md', 'workflow/conversaciones.md']);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

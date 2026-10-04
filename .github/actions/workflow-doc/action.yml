@@ -50,7 +50,7 @@ runs:
       with:
         node-version: ${{ inputs.node-version }}
 
-    - name: Los WORKFLOW.md siguen la gramática
+    - name: The WORKFLOW.md files follow the grammar
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}

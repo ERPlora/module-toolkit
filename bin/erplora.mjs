@@ -14,7 +14,7 @@
 //                              `--list` las enumera sin correrlas (lo que usa el gate compartido)
 //                              `--against-hub [<imagen>]` levanta el kernel REAL y corre contra él
 //                              las baterías `*.hub.test.py|.sh` (module-toolkit#110)
-//   erplora workflow-lint <dir> [--family F] [--strict]  gramática de los WORKFLOW.md de lo que no es módulo
+//   erplora workflow-lint <dir> [--family F] [--strict]  lints the WORKFLOW.md of what is not a module
 //                              (hub, saas, verifactu-gateway, architecture/workflows; pm#621)
 //   erplora contracts <dir>    (re)genera .erplora/contracts.json
 //   erplora pack|sign|publish  empaquetado/firma/publicación al marketplace (§7.4)
@@ -66,9 +66,13 @@ if (okAt !== -1) {
     process.exit(1);
   }
 }
-// `--family <PREFIX>` (`workflow-lint`, ERPlora/pm#621) takes a value too, consumed the same way.
+// `--family <PREFIX>` (`workflow-lint`, ERPlora/pm#621) takes a value too, consumed the same way —
+// and ONLY for `workflow-lint`: no other command reads it, so no other command may refuse on it.
 let family;
-const familyAt = argv.findIndex((a) => a === '--family' || a.startsWith('--family='));
+const familyAt =
+  argv.find((a) => !a.startsWith('-')) === 'workflow-lint'
+    ? argv.findIndex((a) => a === '--family' || a.startsWith('--family='))
+    : -1;
 if (familyAt !== -1) {
   const [flag, value] = argv.splice(familyAt, argv[familyAt] === '--family' ? 2 : 1);
   family = flag === '--family' ? value : flag.slice('--family='.length);
@@ -103,12 +107,12 @@ const usage = () => {
   build <dir> --check [--sdk <d>] rebuilds aside and fails if dist/<id>.esm.js differs
   validate <dir> [--pg] [--strict]
                                  valida el manifest + CSP del bundle + contratos (ADR-0127);
-                                 con --pg, además PREPARA cada SQL contra un Postgres efímero;
-                                 con --strict, un módulo sin WORKFLOW.md es error (pm#621)
+                                 con --pg, además PREPARA cada SQL contra un Postgres efímero
+                                 with --strict, a module without WORKFLOW.md is an error (pm#621)
   workflow-lint <dir> [--family HUB|SAAS|VFGW|REC] [--strict]
-                                 valida la gramática de cada WORKFLOW.md bajo <dir> (y sus
-                                 workflow/*.md) para lo que no es módulo; con REC, los
-                                 workflows/*.md de architecture. Contrato y códigos:
+                                 lints the grammar of every WORKFLOW.md under <dir> (and its
+                                 workflow/*.md) for what is not a module; with REC, the
+                                 workflows/*.md of architecture. Grammar and codes:
                                  architecture/contracts/workflow-contract.md (ERPlora/pm#621)
   test <dir> [--list] [--against-hub [<imagen|digest>]]
                                  corre las baterías propias del módulo (cualquier
@@ -185,18 +189,18 @@ try {
       // ERPlora/pm#621: the WORKFLOW.md lint `validate` runs on a module, for the components that
       // have no `module.json` (hub, saas, verifactu-gateway, architecture/workflows). Node builtins
       // only, like `validate`: their CI runs it straight out of this repository.
-      need(rest[0], 'falta la carpeta que recorrer');
+      need(rest[0], 'workflow-lint needs the folder to walk');
       const { lintWorkflowTree } = await import('../src/validate-workflow-doc.mjs');
       const root = resolve(rest[0]);
-      if (!existsSync(root)) throw new Error(`no existe la carpeta ${rest[0]}`);
+      if (!existsSync(root)) throw new Error(`the folder ${rest[0]} does not exist`);
       const result = lintWorkflowTree(root, { family, strict: flags.has('--strict'), name: rest[0] });
       for (const f of result.files) console.log(`  · ${f}`);
       for (const w of result.warnings) console.warn(`⚠ ${w}`);
       if (result.errors.length) {
-        throw new Error('WORKFLOW.md ausente o mal formado (ERPlora/pm#621):\n  - ' + result.errors.join('\n  - '));
+        throw new Error('WORKFLOW.md missing or malformed (ERPlora/pm#621):\n  - ' + result.errors.join('\n  - '));
       }
       console.log(
-        `✓ workflow-lint${family ? ` ${family}` : ''}: ${result.files.length} fichero(s), ${result.flows.length} flujo(s)`,
+        `✓ workflow-lint${family ? ` ${family}` : ''}: ${result.files.length} file(s), ${result.flows.length} flow(s)`,
       );
       break;
     }
