@@ -1,0 +1,66 @@
+# The WORKFLOW.md lint, as a step the components that are NOT modules can run (ERPlora/pm#621).
+#
+# WHY AN ACTION. Every component of ERPlora carries a `WORKFLOW.md` — its functional spec, read by
+# workers, reviewers and QA before touching it, and cross-checked between components by the `pm`
+# index (`workflow-index.sh`). The index only trusts files that follow ONE grammar. A module gets
+# the check from `erplora validate` (the `validate-module` action); the hub, the SaaS, the fiscal
+# gateway and `architecture/workflows/` have no `module.json`, so they call `erplora workflow-lint`
+# through this action instead — same lint, same messages.
+#
+# WHY NO TOKEN AND NO INSTALL. Same door as `check-canonical-mirrors`: GitHub resolves a composite
+# action of this repository WITHOUT a credential (its Actions are shared with the organization),
+# and resolving it puts the whole toolkit on the runner. The lint is Node builtins only, so nothing
+# is installed: `test/workflow-lint-cli.test.mjs` runs it from a bare checkout with no
+# node_modules, and refuses any package install in this file.
+#
+# SEVERITY. A malformed WORKFLOW.md fails the step: `<file>:<line>: <code>: <text>`, with the
+# stable codes of architecture/contracts/workflow-contract.md. A repository with none yet only warns
+# (`workflow_missing`) unless `strict: 'true'`: the migration is open.
+name: Lint the WORKFLOW.md files
+description: >
+  Fails when a WORKFLOW.md under `path` (or, with `family: REC`, a `workflows/*.md` journey) breaks
+  the grammar of ERPlora/pm#621, or carries a prefix outside `family`.
+
+inputs:
+  path:
+    description: Folder to walk (node_modules, target, dist and .git are skipped).
+    required: false
+    default: '.'
+  family:
+    description: >
+      The prefix family every file must belong to: HUB, SAAS, VFGW, or REC for the cross-component
+      journeys of `architecture/workflows/`. Empty = any prefix.
+    required: false
+    default: ''
+  strict:
+    description: >
+      'true' turns a missing WORKFLOW.md (`workflow_missing`) into an error. Off while the migration
+      is open (architecture/contracts/workflow-contract.md §5.5).
+    required: false
+    default: 'false'
+  node-version:
+    description: Node version used to run the lint.
+    required: false
+    default: '22'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: The WORKFLOW.md files follow the grammar
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        WORKFLOW_PATH: ${{ inputs.path }}
+        WORKFLOW_FAMILY: ${{ inputs.family }}
+        WORKFLOW_STRICT: ${{ inputs.strict }}
+      run: |
+        set -euo pipefail
+        toolkit=$(cd "$ACTION_PATH/../../.." && pwd)
+        args=()
+        if [ -n "$WORKFLOW_FAMILY" ]; then args+=(--family "$WORKFLOW_FAMILY"); fi
+        if [ "$WORKFLOW_STRICT" = 'true' ]; then args+=(--strict); fi
+        node "$toolkit/bin/erplora.mjs" workflow-lint "$WORKFLOW_PATH" ${args[@]+"${args[@]}"}
