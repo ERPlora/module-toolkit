@@ -47,6 +47,7 @@ import { checkDeadFilters } from './validate-dead-filters.mjs';
 import { checkBatteryMigrations } from './validate-battery-migrations.mjs';
 import { checkOutfitkitFloor } from './validate-outfitkit-floor.mjs';
 import { checkFlows } from './validate-flows.mjs';
+import { checkWorkflowDoc } from './validate-workflow-doc.mjs';
 import { readHubOutfitkit } from './hub-outfitkit-source.mjs';
 
 // Validación CSP: el bundle no puede usar eval/new Function (los bloquea `script-src 'self'`).
@@ -386,6 +387,17 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
   for (const w of errorsCatalog.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (errorsCatalog.errors.length) {
     throw new Error('catálogo de códigos de error de dominio roto (ADR-0398):\n  - ' + errorsCatalog.errors.join('\n  - '));
+  }
+
+  // ERPlora/pm#621: the module's WORKFLOW.md — its functional spec, read by workers, reviewers
+  // and QA before touching it, and cross-checked between components by the `pm` index. That index
+  // only trusts files that follow ONE grammar, so the grammar is checked here. Not to be confused
+  // with `checkFlows` above (automations). No file yet = warning: the migration is open, and the
+  // 27 module repos run this door by `@main`.
+  const workflowDoc = checkWorkflowDoc(dir, manifest);
+  for (const w of workflowDoc.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
+  if (workflowDoc.errors.length) {
+    throw new Error('WORKFLOW.md mal formado (ERPlora/pm#621):\n  - ' + workflowDoc.errors.join('\n  - '));
   }
 
   // ADR-0127: los contratos consumidos (queries/commands/eventos/slots que la UI usa de otros

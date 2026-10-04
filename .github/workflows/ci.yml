@@ -278,6 +278,7 @@ jobs:
           test/check-hub-battery-pairing.test.mjs
           test/module-neighbours.test.mjs
           test/gate-infra-annotations.test.mjs
+          test/workflow-lint-cli.test.mjs
           test/release-dispatch.test.mjs
           test/scaffold-runs-on-postgres.test.mjs
           test/package-lock-in-sync.test.mjs

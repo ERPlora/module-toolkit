@@ -1,0 +1,203 @@
+// `erplora workflow-lint <dir> [--family HUB|SAAS|VFGW|REC]` (ERPlora/pm#621).
+//
+// The same WORKFLOW.md lint `erplora validate` runs on a module, for the components that are NOT
+// modules and have no `module.json`: the hub, the SaaS, the fiscal gateway, and the
+// cross-component journeys of `architecture/workflows/`. It walks every WORKFLOW.md under <dir>
+// (skipping node_modules, target, dist, .git), checks the prefix belongs to the family, and exits
+// 1 on any error. These tests spawn the real bin, the way their CI will.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { join, dirname } from 'node:path';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const BIN = join(ROOT, 'bin', 'erplora.mjs');
+
+/** A minimal valid document for `prefix`. */
+function doc(prefix, { scope = 'transversal', flowId = `${prefix}-F01` } = {}) {
+  return [
+    `# WORKFLOW — ${prefix}`,
+    '',
+    `Prefijo: ${prefix}`,
+    `Alcance MVP: ${scope}`,
+    '',
+    '## Pantallas',
+    'Ninguna propia.',
+    '',
+    '## Flujos',
+    '',
+    `### ${flowId} Hacer algo`,
+    'Estado: hecho',
+    'Actor: encargado',
+    'Pantalla: ninguna',
+    'Pasos:',
+    '1. Empieza.',
+    'Entra: nada.',
+    'Sale: nada.',
+    'Si falla: lo ve en pantalla.',
+    'Implicados: ninguno',
+    'QA: ninguno',
+    '',
+  ].join('\n');
+}
+
+/** A temporary tree: `{ 'apps/web/WORKFLOW.md': text, … }`. */
+function tree(files) {
+  const dir = mkdtempSync(join(tmpdir(), 'erplora-wflint-'));
+  for (const [rel, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, rel)), { recursive: true });
+    writeFileSync(join(dir, rel), text);
+  }
+  return dir;
+}
+
+function run(dir, ...args) {
+  const res = spawnSync(process.execPath, [BIN, 'workflow-lint', dir, ...args], { encoding: 'utf8' });
+  return { status: res.status, out: `${res.stdout}\n${res.stderr}` };
+}
+
+test('PASSES: every WORKFLOW.md of the tree belongs to the family', () => {
+  const dir = tree({ 'WORKFLOW.md': doc('HUB'), 'apps/web/WORKFLOW.md': doc('HUB_SHELL') });
+  try {
+    const { status, out } = run(dir, '--family', 'HUB');
+    assert.equal(status, 0, out);
+    assert.match(out, /WORKFLOW\.md/);
+    assert.match(out, /apps\/web\/WORKFLOW\.md/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS: a WORKFLOW.md whose prefix is of another family', () => {
+  const dir = tree({ 'WORKFLOW.md': doc('HUB'), 'apps/billing/WORKFLOW.md': doc('SAAS_BILLING') });
+  try {
+    const { status, out } = run(dir, '--family=HUB');
+    assert.equal(status, 1, out);
+    assert.match(out, /apps\/billing\/WORKFLOW\.md:\d+: .*`SAAS_BILLING`.*`HUB`/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('FAILS: a malformed WORKFLOW.md, naming the file and the line', () => {
+  const dir = tree({ 'WORKFLOW.md': doc('SAAS', { flowId: 'SAAS-F1' }) });
+  try {
+    const { status, out } = run(dir, '--family', 'SAAS');
+    assert.equal(status, 1, out);
+    assert.match(out, /WORKFLOW\.md:11: .*`SAAS-F1`/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--family REC: validates the *.md of a workflows/ folder, README.md aside', () => {
+  const ok = tree({
+    'workflows/wa-cita.md': doc('REC_WA_CITA'),
+    'workflows/README.md': '# Recorridos\n\nÍndice, sin gramática.\n',
+  });
+  const bad = tree({ 'workflows/wa-mesa.md': doc('HUB') });
+  try {
+    const good = run(ok, '--family', 'REC');
+    assert.equal(good.status, 0, good.out);
+    assert.match(good.out, /workflows\/wa-cita\.md/);
+    assert.doesNotMatch(good.out, /README\.md:/);
+    const wrong = run(bad, '--family', 'REC');
+    assert.equal(wrong.status, 1, wrong.out);
+    assert.match(wrong.out, /workflows\/wa-mesa\.md:\d+: .*`HUB`.*`REC`/);
+  } finally {
+    rmSync(ok, { recursive: true, force: true });
+    rmSync(bad, { recursive: true, force: true });
+  }
+});
+
+test('skips node_modules, target, dist and .git', () => {
+  const broken = 'not a workflow at all\n';
+  const dir = tree({
+    'WORKFLOW.md': doc('HUB'),
+    'node_modules/pkg/WORKFLOW.md': broken,
+    'target/debug/WORKFLOW.md': broken,
+    'dist/WORKFLOW.md': broken,
+    '.git/WORKFLOW.md': broken,
+  });
+  try {
+    const { status, out } = run(dir, '--family', 'HUB');
+    assert.equal(status, 0, out);
+    assert.doesNotMatch(out, /node_modules|target|dist|\.git\//);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the same flow ID in two WORKFLOW.md of the tree is an error', () => {
+  const dir = tree({ 'WORKFLOW.md': doc('HUB'), 'crates/x/WORKFLOW.md': doc('HUB') });
+  try {
+    const { status, out } = run(dir, '--family', 'HUB');
+    assert.equal(status, 1, out);
+    assert.match(out, /`HUB-F01`/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a tree with no WORKFLOW.md is a warning, not a failure (the migration is open)', () => {
+  const dir = tree({ 'README.md': '# nada\n' });
+  try {
+    const { status, out } = run(dir, '--family', 'HUB');
+    assert.equal(status, 0, out);
+    assert.match(out, /⚠.*WORKFLOW\.md/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an invalid --family is refused before reading anything', () => {
+  const dir = tree({ 'WORKFLOW.md': doc('HUB') });
+  try {
+    const { status, out } = run(dir, '--family', 'hub');
+    assert.equal(status, 2, out);
+    assert.match(out, /--family/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// The CI of hub, saas, verifactu-gateway and architecture runs this out of a bare checkout of the
+// toolkit, through `.github/actions/workflow-doc`. The lint is Node builtins only, so it must not
+// need ANY installed package — not even the two `validate` needs (`typescript`, `ajv`).
+test('workflow-lint runs from a bare checkout with no node_modules at all', () => {
+  const bare = mkdtempSync(join(tmpdir(), 'erplora-toolkit-nodeps-'));
+  const dir = tree({ 'WORKFLOW.md': doc('VFGW') });
+  try {
+    for (const part of ['bin', 'src']) cpSync(join(ROOT, part), join(bare, part), { recursive: true });
+    cpSync(join(ROOT, 'package.json'), join(bare, 'package.json'));
+    const res = spawnSync(process.execPath, [join(bare, 'bin', 'erplora.mjs'), 'workflow-lint', dir, '--family', 'VFGW'], {
+      encoding: 'utf8',
+      cwd: bare,
+    });
+    const out = `${res.stdout}\n${res.stderr}`;
+    assert.doesNotMatch(out, /ERR_MODULE_NOT_FOUND/, out);
+    assert.equal(res.status, 0, out);
+  } finally {
+    rmSync(bare, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('the workflow-doc action runs this subcommand with its inputs, installing nothing', () => {
+  const action = readFileSync(join(ROOT, '.github/actions/workflow-doc/action.yml'), 'utf8');
+  assert.match(action, /^\s{2}path:/m, 'the folder to walk is an input');
+  assert.match(action, /^\s{2}family:/m, 'the family is an input');
+  assert.match(action, /node "\$toolkit\/bin\/erplora\.mjs" workflow-lint "\$WORKFLOW_PATH"/);
+  assert.match(action, /--family "\$WORKFLOW_FAMILY"/);
+  assert.match(action, /WORKFLOW_PATH: \$\{\{ inputs\.path \}\}/);
+  assert.match(action, /WORKFLOW_FAMILY: \$\{\{ inputs\.family \}\}/);
+  assert.doesNotMatch(action, /npm (install|ci)\b/, 'the lint is builtins only: nothing to install');
+});
+
+test('the usage text lists workflow-lint', () => {
+  const res = spawnSync(process.execPath, [BIN, '--help'], { encoding: 'utf8' });
+  assert.match(res.stdout, /workflow-lint <dir> \[--family HUB\|SAAS\|VFGW\|REC\]/);
+});

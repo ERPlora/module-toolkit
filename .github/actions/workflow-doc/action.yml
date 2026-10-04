@@ -1,0 +1,59 @@
+# The WORKFLOW.md lint, as a step the components that are NOT modules can run (ERPlora/pm#621).
+#
+# WHY AN ACTION. Every component of ERPlora carries a `WORKFLOW.md` — its functional spec, read by
+# workers, reviewers and QA before touching it, and cross-checked between components by the `pm`
+# index (`workflow-index.sh`). The index only trusts files that follow ONE grammar. A module gets
+# the check from `erplora validate` (the `validate-module` action); the hub, the SaaS, the fiscal
+# gateway and `architecture/workflows/` have no `module.json`, so they call `erplora workflow-lint`
+# through this action instead — same lint, same messages.
+#
+# WHY NO TOKEN AND NO INSTALL. Same door as `check-canonical-mirrors`: GitHub resolves a composite
+# action of this repository WITHOUT a credential (its Actions are shared with the organization),
+# and resolving it puts the whole toolkit on the runner. The lint is Node builtins only, so nothing
+# is installed: `test/workflow-lint-cli.test.mjs` runs it from a bare checkout with no
+# node_modules, and refuses any package install in this file.
+#
+# SEVERITY. A malformed WORKFLOW.md fails the step, naming the file and the line. A repository with
+# none yet only warns: the migration is open.
+name: Lint the WORKFLOW.md files
+description: >
+  Fails when a WORKFLOW.md under `path` (or, with `family: REC`, a `workflows/*.md` journey) breaks
+  the grammar of ERPlora/pm#621, or carries a prefix outside `family`.
+
+inputs:
+  path:
+    description: Folder to walk (node_modules, target, dist and .git are skipped).
+    required: false
+    default: '.'
+  family:
+    description: >
+      The prefix family every file must belong to: HUB, SAAS, VFGW, or REC for the cross-component
+      journeys of `architecture/workflows/`. Empty = any prefix.
+    required: false
+    default: ''
+  node-version:
+    description: Node version used to run the lint.
+    required: false
+    default: '22'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Los WORKFLOW.md siguen la gramática
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        WORKFLOW_PATH: ${{ inputs.path }}
+        WORKFLOW_FAMILY: ${{ inputs.family }}
+      run: |
+        set -euo pipefail
+        toolkit=$(cd "$ACTION_PATH/../../.." && pwd)
+        if [ -n "$WORKFLOW_FAMILY" ]; then
+          node "$toolkit/bin/erplora.mjs" workflow-lint "$WORKFLOW_PATH" --family "$WORKFLOW_FAMILY"
+        else
+          node "$toolkit/bin/erplora.mjs" workflow-lint "$WORKFLOW_PATH"
+        fi

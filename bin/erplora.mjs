@@ -14,17 +14,20 @@
 //                              `--list` las enumera sin correrlas (lo que usa el gate compartido)
 //                              `--against-hub [<imagen>]` levanta el kernel REAL y corre contra él
 //                              las baterías `*.hub.test.py|.sh` (module-toolkit#110)
+//   erplora workflow-lint <dir> [--family F]  gramática de los WORKFLOW.md de lo que no es módulo
+//                              (hub, saas, verifactu-gateway, architecture/workflows; pm#621)
 //   erplora contracts <dir>    (re)genera .erplora/contracts.json
 //   erplora pack|sign|publish  empaquetado/firma/publicación al marketplace (§7.4)
 //
-// Only `validate` is imported statically. The rest of the commands are loaded ON DEMAND because
-// they pull heavy third-party packages (esbuild, lit, @ionic/core, @iconify) that the CI gate of
-// the module repos does not — and cannot — install: three of this package's (dev) dependencies are
-// `file:` paths into sibling checkouts (`../hub/...`, `../outfitkit`) that do not exist on a
-// runner, so a plain `npm install` cannot link them and the gate installs the public ones by hand
-// (ERPlora/pm#107). Loading `build.mjs` just to run `validate` made the CLI die with
-// `ERR_MODULE_NOT_FOUND: esbuild` before parsing a single argument.
-import { validate } from '../src/validate.mjs';
+// Every command is loaded ON DEMAND: most pull heavy third-party packages (esbuild, lit,
+// @ionic/core, @iconify) that the CI gate of the module repos does not — and cannot — install:
+// three of this package's (dev) dependencies are `file:` paths into sibling checkouts
+// (`../hub/...`, `../outfitkit`) that do not exist on a runner, so a plain `npm install` cannot
+// link them and the gate installs the public ones by hand (ERPlora/pm#107). Loading `build.mjs`
+// just to run `validate` made the CLI die with `ERR_MODULE_NOT_FOUND: esbuild` before parsing a
+// single argument. `validate` itself needs `typescript` and `ajv`, so it is loaded on demand too:
+// `workflow-lint` is Node builtins only and runs from a bare checkout with nothing installed
+// (ERPlora/pm#621).
 import { parseAgainstHub } from '../src/against-hub.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -63,6 +66,17 @@ if (okAt !== -1) {
     process.exit(1);
   }
 }
+// `--family <PREFIX>` (`workflow-lint`, ERPlora/pm#621) takes a value too, consumed the same way.
+let family;
+const familyAt = argv.findIndex((a) => a === '--family' || a.startsWith('--family='));
+if (familyAt !== -1) {
+  const [flag, value] = argv.splice(familyAt, argv[familyAt] === '--family' ? 2 : 1);
+  family = flag === '--family' ? value : flag.slice('--family='.length);
+  if (!/^[A-Z][A-Z0-9_]*$/.test(family ?? '')) {
+    console.error(`✗ --family needs a prefix family in upper case (HUB, SAAS, VFGW, REC), got «${family ?? ''}»`);
+    process.exit(2);
+  }
+}
 const againstHub = parseAgainstHub(argv, { positionals: true });
 // Flags are separated from positional args so `erplora validate <dir> --pg` works in any order.
 const flags = new Set(againstHub.positionals.filter((a) => a.startsWith('--')));
@@ -89,6 +103,10 @@ const usage = () => {
   build <dir> --check [--sdk <d>] rebuilds aside and fails if dist/<id>.esm.js differs
   validate <dir> [--pg]          valida el manifest + CSP del bundle + contratos (ADR-0127);
                                  con --pg, además PREPARA cada SQL contra un Postgres efímero
+  workflow-lint <dir> [--family HUB|SAAS|VFGW|REC]
+                                 valida la gramática de cada WORKFLOW.md bajo <dir> (y sus
+                                 workflow/*.md) para lo que no es módulo; con REC, los
+                                 workflows/*.md de architecture (ERPlora/pm#621)
   test <dir> [--list] [--against-hub [<imagen|digest>]]
                                  corre las baterías propias del módulo (cualquier
                                  tests/**/*.test.py|.sh; las que necesitan Postgres —por nombre
@@ -158,11 +176,30 @@ try {
       break;
     case 'validate':
       need(rest[0], 'falta la ruta del módulo');
-      await validate(target(rest[0]), { pg: flags.has('--pg') });
+      await (await import('../src/validate.mjs')).validate(target(rest[0]), { pg: flags.has('--pg') });
       break;
+    case 'workflow-lint': {
+      // ERPlora/pm#621: the WORKFLOW.md lint `validate` runs on a module, for the components that
+      // have no `module.json` (hub, saas, verifactu-gateway, architecture/workflows). Node builtins
+      // only, like `validate`: their CI runs it straight out of this repository.
+      need(rest[0], 'falta la carpeta que recorrer');
+      const { lintWorkflowTree } = await import('../src/validate-workflow-doc.mjs');
+      const root = resolve(rest[0]);
+      if (!existsSync(root)) throw new Error(`no existe la carpeta ${rest[0]}`);
+      const result = lintWorkflowTree(root, { family });
+      for (const f of result.files) console.log(`  · ${f}`);
+      for (const w of result.warnings) console.warn(`⚠ ${w}`);
+      if (result.errors.length) {
+        throw new Error('WORKFLOW.md mal formado (ERPlora/pm#621):\n  - ' + result.errors.join('\n  - '));
+      }
+      console.log(
+        `✓ workflow-lint${family ? ` ${family}` : ''}: ${result.files.length} fichero(s), ${result.flows.length} flujo(s)`,
+      );
+      break;
+    }
     case 'test': {
-      // module-toolkit#50: the batteries the module ALREADY carries. Statically imported like
-      // `validate` — it pulls nothing but node builtins, and the gate runs it on a runner where
+      // module-toolkit#50: the batteries the module ALREADY carries. Like
+      // `workflow-lint`, it pulls nothing but node builtins, and the gate runs it on a runner where
       // `npm install` is impossible.
       need(rest[0], 'falta la ruta del módulo');
       const dir = target(rest[0]);
