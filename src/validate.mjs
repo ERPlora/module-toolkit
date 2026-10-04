@@ -118,7 +118,7 @@ export function checkFiscalRegime(manifest) {
   return errs;
 }
 
-export async function validate(moduleDir, { pg = false, publishing = false } = {}) {
+export async function validate(moduleDir, { pg = false, publishing = false, strict = false } = {}) {
   const dir = resolve(process.cwd(), moduleDir);
   const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
 
@@ -392,12 +392,13 @@ export async function validate(moduleDir, { pg = false, publishing = false } = {
   // ERPlora/pm#621: the module's WORKFLOW.md — its functional spec, read by workers, reviewers
   // and QA before touching it, and cross-checked between components by the `pm` index. That index
   // only trusts files that follow ONE grammar, so the grammar is checked here. Not to be confused
-  // with `checkFlows` above (automations). No file yet = warning: the migration is open, and the
-  // 27 module repos run this door by `@main`.
-  const workflowDoc = checkWorkflowDoc(dir, manifest);
+  // with `checkFlows` above (automations). No file yet = warning (`workflow_missing`): the
+  // migration is open, and the 27 module repos run this door by `@main`; `strict` makes it an error.
+  // The grammar and its codes: architecture/contracts/workflow-contract.md.
+  const workflowDoc = checkWorkflowDoc(dir, manifest, { strict });
   for (const w of workflowDoc.warnings) console.warn(`⚠ ${manifest.id}: ${w}`);
   if (workflowDoc.errors.length) {
-    throw new Error('WORKFLOW.md mal formado (ERPlora/pm#621):\n  - ' + workflowDoc.errors.join('\n  - '));
+    throw new Error('WORKFLOW.md ausente o mal formado (ERPlora/pm#621):\n  - ' + workflowDoc.errors.join('\n  - '));
   }
 
   // ADR-0127: los contratos consumidos (queries/commands/eventos/slots que la UI usa de otros

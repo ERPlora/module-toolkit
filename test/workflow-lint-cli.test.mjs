@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'bin', 'erplora.mjs');
 
-/** A minimal valid document for `prefix`. */
+/** A minimal valid document for `prefix`: the ten sections of the contract, in order. */
 function doc(prefix, { scope = 'transversal', flowId = `${prefix}-F01` } = {}) {
   return [
     `# WORKFLOW — ${prefix}`,
@@ -24,14 +24,14 @@ function doc(prefix, { scope = 'transversal', flowId = `${prefix}-F01` } = {}) {
     `Prefijo: ${prefix}`,
     `Alcance MVP: ${scope}`,
     '',
+    '## Para qué sirve y para quién',
+    '## Referencia adoptada',
+    '## Antes de empezar',
     '## Pantallas',
-    'Ninguna propia.',
-    '',
     '## Flujos',
-    '',
     `### ${flowId} Hacer algo`,
     'Estado: hecho',
-    'Actor: encargado',
+    'Actor: responsable',
     'Pantalla: ninguna',
     'Pasos:',
     '1. Empieza.',
@@ -40,6 +40,12 @@ function doc(prefix, { scope = 'transversal', flowId = `${prefix}-F01` } = {}) {
     'Si falla: lo ve en pantalla.',
     'Implicados: ninguno',
     'QA: ninguno',
+    '',
+    '## Cobertura contra la referencia',
+    '## Datos: de quién es cada dato',
+    '## Reglas que no se rompen',
+    '## Lo que NO hace, a propósito',
+    '## Dudas abiertas',
     '',
   ].join('\n');
 }
@@ -76,7 +82,7 @@ test('FAILS: a WORKFLOW.md whose prefix is of another family', () => {
   try {
     const { status, out } = run(dir, '--family=HUB');
     assert.equal(status, 1, out);
-    assert.match(out, /apps\/billing\/WORKFLOW\.md:\d+: .*`SAAS_BILLING`.*`HUB`/);
+    assert.match(out, /apps\/billing\/WORKFLOW\.md:3: family_mismatch: .*`SAAS_BILLING`.*`HUB`/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -87,13 +93,13 @@ test('FAILS: a malformed WORKFLOW.md, naming the file and the line', () => {
   try {
     const { status, out } = run(dir, '--family', 'SAAS');
     assert.equal(status, 1, out);
-    assert.match(out, /WORKFLOW\.md:11: .*`SAAS-F1`/);
+    assert.match(out, /WORKFLOW\.md:11: flow_header_malformed: .*SAAS-F1/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('--family REC: validates the *.md of a workflows/ folder, README.md aside', () => {
+test('--family REC: validates the *.md of the root workflows/ folder, README.md aside', () => {
   const ok = tree({
     'workflows/wa-cita.md': doc('REC_WA_CITA'),
     'workflows/README.md': '# Recorridos\n\nÍndice, sin gramática.\n',
@@ -106,7 +112,7 @@ test('--family REC: validates the *.md of a workflows/ folder, README.md aside',
     assert.doesNotMatch(good.out, /README\.md:/);
     const wrong = run(bad, '--family', 'REC');
     assert.equal(wrong.status, 1, wrong.out);
-    assert.match(wrong.out, /workflows\/wa-mesa\.md:\d+: .*`HUB`.*`REC`/);
+    assert.match(wrong.out, /workflows\/wa-mesa\.md:3: rec_prefix_misplaced: /);
   } finally {
     rmSync(ok, { recursive: true, force: true });
     rmSync(bad, { recursive: true, force: true });
@@ -131,23 +137,57 @@ test('skips node_modules, target, dist and .git', () => {
   }
 });
 
-test('the same flow ID in two WORKFLOW.md of the tree is an error', () => {
+test('two WORKFLOW.md of the tree with the same prefix: prefix_duplicated (level 3, same code as the index)', () => {
   const dir = tree({ 'WORKFLOW.md': doc('HUB'), 'crates/x/WORKFLOW.md': doc('HUB') });
   try {
     const { status, out } = run(dir, '--family', 'HUB');
     assert.equal(status, 1, out);
-    assert.match(out, /`HUB-F01`/);
+    assert.match(out, /crates\/x\/WORKFLOW\.md:3: prefix_duplicated: /);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('a tree with no WORKFLOW.md is a warning, not a failure (the migration is open)', () => {
+test('a REC_ prefix outside architecture/workflows: rec_prefix_misplaced', () => {
+  const dir = tree({ 'WORKFLOW.md': doc('REC_CITAS') });
+  try {
+    const { status, out } = run(dir);
+    assert.equal(status, 1, out);
+    assert.match(out, /WORKFLOW\.md:3: rec_prefix_misplaced: /);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a workflow/*.md with no WORKFLOW.md next to its folder: orphan_subfile', () => {
+  const detail = ['Prefijo: HUB_SHELL', '', '## Flujos', ''].join('\n');
+  const dir = tree({ 'WORKFLOW.md': doc('HUB'), 'apps/web/workflow/caja.md': detail });
+  try {
+    const { status, out } = run(dir, '--family', 'HUB');
+    assert.equal(status, 1, out);
+    assert.match(out, /apps\/web\/workflow\/caja\.md:1: orphan_subfile: /);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a tree with no WORKFLOW.md at its root: warning workflow_missing (the migration is open)', () => {
   const dir = tree({ 'README.md': '# nada\n' });
   try {
     const { status, out } = run(dir, '--family', 'HUB');
     assert.equal(status, 0, out);
-    assert.match(out, /⚠.*WORKFLOW\.md/);
+    assert.match(out, /⚠ .*workflow_missing: /);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--strict: the same missing WORKFLOW.md is an error', () => {
+  const dir = tree({ 'README.md': '# nada\n' });
+  try {
+    const { status, out } = run(dir, '--family', 'HUB', '--strict');
+    assert.equal(status, 1, out);
+    assert.match(out, /workflow_missing: /);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -190,6 +230,8 @@ test('the workflow-doc action runs this subcommand with its inputs, installing n
   const action = readFileSync(join(ROOT, '.github/actions/workflow-doc/action.yml'), 'utf8');
   assert.match(action, /^\s{2}path:/m, 'the folder to walk is an input');
   assert.match(action, /^\s{2}family:/m, 'the family is an input');
+  assert.match(action, /^\s{2}strict:/m, 'strict mode is an input, off by default');
+  assert.match(action, /--strict/);
   assert.match(action, /node "\$toolkit\/bin\/erplora\.mjs" workflow-lint "\$WORKFLOW_PATH"/);
   assert.match(action, /--family "\$WORKFLOW_FAMILY"/);
   assert.match(action, /WORKFLOW_PATH: \$\{\{ inputs\.path \}\}/);
@@ -199,5 +241,6 @@ test('the workflow-doc action runs this subcommand with its inputs, installing n
 
 test('the usage text lists workflow-lint', () => {
   const res = spawnSync(process.execPath, [BIN, '--help'], { encoding: 'utf8' });
-  assert.match(res.stdout, /workflow-lint <dir> \[--family HUB\|SAAS\|VFGW\|REC\]/);
+  assert.match(res.stdout, /workflow-lint <dir> \[--family HUB\|SAAS\|VFGW\|REC\] \[--strict\]/);
+  assert.match(res.stdout, /validate <dir> \[--pg\] \[--strict\]/);
 });

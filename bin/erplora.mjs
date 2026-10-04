@@ -14,7 +14,7 @@
 //                              `--list` las enumera sin correrlas (lo que usa el gate compartido)
 //                              `--against-hub [<imagen>]` levanta el kernel REAL y corre contra él
 //                              las baterías `*.hub.test.py|.sh` (module-toolkit#110)
-//   erplora workflow-lint <dir> [--family F]  gramática de los WORKFLOW.md de lo que no es módulo
+//   erplora workflow-lint <dir> [--family F] [--strict]  gramática de los WORKFLOW.md de lo que no es módulo
 //                              (hub, saas, verifactu-gateway, architecture/workflows; pm#621)
 //   erplora contracts <dir>    (re)genera .erplora/contracts.json
 //   erplora pack|sign|publish  empaquetado/firma/publicación al marketplace (§7.4)
@@ -101,12 +101,15 @@ const usage = () => {
   dev <dir>                      preview del módulo con datos mock (CSP-safe)
   build <dir> [--sdk <d>] [--outfitkit <v>]  builds the Web Component → dist/<id>.esm.js (baking THAT SDK / OutfitKit)
   build <dir> --check [--sdk <d>] rebuilds aside and fails if dist/<id>.esm.js differs
-  validate <dir> [--pg]          valida el manifest + CSP del bundle + contratos (ADR-0127);
-                                 con --pg, además PREPARA cada SQL contra un Postgres efímero
-  workflow-lint <dir> [--family HUB|SAAS|VFGW|REC]
+  validate <dir> [--pg] [--strict]
+                                 valida el manifest + CSP del bundle + contratos (ADR-0127);
+                                 con --pg, además PREPARA cada SQL contra un Postgres efímero;
+                                 con --strict, un módulo sin WORKFLOW.md es error (pm#621)
+  workflow-lint <dir> [--family HUB|SAAS|VFGW|REC] [--strict]
                                  valida la gramática de cada WORKFLOW.md bajo <dir> (y sus
                                  workflow/*.md) para lo que no es módulo; con REC, los
-                                 workflows/*.md de architecture (ERPlora/pm#621)
+                                 workflows/*.md de architecture. Contrato y códigos:
+                                 architecture/contracts/workflow-contract.md (ERPlora/pm#621)
   test <dir> [--list] [--against-hub [<imagen|digest>]]
                                  corre las baterías propias del módulo (cualquier
                                  tests/**/*.test.py|.sh; las que necesitan Postgres —por nombre
@@ -176,7 +179,7 @@ try {
       break;
     case 'validate':
       need(rest[0], 'falta la ruta del módulo');
-      await (await import('../src/validate.mjs')).validate(target(rest[0]), { pg: flags.has('--pg') });
+      await (await import('../src/validate.mjs')).validate(target(rest[0]), { pg: flags.has('--pg'), strict: flags.has('--strict') });
       break;
     case 'workflow-lint': {
       // ERPlora/pm#621: the WORKFLOW.md lint `validate` runs on a module, for the components that
@@ -186,11 +189,11 @@ try {
       const { lintWorkflowTree } = await import('../src/validate-workflow-doc.mjs');
       const root = resolve(rest[0]);
       if (!existsSync(root)) throw new Error(`no existe la carpeta ${rest[0]}`);
-      const result = lintWorkflowTree(root, { family });
+      const result = lintWorkflowTree(root, { family, strict: flags.has('--strict'), name: rest[0] });
       for (const f of result.files) console.log(`  · ${f}`);
       for (const w of result.warnings) console.warn(`⚠ ${w}`);
       if (result.errors.length) {
-        throw new Error('WORKFLOW.md mal formado (ERPlora/pm#621):\n  - ' + result.errors.join('\n  - '));
+        throw new Error('WORKFLOW.md ausente o mal formado (ERPlora/pm#621):\n  - ' + result.errors.join('\n  - '));
       }
       console.log(
         `✓ workflow-lint${family ? ` ${family}` : ''}: ${result.files.length} fichero(s), ${result.flows.length} flujo(s)`,

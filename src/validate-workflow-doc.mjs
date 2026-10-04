@@ -2,16 +2,19 @@
 //
 // Every component of ERPlora carries a versioned `WORKFLOW.md`: its functional spec — screens,
 // flows, and which flows of OTHER components each flow touches (`Implicados:`). Workers, reviewers
-// and QA read it before touching the component, and the `pm` index (`workflow-index.sh`)
-// cross-checks the references between components. The index can only trust what it reads if every
-// file follows ONE grammar (PROMPT-WORKFLOW.md, «Reglas de la gramática»;
-// `architecture/contracts/workflow-contract.md`), so the grammar is checked here, one component at
-// a time: format and internal coherence. Whether a referenced flow EXISTS in another repo and names
-// this one back is the index's job — this lint never reads another component.
+// and QA read it before touching the component.
+//
+// THE CONTRACT. The grammar is not defined here: it is `architecture/contracts/workflow-contract.md`
+// (§5), shared with the second validator, `workflow-index.sh` (awk, ERPlora/pm). Every finding
+// carries one of the contract's stable codes, and two validators agree when they emit the same SET
+// of `(code, flow ID)` pairs. If this file and the contract disagree, this file is wrong. Levels 1
+// (one file) and 2 (one component) are implemented; of level 3 (the whole set) only
+// `prefix_duplicated`, for the trees `erplora workflow-lint` walks — reciprocity across repos is
+// the index's job.
 //
 // Severity. The 27 module repos run this toolkit by `@main`, unversioned: what merges reaches all
-// of them at once. So a component WITHOUT the file is a warning (the migration is open), and a file
-// that is there and malformed is an error. Same split as the domain-error catalog (ADR-0398 §5).
+// of them at once. So a component WITHOUT the file is a warning (`workflow_missing`; the migration
+// is open) unless `strict`, and a file that is there and malformed is an error.
 //
 // Naming. «flows» in this repository already means automations (`validate-flows.mjs`,
 // `flows/*.flow.json`). This is the `workflow-doc`, everywhere.
@@ -19,238 +22,274 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const WORKFLOW_FILE = 'WORKFLOW.md';
-/** Above this, WORKFLOW.md stays as an index and the flows move to `workflow/<slug>.md`. */
+/** Above this many lines (as awk counts them) the file should become an index + `workflow/*.md`. */
 export const MAX_LINES = 600;
 
-const PREFIX_RE = /^[A-Z][A-Z0-9_]*$/;
-const FLOW_ID_RE = /^([A-Z][A-Z0-9_]*)-F[0-9][0-9]+$/;
-const SCOPES = ['nucleo', 'restaurante', 'peluqueria', 'transversal', 'fuera del MVP', 'congelado'];
-const STATES = ['hecho', 'parcial', 'no hecho'];
-const KEYS = ['Estado:', 'Actor:', 'Pantalla:', 'Pasos:', 'Entra:', 'Sale:', 'Si falla:', 'Implicados:', 'QA:'];
-/** Free text with conventions: only checked to be there once and not empty. */
-const NON_EMPTY_KEYS = ['Actor:', 'Pantalla:', 'QA:'];
-const PENDING_LINK = 'Pendiente de enlazar:';
-const FLOWS_SECTION_RE = /^## Flujos( — .+)?$/;
+// §5.3, as written there.
+const ID = '[A-Z][A-Z0-9_]*-F[0-9][0-9]+';
+const HEADING_ANY = /^(# |## |### )/;
+const PREFIX_VALID = /^Prefijo: [A-Z][A-Z0-9_]*$/;
+const SCOPE_VALID = /^Alcance MVP: (nucleo|restaurante|peluqueria|transversal|fuera del MVP|congelado)$/;
+const FLOW_HEADER = new RegExp(`^### ${ID}( .*)?$`);
+const FLOW_TITLED = new RegExp(`^### ${ID} .`);
+const RETIRED_HEADER = new RegExp(`^### ${ID} \\[retirado\\]( .*)?$`);
+const RETIRED_TITLED = new RegExp(`^### ${ID} \\[retirado\\] .`);
+const KEY_LINE = /^(Estado|Actor|Pantalla|Pasos|Entra|Sale|Si falla|Implicados|QA):/;
+const STATE_VALID = /^Estado: (hecho|parcial — .+|no hecho — .+)$/;
+const IMPLICATED_VALID = new RegExp(`^Implicados: (ninguno|pendiente|${ID}(, ${ID})*)$`);
+const PENDING_LINE = 'Pendiente de enlazar:';
+const PENDING_VALID = /^Pendiente de enlazar: .+ — .+$/;
+const VERTICAL_LINE = 'Vertical:';
+const VERTICAL_VALID = /^Vertical: (comun|peluqueria|restaurante)$/;
+
+const KEYS = ['Estado', 'Actor', 'Pantalla', 'Pasos', 'Entra', 'Sale', 'Si falla', 'Implicados', 'QA'];
+/** The eleven sections, in canonical order: the first ten are required of a main file. */
+export const SECTIONS = [
+  '## Para qué sirve y para quién',
+  '## Referencia adoptada',
+  '## Antes de empezar',
+  '## Pantallas',
+  '## Flujos',
+  '## Cobertura contra la referencia',
+  '## Datos: de quién es cada dato',
+  '## Reglas que no se rompen',
+  '## Lo que NO hace, a propósito',
+  '## Dudas abiertas',
+  '## Fuentes contrastadas',
+];
+const FLOWS = '## Flujos';
+
+/** `<file>:<line>: <code>: <text>` — the one shape every message has. */
+export function formatFinding(f) {
+  return `${f.file}:${f.line}: ${f.code}: ${f.text}`;
+}
+
+function split(findings) {
+  return {
+    errors: findings.filter((f) => f.level === 'error').map(formatFinding),
+    warnings: findings.filter((f) => f.level === 'warning').map(formatFinding),
+    findings,
+  };
+}
 
 /** Whether `prefix` belongs to `family`: the family itself, or `<FAMILY>_<…>`. */
 export function inFamily(prefix, family) {
   return prefix === family || prefix.startsWith(`${family}_`);
 }
 
-/**
- * The lines that count, with their 1-based number: CRLF tolerated, and whatever sits inside a
- * ``` or ~~~ block dropped (a fenced example is not a header nor a key).
- */
-function liveLines(text) {
-  const out = [];
-  let fence = null;
-  text.split(/\r?\n/).forEach((raw, i) => {
-    const line = raw.replace(/\s+$/, '');
-    const open = /^ {0,3}(`{3,}|~{3,})/.exec(line);
-    if (fence) {
-      if (open && open[1][0] === fence[0] && open[1].length >= fence.length && line.trim() === open[1]) fence = null;
-      return;
-    }
-    if (open) {
-      fence = open[1];
-      return;
-    }
-    out.push({ n: i + 1, line });
-  });
-  return { lines: out, total: text.split(/\r?\n/).length - (/\r?\n$/.test(text) ? 1 : 0) };
-}
+const idPrefix = (id) => id.slice(0, id.indexOf('-'));
 
 /**
- * Lints one file. `expected` is the prefix it must carry (a module's id in upper case, or the main
- * file's prefix for a part); `family` the family it must belong to; `part` marks a
- * `workflow/<slug>.md`, which holds flows and needs neither `Alcance MVP` nor `## Pantallas`.
- * Returns the messages plus what the caller needs to cross-check files: the prefix and the flows.
+ * Level 1: one file. `kind` is `principal` (WORKFLOW.md, or a journey of `architecture/workflows/`)
+ * or `secondary` (`workflow/<slug>.md`); `rec` marks a journey, whose prefix must start with `REC_`
+ * (and nothing else may). Returns the findings, the prefix (only when it is usable: present once
+ * and well formed) and the flows its headers declare.
  */
-export function lintWorkflowFile(text, { file = WORKFLOW_FILE, prefix: expected, family, part = false } = {}) {
-  const errors = [];
-  const warnings = [];
-  const at = (n, msg) => `${file}:${n}: ${msg}`;
-  const { lines, total } = liveLines(text);
+export function lintWorkflowFile(text, { file = WORKFLOW_FILE, kind = 'principal', rec = false } = {}) {
+  const findings = [];
+  const add = (level, code, id, line, msg) => findings.push({ level, code, id, file, line, text: msg });
+  const error = (code, id, line, msg) => add('error', code, id, line, msg);
+
+  // §5.2: normalisation, then code blocks. `awkLines` is what awk reads: a final newline closes the
+  // last record instead of opening an empty one.
+  const raw = text.split('\n');
+  const awkLines = text === '' ? 0 : text.endsWith('\n') ? raw.length - 1 : raw.length;
+  if (awkLines > MAX_LINES) {
+    add('warning', 'file_too_long', '', awkLines, `${awkLines} lines, more than ${MAX_LINES}: keep it as the index and move the flows to \`workflow/<slug>.md\``);
+  }
+  const lines = [];
+  let fence = null;
+  for (let i = 0; i < awkLines; i += 1) {
+    const line = raw[i].replace(/[ \t\r]+$/, '');
+    if (fence) {
+      if (line.startsWith(fence.mark)) fence = null;
+      continue;
+    }
+    if (line.startsWith('```') || line.startsWith('~~~')) {
+      fence = { mark: line.slice(0, 3), n: i + 1 };
+      continue;
+    }
+    lines.push({ n: i + 1, line });
+  }
+  if (fence) {
+    error('code_block_unclosed', '', fence.n, `the \`${fence.mark}\` block opened here is never closed: nothing after it can be read`);
+    return { findings, prefix: null, flows: [] };
+  }
 
   const firstSection = lines.find((l) => l.line.startsWith('## '))?.n ?? Infinity;
-  let prefix = null;
-  let prefixSeen = false;
-  let scopeSeen = false;
-  let screens = false;
-  let flowsSection = false;
-  let inFlows = false;
-  const flows = [];
-  let flow = null;
 
-  const closeFlow = () => {
-    if (!flow) return;
-    // `pendiente` = every link is a `Pendiente de enlazar:` line; `ninguno` = depends on nobody.
-    const links = flow.implicados?.value;
-    if (links === 'pendiente' && !flow.pending.length) {
-      errors.push(at(flow.implicados.n, `flow \`${flow.id}\` says \`Implicados: pendiente\` and has no \`${PENDING_LINK}\` line below`));
-    }
-    if (links === 'ninguno' && flow.pending.length) {
-      errors.push(
-        at(flow.pending[0], `flow \`${flow.id}\`: \`Implicados: ninguno\` admits no \`${PENDING_LINK}\` line (when every link is pending, the value is \`pendiente\`)`),
-      );
-    }
-    if (flow.retired) {
-      if (!flow.keys.has('Implicados:')) {
-        errors.push(at(flow.n, `flow \`${flow.id}\` is [retirado] and has no \`Implicados: ninguno\` line`));
-      }
+  // Prefijo.
+  let prefix = null;
+  const prefixLines = lines.filter((l) => l.line.startsWith('Prefijo:'));
+  if (!prefixLines.length) {
+    error('prefix_missing', '', 1, `no \`Prefijo:\` line before the first \`## \` section`);
+  } else if (prefixLines.length > 1) {
+    error('prefix_repeated', '', prefixLines[1].n, `\`Prefijo:\` appears ${prefixLines.length} times; it goes once, before the first \`## \``);
+  } else {
+    const { n, line } = prefixLines[0];
+    if (n > firstSection) error('prefix_after_section', '', n, '`Prefijo:` has to come before the first `## ` section');
+    if (!PREFIX_VALID.test(line)) {
+      error('prefix_malformed', '', n, `\`${line}\` is not a prefix: upper case, digits and \`_\` (e.g. \`Prefijo: CASH_REGISTER\`)`);
     } else {
-      for (const key of KEYS) {
-        if (!flow.keys.has(key)) errors.push(at(flow.n, `flow \`${flow.id}\` has no \`${key}\` line (every live flow carries all nine keys)`));
+      prefix = line.slice('Prefijo: '.length);
+      if (rec && !prefix.startsWith('REC_')) {
+        error('rec_prefix_misplaced', '', n, `prefix \`${prefix}\`: a journey of \`architecture/workflows/\` carries a \`REC_<SLUG>\` prefix`);
+      } else if (!rec && prefix.startsWith('REC_')) {
+        error('rec_prefix_misplaced', '', n, `prefix \`${prefix}\`: \`REC_\` is reserved to the journeys of \`architecture/workflows/\``);
       }
     }
+  }
+
+  // Alcance MVP.
+  let scope = null;
+  const scopeLines = lines.filter((l) => l.line.startsWith('Alcance MVP:'));
+  if (!scopeLines.length) {
+    if (kind === 'principal') error('scope_missing', '', 1, 'no `Alcance MVP:` line before the first `## ` section');
+  } else if (scopeLines.length > 1) {
+    error('scope_repeated', '', scopeLines[1].n, `\`Alcance MVP:\` appears ${scopeLines.length} times; it goes once`);
+  } else {
+    const { n, line } = scopeLines[0];
+    if (n > firstSection) error('scope_after_section', '', n, '`Alcance MVP:` has to come before the first `## ` section');
+    if (SCOPE_VALID.test(line)) scope = line.slice('Alcance MVP: '.length);
+    else error('scope_malformed', '', n, `\`${line}\` is not a scope: nucleo, restaurante, peluqueria, transversal, fuera del MVP or congelado (no accents)`);
+  }
+
+  // Sections: exact equality, the required ones of the class, none twice, canonical order.
+  const seen = new Map();
+  for (const { n, line } of lines) {
+    if (!SECTIONS.includes(line)) continue;
+    if (seen.has(line)) error('section_repeated', '', n, `\`${line}\` appears twice`);
+    else seen.set(line, n);
+  }
+  const required =
+    kind === 'secondary' ? [FLOWS] : scope === 'congelado' ? [SECTIONS[0]] : SECTIONS.slice(0, 10);
+  for (const section of required) {
+    if (!seen.has(section)) error('section_missing', '', 1, `no \`${section}\` section (exact title)`);
+  }
+  const order = [...seen.entries()].sort((a, b) => a[1] - b[1]).map(([s]) => SECTIONS.indexOf(s));
+  const outOfOrder = order.findIndex((idx, i) => i > 0 && idx < order[i - 1]);
+  if (outOfOrder !== -1) {
+    const [section, n] = [...seen.entries()].sort((a, b) => a[1] - b[1])[outOfOrder];
+    error('section_out_of_order', '', n, `\`${section}\` is out of the canonical order of the sections`);
+  }
+
+  // Flows.
+  const flows = [];
+  let inFlows = false;
+  let flow = null;
+  const close = () => {
+    if (flow) lintFlow(flow, prefix, error);
     flow = null;
   };
-
   for (const { n, line } of lines) {
-    if (/^#{1,3} /.test(line)) closeFlow();
+    if (HEADING_ANY.test(line)) {
+      close();
+      if (line.startsWith('## ')) {
+        inFlows = line === FLOWS;
+        continue;
+      }
+      if (!line.startsWith('### ')) continue;
+      if (!FLOW_HEADER.test(line)) {
+        if (inFlows) error('flow_header_malformed', '', n, `\`${line}\` in \`## Flujos\` is not a flow header (\`### <PREFIJO>-F<nn> <título>\`)`);
+        continue;
+      }
+      const id = line.split(' ')[1];
+      if (!inFlows) {
+        error('flow_header_outside_flows', id, n, `flow \`${id}\` sits outside the \`## Flujos\` section`);
+        continue;
+      }
+      const retired = RETIRED_HEADER.test(line);
+      if (!(retired ? RETIRED_TITLED : FLOW_TITLED).test(line)) error('flow_title_missing', id, n, `flow \`${id}\` has no title`);
+      if (prefix && idPrefix(id) !== prefix) error('flow_prefix_mismatch', id, n, `flow \`${id}\` does not carry the file prefix \`${prefix}\``);
+      const first = flows.find((f) => f.id === id);
+      if (first) error('flow_id_repeated', id, n, `flow \`${id}\` is already declared at line ${first.line} (a number is never reused)`);
+      flows.push({ id, line: n, file, retired });
+      flow = { id, n, retired, lines: [] };
+      continue;
+    }
+    if (flow) flow.lines.push({ n, line });
+  }
+  close();
 
-    if (line.startsWith('## ')) {
-      inFlows = FLOWS_SECTION_RE.test(line);
-      if (inFlows) flowsSection = true;
-      if (line === '## Pantallas') screens = true;
-      continue;
-    }
+  return { findings, prefix, flows };
+}
 
-    if (line.startsWith('### ')) {
-      const [, token = '', third = ''] = line.split(' ');
-      const looksLikeFlow = /^[A-Z][A-Z0-9_]*-F[0-9]/.test(token);
-      if (!looksLikeFlow) {
-        if (inFlows) errors.push(at(n, `\`${line}\` is not a flow header (\`### <PREFIJO>-F<nn> <título>\`)`));
-        continue;
-      }
-      const id = FLOW_ID_RE.exec(token);
-      if (!id) {
-        errors.push(at(n, `\`${token}\` is not a flow ID: \`<PREFIJO>-F<nn>\`, with two digits at least`));
-        continue;
-      }
-      if (!inFlows) errors.push(at(n, `flow \`${token}\` sits outside a \`## Flujos\` section`));
-      const own = prefix ?? (expected && PREFIX_RE.test(expected) ? expected : null);
-      if (own && id[1] !== own) errors.push(at(n, `flow \`${token}\` does not carry the file prefix \`${own}\``));
-      flow = { id: token, n, retired: third === '[retirado]', keys: new Set(), implicados: null, pending: [] };
-      flows.push({ id: token, n, file });
-      continue;
-    }
+/** The rules of one flow block (§5.4), reported through `error(code, id, line, text)`. */
+function lintFlow(flow, prefix, error) {
+  const { id } = flow;
+  const keyLines = (key) => flow.lines.filter((l) => KEY_LINE.test(l.line) && l.line.slice(0, l.line.indexOf(':')) === key);
+  const pending = flow.lines.filter((l) => l.line.startsWith(PENDING_LINE));
 
-    if (line.startsWith('Prefijo:')) {
-      if (prefixSeen) {
-        errors.push(at(n, '`Prefijo:` appears more than once (it goes once, before the first `## `)'));
-        continue;
-      }
-      prefixSeen = true;
-      if (n > firstSection) errors.push(at(n, '`Prefijo:` has to come before the first `## ` section'));
-      const value = line.slice('Prefijo:'.length).trim();
-      if (!/^Prefijo: [A-Z][A-Z0-9_]*$/.test(line)) {
-        errors.push(at(n, `\`${line}\` is not a prefix: upper case, digits and \`_\` (e.g. \`Prefijo: CASH_REGISTER\`)`));
-        continue;
-      }
-      prefix = value;
-      if (expected && value !== expected) {
-        errors.push(at(n, `prefix \`${value}\` is not this component's (expected \`${expected}\`)`));
-      } else if (family && !inFamily(value, family)) {
-        errors.push(at(n, `prefix \`${value}\` is not of the \`${family}\` family (expected \`${family}\` or \`${family}_<…>\`)`));
-      }
-      continue;
+  if (flow.retired) {
+    const impl = keyLines('Implicados');
+    if (impl.length !== 1 || impl[0].line !== 'Implicados: ninguno' || pending.length) {
+      error('retired_malformed', id, (impl[0] ?? pending[0])?.n ?? flow.n,
+        `flow \`${id}\` is [retirado]: exactly one \`Implicados: ninguno\` and no \`${PENDING_LINE}\` line`);
     }
+    return;
+  }
 
-    if (line.startsWith('Alcance MVP:')) {
-      if (scopeSeen) {
-        errors.push(at(n, '`Alcance MVP:` appears more than once'));
-        continue;
-      }
-      scopeSeen = true;
-      if (!SCOPES.some((s) => line === `Alcance MVP: ${s}`)) {
-        errors.push(at(n, `\`${line}\` is not a scope: one of ${SCOPES.map((s) => `\`${s}\``).join(', ')}`));
-      }
-      continue;
-    }
+  const byKey = Object.fromEntries(KEYS.map((k) => [k, keyLines(k)]));
+  for (const key of KEYS) {
+    if (!byKey[key].length) error('key_missing', id, flow.n, `flow \`${id}\` has no \`${key}:\` line (every live flow carries the nine keys)`);
+    else if (byKey[key].length > 1) error('key_repeated', id, byKey[key][1].n, `flow \`${id}\` repeats \`${key}:\` (each key goes once)`);
+  }
+  const firsts = KEYS.filter((k) => byKey[k].length).sort((a, b) => byKey[a][0].n - byKey[b][0].n);
+  const present = KEYS.filter((k) => byKey[k].length);
+  const wrong = firsts.findIndex((k, i) => k !== present[i]);
+  if (wrong !== -1) {
+    error('key_out_of_order', id, byKey[firsts[wrong]][0].n,
+      `flow \`${id}\`: the keys go in the order ${KEYS.map((k) => `\`${k}:\``).join(', ')}`);
+  }
 
-    if (!flow) continue;
-    if (line.startsWith(PENDING_LINK)) {
-      flow.pending.push(n);
-      continue;
-    }
-    const key = KEYS.find((k) => line.startsWith(k));
-    if (!key) continue;
-    if (flow.keys.has(key)) {
-      errors.push(at(n, `flow \`${flow.id}\` repeats \`${key}\` (each key goes once)`));
-      continue;
-    }
-    flow.keys.add(key);
-    const value = line.slice(key.length).trim();
-    if (key === 'Estado:' && !STATES.some((s) => value === s || value.startsWith(`${s} `))) {
-      errors.push(at(n, `\`${line}\` is not a state: it starts with \`hecho\`, \`parcial\` or \`no hecho\``));
-    }
-    if (NON_EMPTY_KEYS.includes(key) && !value) {
-      errors.push(at(n, `flow \`${flow.id}\`: \`${key}\` is empty (free text, but never empty)`));
-    }
-    if (key === 'Implicados:') {
-      flow.implicados = { value, n };
-      if (flow.retired) {
-        if (value !== 'ninguno') errors.push(at(n, `flow \`${flow.id}\` is [retirado]: its only \`Implicados\` is \`ninguno\``));
-        continue;
-      }
-      if (value === 'ninguno' || value === 'pendiente') continue;
-      const tokens = value.split(', ');
-      const bad = tokens.filter((t) => !FLOW_ID_RE.test(t));
-      if (!value || bad.length) {
-        errors.push(
-          at(n, `\`Implicados: ${value}\`: \`ninguno\`, \`pendiente\` or full flow IDs separated by \`, \` on one line` +
-            (bad.length && value ? ` — not an ID: ${bad.map((t) => `\`${t}\``).join(', ')}` : '')),
-        );
-        continue;
-      }
-      const own = prefix ?? expected;
-      const mine = tokens.filter((t) => own && FLOW_ID_RE.exec(t)[1] === own);
-      if (mine.length) {
-        errors.push(at(n, `\`Implicados\` names ${mine.map((t) => `\`${t}\``).join(', ')}, of its own prefix — it lists flows of OTHER components`));
+  const state = byKey.Estado.length === 1 ? byKey.Estado[0] : null;
+  if (state && !STATE_VALID.test(state.line)) {
+    error('state_malformed', id, state.n, `\`${state.line}\` is not a state: \`hecho\`, \`parcial — <qué falta>\` or \`no hecho — <qué falta>\` (em dash)`);
+  }
+
+  const vertical = flow.lines.filter((l) => l.line.startsWith(VERTICAL_LINE));
+  if (vertical.length > 1) {
+    error('key_repeated', id, vertical[1].n, `flow \`${id}\` repeats \`Vertical:\` (optional, and once)`);
+  } else if (vertical.length === 1) {
+    const [v] = vertical;
+    if (!VERTICAL_VALID.test(v.line)) error('vertical_malformed', id, v.n, `\`${v.line}\` is not a vertical: comun, peluqueria or restaurante`);
+    if (state && v.n !== state.n + 1) error('vertical_misplaced', id, v.n, `flow \`${id}\`: \`Vertical:\` goes on the line right below \`Estado:\``);
+  }
+
+  const impl = byKey.Implicados.length === 1 ? byKey.Implicados[0] : null;
+  if (impl) {
+    if (!IMPLICATED_VALID.test(impl.line)) {
+      error('implicated_malformed', id, impl.n, `\`${impl.line}\`: \`ninguno\`, \`pendiente\` or full flow IDs separated by \`, \`, on one line`);
+    } else {
+      const value = impl.line.slice('Implicados: '.length);
+      if (value === 'ninguno') {
+        if (pending.length) {
+          error('pending_under_none', id, pending[0].n,
+            `flow \`${id}\`: \`Implicados: ninguno\` admits no \`${PENDING_LINE}\` line (when every link is pending, the value is \`pendiente\`)`);
+        }
+      } else if (value === 'pendiente') {
+        if (!pending.length) error('pending_without_lines', id, impl.n, `flow \`${id}\` says \`Implicados: pendiente\` and has no \`${PENDING_LINE}\` line below`);
+      } else {
+        const ids = value.split(', ');
+        const own = prefix ? ids.filter((x) => idPrefix(x) === prefix) : [];
+        if (own.length) error('implicated_own_prefix', id, impl.n, `\`Implicados\` names ${own.map((x) => `\`${x}\``).join(', ')}, of its own prefix: it lists flows of OTHER components`);
+        const twice = ids.filter((x, i) => ids.indexOf(x) !== i);
+        if (twice.length) error('implicated_repeated', id, impl.n, `\`Implicados\` names ${[...new Set(twice)].map((x) => `\`${x}\``).join(', ')} twice`);
       }
     }
   }
-  closeFlow();
 
-  if (!prefixSeen) errors.push(at(1, 'no `Prefijo:` line before the first `## ` section'));
-  if (!part) {
-    if (!scopeSeen) errors.push(at(1, `no \`Alcance MVP:\` line (one of ${SCOPES.map((s) => `\`${s}\``).join(', ')})`));
-    if (!screens) errors.push(at(1, 'no `## Pantallas` section'));
-    if (total > MAX_LINES) {
-      warnings.push(at(total, `${total} lines, more than ${MAX_LINES}: keep it as the index and move the flows to \`workflow/<slug>.md\``));
-    }
+  for (const p of pending) {
+    if (!PENDING_VALID.test(p.line)) error('pending_malformed', id, p.n, `\`${p.line}\`: \`${PENDING_LINE} <componente> — <qué flujo suyo>\` (em dash)`);
   }
-  if (!flowsSection) errors.push(at(1, 'no `## Flujos` section (`## Flujos` or `## Flujos — <área>`)'));
-  errors.push(...duplicateFlowErrors(flows));
-
-  return { errors, warnings, prefix, flows };
+  const after = byKey.Implicados[0]?.n ?? Infinity;
+  const before = byKey.QA[0]?.n ?? Infinity;
+  const misplaced = pending.find((p) => !(p.n > after && p.n < before));
+  if (misplaced) error('pending_misplaced', id, misplaced.n, `flow \`${id}\`: \`${PENDING_LINE}\` lines go between \`Implicados:\` and \`QA:\``);
 }
 
-/** Pure: lints the text of one WORKFLOW.md. `{ prefix, family }` as in `lintWorkflowFile`. */
-export function lintWorkflowText(text, { prefix, family, file, part } = {}) {
-  const { errors, warnings } = lintWorkflowFile(text, { prefix, family, file, part });
-  return { errors, warnings };
-}
-
-/**
- * Flow IDs declared twice: an error at the second, naming the first. `acrossFilesOnly` leaves out
- * the pairs inside one file, which that file's own lint already reported.
- */
-export function duplicateFlowErrors(flows, { acrossFilesOnly = false } = {}) {
-  const seen = new Map();
-  const errors = [];
-  for (const f of flows) {
-    const first = seen.get(f.id);
-    if (first && acrossFilesOnly && first.file === f.file) continue;
-    if (first) errors.push(`${f.file}:${f.n}: flow \`${f.id}\` is already declared at ${first.file}:${first.n} (a number is never reused)`);
-    else seen.set(f.id, f);
-  }
-  return errors;
-}
-
-/** `workflow/*.md` next to a WORKFLOW.md, sorted. */
-function partFiles(dir) {
+/** `workflow/*.md` of a folder, sorted. */
+function secondaryFiles(dir) {
   const root = join(dir, 'workflow');
   if (!existsSync(root) || !statSync(root).isDirectory()) return [];
   return readdirSync(root, { withFileTypes: true })
@@ -260,113 +299,177 @@ function partFiles(dir) {
 }
 
 /**
- * Lints the WORKFLOW.md of `dir` and its `workflow/*.md` parts: same grammar, the same prefix as
- * the main file, and no flow ID twice among them. `label` prefixes every path in the messages;
- * `duplicates: false` leaves the cross-file ID check to a caller that lints several folders.
- * Returns `{ errors, warnings, found, files, flows }`.
+ * Level 2: the component in `dir` — its WORKFLOW.md and the `workflow/*.md` beside it. `modulePrefix`
+ * (a module's id in upper case) adds `module_prefix_mismatch`; `family` adds `family_mismatch`
+ * (`erplora workflow-lint --family`, not part of the contract); `label` prefixes the paths.
+ * Returns `{ findings, found, prefix, files, flows }`.
  */
-export function lintWorkflowDir(dir, { prefix, family, label = '', duplicates = true } = {}) {
-  const errors = [];
-  const warnings = [];
-  const flows = [];
+export function lintWorkflowComponent(dir, { modulePrefix, family, label = '' } = {}) {
+  const findings = [];
   const files = [];
+  const flows = [];
   const main = join(dir, WORKFLOW_FILE);
   const found = existsSync(main);
-  let own = prefix;
-  const take = (r, file) => {
-    errors.push(...r.errors);
-    warnings.push(...r.warnings);
-    flows.push(...r.flows);
-    files.push(file);
-  };
+  let prefix = null;
+  let prefixLine = 1;
   if (found) {
     const file = `${label}${WORKFLOW_FILE}`;
-    const r = lintWorkflowFile(readFileSync(main, 'utf8'), { file, prefix, family });
-    take(r, file);
-    own = own ?? r.prefix ?? undefined;
+    const text = readFileSync(main, 'utf8');
+    const r = lintWorkflowFile(text, { file });
+    findings.push(...r.findings);
+    flows.push(...r.flows);
+    files.push(file);
+    prefix = r.prefix;
+    prefixLine = lineOfPrefix(text);
+    if (prefix && modulePrefix && prefix !== modulePrefix) {
+      findings.push({ level: 'error', code: 'module_prefix_mismatch', id: '', file, line: prefixLine,
+        text: `prefix \`${prefix}\` is not this module's: expected \`${modulePrefix}\`, its \`id\` in upper case` });
+    }
+    if (prefix && family && !inFamily(prefix, family)) findings.push(familyMismatch(prefix, family, file, prefixLine));
   }
-  for (const name of partFiles(dir)) {
+  for (const name of secondaryFiles(dir)) {
     const file = `${label}workflow/${name}`;
-    take(lintWorkflowFile(readFileSync(join(dir, 'workflow', name), 'utf8'), { file, prefix: own, family, part: true }), file);
+    const text = readFileSync(join(dir, 'workflow', name), 'utf8');
+    const r = lintWorkflowFile(text, { file, kind: 'secondary' });
+    findings.push(...r.findings);
+    files.push(file);
+    if (!found) {
+      findings.push({ level: 'error', code: 'orphan_subfile', id: '', file, line: 1,
+        text: `no \`${WORKFLOW_FILE}\` next to its \`workflow/\` folder: a detail file belongs to an index` });
+    } else if (prefix && r.prefix && r.prefix !== prefix) {
+      findings.push({ level: 'error', code: 'subfile_prefix_mismatch', id: '', file, line: lineOfPrefix(text),
+        text: `prefix \`${r.prefix}\` is not the one of its index \`${prefix}\` (a detail file repeats it)` });
+    }
+    for (const f of r.flows) {
+      const first = flows.find((x) => x.id === f.id && x.file !== f.file);
+      if (first) {
+        findings.push({ level: 'error', code: 'flow_id_repeated', id: f.id, file, line: f.line,
+          text: `flow \`${f.id}\` is already declared at ${first.file}:${first.line} (a number is never reused)` });
+      }
+    }
+    flows.push(...r.flows);
   }
-  if (duplicates) errors.push(...duplicateFlowErrors(flows, { acrossFilesOnly: true }));
-  return { errors, warnings, found, files, flows };
+  return { findings, found, prefix, prefixLine, files, flows };
+}
+
+function lineOfPrefix(text) {
+  const i = text.split('\n').findIndex((l) => l.startsWith('Prefijo:'));
+  return i === -1 ? 1 : i + 1;
+}
+
+/** `--family` of `erplora workflow-lint`: a toolkit option, not a rule of the contract. */
+function familyMismatch(prefix, family, file, line) {
+  return { level: 'error', code: 'family_mismatch', id: '', file, line,
+    text: `prefix \`${prefix}\` is not of the \`${family}\` family (expected \`${family}\` or \`${family}_<…>\`)` };
+}
+
+function missing(id, file, strict) {
+  return {
+    level: strict ? 'error' : 'warning',
+    code: 'workflow_missing',
+    id,
+    file,
+    line: 1,
+    text:
+      `no ${WORKFLOW_FILE} yet — the component's functional spec (screens, flows, \`Implicados\`) that workers, ` +
+      'reviewers and QA read before touching it (ERPlora/pm#621, architecture/contracts/workflow-contract.md)',
+  };
+}
+
+/** Pure: lints the text of one WORKFLOW.md. `prefix` = the module's (adds `module_prefix_mismatch`). */
+export function lintWorkflowText(text, { prefix, family, file = WORKFLOW_FILE, rec = false } = {}) {
+  const r = lintWorkflowFile(text, { file, rec });
+  const findings = [...r.findings];
+  const line = lineOfPrefix(text);
+  if (r.prefix && prefix && r.prefix !== prefix) {
+    findings.push({ level: 'error', code: 'module_prefix_mismatch', id: '', file, line,
+      text: `prefix \`${r.prefix}\` is not this module's: expected \`${prefix}\`, its \`id\` in upper case` });
+  }
+  if (r.prefix && family && !inFamily(r.prefix, family)) findings.push(familyMismatch(r.prefix, family, file, line));
+  return split(findings);
+}
+
+/**
+ * The module door (`erplora validate`): levels 1 and 2 on the module folder, the prefix being the
+ * module id in upper case. No WORKFLOW.md = `workflow_missing`, a warning unless `strict`.
+ * Returns `{ errors, warnings, findings }`.
+ */
+export function checkWorkflowDoc(dir, manifest, { strict = false } = {}) {
+  const id = String(manifest?.id ?? '');
+  const r = lintWorkflowComponent(dir, { modulePrefix: id ? id.toUpperCase() : undefined });
+  const findings = [...r.findings];
+  if (!r.found) findings.unshift(missing(id, WORKFLOW_FILE, strict));
+  return split(findings);
 }
 
 /** Folders never walked: dependencies, build output, git internals. */
 const SKIPPED_DIRS = new Set(['node_modules', 'target', 'dist', '.git']);
 
-/** Every folder under `root` (itself included) as a `/`-separated path relative to it, sorted. */
+/** Every folder under `root` (itself included), `/`-separated and relative to it, sorted. */
 function walkDirs(root, rel = '') {
   const out = [rel];
-  const entries = readdirSync(join(root, rel), { withFileTypes: true })
+  const names = readdirSync(join(root, rel), { withFileTypes: true })
     .filter((e) => e.isDirectory() && !SKIPPED_DIRS.has(e.name))
     .map((e) => e.name)
     .sort();
-  for (const name of entries) out.push(...walkDirs(root, rel ? `${rel}/${name}` : name));
+  for (const name of names) out.push(...walkDirs(root, rel ? `${rel}/${name}` : name));
   return out;
 }
 
 /**
- * The door for the components that are not modules (`erplora workflow-lint`): every WORKFLOW.md
- * under `root` with its parts, each prefix of `family`. With the `REC` family, the cross-component
- * journeys instead: every `*.md` of a `workflows/` folder but its README.md, each a full document.
- * A flow ID may appear once in the whole tree. Nothing to lint is a warning, like a module without
- * the file. Returns `{ errors, warnings, files, flows }`, paths relative to `root`.
+ * The door for the components that are not modules (`erplora workflow-lint`): every component
+ * folder under `root` (a WORKFLOW.md, or a `workflow/` folder of detail files) at levels 1 and 2,
+ * and with the `REC` family the journeys of `root/workflows/*.md` but README.md (main files whose
+ * prefix starts with `REC_`). Of level 3, `prefix_duplicated` between main files. A root without
+ * its WORKFLOW.md (or, for REC, without journeys) = `workflow_missing`, an error only if `strict`.
+ * `name` is how the root is called in messages. Returns `{ errors, warnings, findings, files, flows }`.
  */
-export function lintWorkflowTree(root, { family } = {}) {
-  const errors = [];
-  const warnings = [];
+export function lintWorkflowTree(root, { family, strict = false, name = '.' } = {}) {
+  const findings = [];
   const files = [];
   const flows = [];
+  const mains = [];
   for (const rel of walkDirs(root)) {
+    if (rel.split('/').pop() === 'workflow') continue;
+    const dir = join(root, rel);
+    if (!existsSync(join(dir, WORKFLOW_FILE)) && !secondaryFiles(dir).length) continue;
     const label = rel ? `${rel}/` : '';
-    if (family === 'REC') {
-      if (rel.split('/').pop() !== 'workflows') continue;
-      const docs = readdirSync(join(root, rel), { withFileTypes: true })
-        .filter((e) => e.isFile() && e.name.endsWith('.md') && e.name !== 'README.md')
-        .map((e) => e.name)
-        .sort();
-      for (const name of docs) {
-        const file = `${label}${name}`;
-        const r = lintWorkflowFile(readFileSync(join(root, rel, name), 'utf8'), { file, family });
-        errors.push(...r.errors);
-        warnings.push(...r.warnings);
-        flows.push(...r.flows);
-        files.push(file);
-      }
-      continue;
-    }
-    if (!existsSync(join(root, rel, WORKFLOW_FILE))) continue;
-    const r = lintWorkflowDir(join(root, rel), { family, label, duplicates: false });
-    errors.push(...r.errors);
-    warnings.push(...r.warnings);
-    flows.push(...r.flows);
+    const r = lintWorkflowComponent(dir, { family, label });
+    findings.push(...r.findings);
     files.push(...r.files);
+    flows.push(...r.flows);
+    if (r.found && r.prefix) mains.push({ prefix: r.prefix, file: `${label}${WORKFLOW_FILE}`, line: r.prefixLine });
   }
-  errors.push(...duplicateFlowErrors(flows, { acrossFilesOnly: true }));
-  if (!files.length) {
-    warnings.push(
-      family === 'REC'
-        ? 'no `workflows/*.md` journey to lint yet (ERPlora/pm#621)'
-        : `no ${WORKFLOW_FILE} to lint yet — every component repo carries one at its root (ERPlora/pm#621)`,
-    );
+  if (family === 'REC') {
+    const journeys = join(root, 'workflows');
+    const docs = existsSync(journeys)
+      ? readdirSync(journeys, { withFileTypes: true })
+          .filter((e) => e.isFile() && e.name.endsWith('.md') && e.name !== 'README.md')
+          .map((e) => e.name)
+          .sort()
+      : [];
+    for (const doc of docs) {
+      const file = `workflows/${doc}`;
+      const text = readFileSync(join(journeys, doc), 'utf8');
+      const r = lintWorkflowFile(text, { file, rec: true });
+      findings.push(...r.findings);
+      files.push(file);
+      flows.push(...r.flows);
+      if (r.prefix) {
+        mains.push({ prefix: r.prefix, file, line: lineOfPrefix(text) });
+        if (!inFamily(r.prefix, family)) findings.push(familyMismatch(r.prefix, family, file, lineOfPrefix(text)));
+      }
+    }
+    if (!docs.length) findings.push(missing(name, 'workflows/', strict));
+  } else if (!existsSync(join(root, WORKFLOW_FILE))) {
+    findings.push(missing(name, WORKFLOW_FILE, strict));
   }
-  return { errors, warnings, files, flows };
-}
-
-/**
- * The module door (`erplora validate`). The prefix is the module id in upper case. No WORKFLOW.md
- * = a warning while the migration is open; a malformed one = errors.
- */
-export function checkWorkflowDoc(dir, manifest) {
-  const prefix = String(manifest?.id ?? '').toUpperCase() || undefined;
-  const { errors, warnings, found } = lintWorkflowDir(dir, { prefix });
-  if (!found) {
-    warnings.unshift(
-      `no ${WORKFLOW_FILE} yet — the module's functional spec (screens, flows, \`Implicados\`) that workers, ` +
-        `reviewers and QA read before touching it; prefix \`${prefix}\` (ERPlora/pm#621, architecture/contracts/workflow-contract.md)`,
-    );
+  for (const [i, m] of mains.entries()) {
+    const first = mains.slice(0, i).find((x) => x.prefix === m.prefix);
+    if (first) {
+      findings.push({ level: 'error', code: 'prefix_duplicated', id: '', file: m.file, line: m.line,
+        text: `prefix \`${m.prefix}\` is already the one of ${first.file}: a prefix names ONE component` });
+    }
   }
-  return { errors, warnings };
+  return { ...split(findings), files, flows };
 }

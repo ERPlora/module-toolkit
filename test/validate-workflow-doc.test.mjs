@@ -1,499 +1,330 @@
 // Tests for the WORKFLOW.md lint (ERPlora/pm#621). `node --test`.
 //
-// Every component of ERPlora gets a versioned `WORKFLOW.md`: its functional spec (screens, flows,
-// who else each flow touches). Workers, reviewers and QA read it before touching the component, and
-// the `pm` index (`workflow-index.sh`) cross-checks the references between components. That index
-// can only trust what it reads if every file follows ONE grammar, so the grammar is checked here,
-// per component: format and internal coherence. Whether a referenced flow exists in another repo,
-// and names this one back, is the index's job, not this one's.
+// Every component of ERPlora carries a versioned `WORKFLOW.md`: its functional spec (screens, flows,
+// which flows of other components each one touches). The grammar is a CONTRACT shared by two
+// validators — this lint and `workflow-index.sh` (awk, ERPlora/pm) — and lives in
+// `architecture/contracts/workflow-contract.md`. Two validators agree when they emit the same SET of
+// `(code, flow ID)` pairs, so that is what these tests compare.
 //
-// Severity, and why: the 27 modules consume this repository by `@main`, so what merges reaches all
-// of them at once. A module WITHOUT the file is a WARNING (the migration is open); a file that is
-// there and malformed is an ERROR.
+// The fixtures are the contract's own: §6 (the valid example, copied verbatim into
+// `test/fixtures/workflow-contract/`) must give zero findings, and every row of §7 is ONE edit on
+// it with the pairs the «Niveles 1 y 2» column expects. Levels 1 and 2 are this lint's (one file,
+// one component); level 3 (references across components) is the index's.
 //
-// Not to be confused with `validate-flows` — «flows» in this repository are automations
-// (`flows/*.flow.json`). This guard is the `workflow-doc`.
+// Severity, and why: the 27 module repos run this toolkit by `@main`, so a module WITHOUT the file
+// is a warning (the migration is open) unless `--strict`; a file that is there and malformed is an
+// error. Not to be confused with `validate-flows` — «flows» in this repository are automations.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { lintWorkflowText, checkWorkflowDoc } from '../src/validate-workflow-doc.mjs';
 import { validate } from '../src/validate.mjs';
 import { writeContractsFile } from '../src/contracts.mjs';
 
-/** The template of PROMPT-WORKFLOW.md, filled in for the `sales` module. */
-const FLOW = `### SALES-F03 Cobrar un tique
-Estado: hecho
-Actor: cajero
-Pantalla: Vender
-Pasos:
-1. Con el tique abierto en Vender, la persona pulsa Cobrar.
-2. Elige el método de pago e introduce el importe entregado.
-3. Pulsa Confirmar cobro.
-4. El tique sale como cobrado y se imprime.
-Entra: las líneas del tique abierto (Vender) y el turno de caja abierto (Caja).
-Sale: el tique cobrado, el movimiento de caja y el registro fiscal (sale.paid).
-Si falla: ve el aviso «No se pudo cobrar» y el tique sigue abierto para reintentar.
-Implicados: CASH_REGISTER-F02, INVOICE-F01, REC_RESTAURANTE-F09
-QA: R-08, BD-09`;
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'workflow-contract');
+const APPT = 'appointments/WORKFLOW.md';
+const WA = 'whatsapp_inbox/WORKFLOW.md';
+const WA_DETAIL = 'whatsapp_inbox/workflow/conversaciones.md';
 
-const RETIRED = `### SALES-F07 [retirado] Cobrar con vale antiguo
-Implicados: ninguno`;
-
-function doc({ prefix = 'Prefijo: SALES', scope = 'Alcance MVP: nucleo', flows = [FLOW, RETIRED], screens = true, flowsHeading = '## Flujos', before = '' } = {}) {
-  return [
-    '# WORKFLOW — Ventas',
-    '',
-    prefix,
-    scope,
-    '',
-    '## Para qué sirve y para quién',
-    'El TPV con el que el cajero cobra en la barra o en la mesa.',
-    '',
-    '## Referencia adoptada',
-    'Square y Toast: el cobro en dos toques.',
-    '',
-    '## Antes de empezar',
-    'Una caja abierta y los impuestos configurados.',
-    before,
-    ...(screens
-      ? ['## Pantallas', '', '### Vender', 'Desde el menú, Ventas → Vender. Vacía muestra «Sin productos».', '']
-      : []),
-    flowsHeading,
-    '',
-    flows.join('\n\n'),
-    '',
-    '## Cobertura contra la referencia',
-    '| Elemento | Estado |',
-    '|---|---|',
-    '| Cobro dividido | no hecho |',
-    '',
-    '## Datos: de quién es cada dato',
-    'El tique es de ventas; el cliente lo lee de Clientes.',
-    '',
-    '## Reglas que no se rompen',
-    'Dinero en céntimos; cada fila con su hub.',
-    '',
-    '## Lo que NO hace, a propósito',
-    'No gestiona la carta.',
-    '',
-    '## Dudas abiertas',
-    'Ninguna.',
-    '',
-  ].join('\n');
-}
-
-const lint = (text, opts = { prefix: 'SALES' }) => lintWorkflowText(text, opts);
-
-/** Line number (1-based) of the first line of `text` that starts with `needle`. */
-function lineOf(text, needle) {
-  return text.split('\n').findIndex((l) => l.startsWith(needle)) + 1;
-}
-
-function assertOneError(out, pattern) {
-  assert.equal(out.errors.length, 1, `expected exactly one error, got:\n${out.errors.join('\n')}`);
-  assert.match(out.errors[0], pattern);
-}
-
-// ── The valid document ────────────────────────────────────────────────────────
-
-test('PASSES: the PROMPT-WORKFLOW.md template, filled in, has no errors and no warnings', () => {
-  assert.deepEqual(lint(doc()), { errors: [], warnings: [] });
-});
-
-test('PASSES: an area-qualified `## Flujos — <área>` heading counts as the flows section', () => {
-  assert.deepEqual(lint(doc({ flowsHeading: '## Flujos — Cobro' })), { errors: [], warnings: [] });
-});
-
-test('every error carries the file and the line number', () => {
-  const text = doc({ flows: [FLOW.replace('Estado: hecho', 'Estado: casi')] });
-  const out = lint(text);
-  assertOneError(out, new RegExp(`^WORKFLOW\\.md:${lineOf(text, 'Estado: casi')}: `));
-});
-
-// ── Header: Prefijo and Alcance MVP ───────────────────────────────────────────
-
-test('ERROR: no `Prefijo:` line', () => {
-  assertOneError(lint(doc({ prefix: '' })), /`Prefijo:`/);
-});
-
-test('ERROR: `Prefijo:` after the first `## ` section', () => {
-  const text = doc({ prefix: '' }).replace('## Referencia adoptada', 'Prefijo: SALES\n## Referencia adoptada');
-  assertOneError(lint(text), /`Prefijo:`.*before the first `## `/);
-});
-
-test('ERROR: `Prefijo:` twice', () => {
-  const text = doc({ prefix: 'Prefijo: SALES\nPrefijo: SALES' });
-  assertOneError(lint(text), new RegExp(`^WORKFLOW\\.md:${lineOf(text, 'Prefijo:') + 1}: .*\`Prefijo:\`.*once`));
-});
-
-test('ERROR: a `Prefijo:` that is not upper case, digits and `_`', () => {
-  const out = lint(doc({ prefix: 'Prefijo: sales' }), {});
-  assertOneError(out, /`Prefijo: sales`/);
-});
-
-test('ERROR: in a module, `Prefijo` has to be the module id in upper case', () => {
-  const text = doc({ prefix: 'Prefijo: VENTAS' }).replaceAll('SALES-F', 'VENTAS-F');
-  assertOneError(lint(text, { prefix: 'SALES' }), /`VENTAS`.*expected `SALES`/);
-});
-
-test('ERROR: no `Alcance MVP:` line', () => {
-  assertOneError(lint(doc({ scope: '' })), /`Alcance MVP:`/);
-});
-
-test('ERROR: an `Alcance MVP` value outside the vocabulary', () => {
-  assertOneError(lint(doc({ scope: 'Alcance MVP: core' })), /`Alcance MVP: core`.*nucleo/);
-});
-
-test('PASSES: every value of the `Alcance MVP` vocabulary', () => {
-  for (const v of ['nucleo', 'restaurante', 'peluqueria', 'transversal', 'fuera del MVP', 'congelado']) {
-    assert.deepEqual(lint(doc({ scope: `Alcance MVP: ${v}` })).errors, [], v);
+/** A scratch copy of the §6 example. `edits`: `{ '<rel>': (text) => text | null }`, null deletes. */
+function example(edits = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'erplora-wfdoc-'));
+  cpSync(FIXTURES, root, { recursive: true });
+  for (const [rel, fn] of Object.entries(edits)) {
+    const path = join(root, rel);
+    const out = fn(readFileSync(path, 'utf8'));
+    if (out === null) rmSync(path);
+    else writeFileSync(path, out);
   }
-});
-
-// ── Required sections ─────────────────────────────────────────────────────────
-
-test('ERROR: no `## Pantallas` section', () => {
-  assertOneError(lint(doc({ screens: false })), /`## Pantallas`/);
-});
-
-test('ERROR: no `## Flujos` section', () => {
-  assertOneError(lint(doc({ flowsHeading: '## Procesos', flows: [] })), /`## Flujos`/);
-});
-
-// ── Flow headers ──────────────────────────────────────────────────────────────
-
-test('ERROR: a flow ID with a single digit (`SALES-F3`)', () => {
-  const text = doc({ flows: [FLOW.replace('SALES-F03', 'SALES-F3'), RETIRED] });
-  assertOneError(lint(text), new RegExp(`^WORKFLOW\\.md:${lineOf(text, '### SALES-F3')}: .*\`SALES-F3\``));
-});
-
-test('ERROR: a `### ` heading inside `## Flujos` that is not a flow header', () => {
-  assertOneError(lint(doc({ flows: [FLOW, '### Cobrar sin ID\nEstado: hecho'] })), /`### Cobrar sin ID`/);
-});
-
-test('ERROR: the same flow ID twice in one file', () => {
-  const text = doc({ flows: [FLOW, FLOW.replace('Cobrar un tique', 'Otra cosa')] });
-  const out = lint(text);
-  assertOneError(out, /`SALES-F03`.*twice|`SALES-F03`.*already/);
-  assert.match(out.errors[0], new RegExp(`:${lineOf(text, '### SALES-F03 Cobrar un tique')}\\b`), 'names the first one');
-});
-
-test('ERROR: a flow ID whose prefix is not the file `Prefijo`', () => {
-  assertOneError(lint(doc({ flows: [FLOW.replace('SALES-F03', 'INVOICE-F03')] })), /`INVOICE-F03`.*`SALES`/);
-});
-
-// ── The nine keys of a live flow ──────────────────────────────────────────────
-
-for (const key of ['Estado:', 'Actor:', 'Pantalla:', 'Pasos:', 'Entra:', 'Sale:', 'Si falla:', 'Implicados:', 'QA:']) {
-  test(`ERROR: a live flow without \`${key}\``, () => {
-    const flow = FLOW.split('\n').filter((l) => !l.startsWith(key)).join('\n');
-    const text = doc({ flows: [flow] });
-    assertOneError(lint(text), new RegExp(`^WORKFLOW\\.md:${lineOf(text, '### SALES-F03')}: .*\`SALES-F03\`.*\`${key}\``));
-  });
+  return root;
 }
 
-test('ERROR: a key repeated inside one flow', () => {
-  const text = doc({ flows: [FLOW.replace('Actor: cajero', 'Actor: cajero\nActor: encargado')] });
-  assertOneError(lint(text), new RegExp(`^WORKFLOW\\.md:${lineOf(text, 'Actor: encargado')}: .*\`Actor:\`.*once`));
-});
-
-test('ERROR: `Estado:` outside `hecho`, `parcial`, `no hecho`', () => {
-  assertOneError(lint(doc({ flows: [FLOW.replace('Estado: hecho', 'Estado: hechos')] })), /`Estado: hechos`/);
-});
-
-test('PASSES: `parcial` and `no hecho` followed by what is missing', () => {
-  for (const s of ['Estado: parcial — falta el cobro dividido', 'Estado: no hecho — sin pantalla todavía', 'Estado: no hecho']) {
-    assert.deepEqual(lint(doc({ flows: [FLOW.replace('Estado: hecho', s)] })).errors, [], s);
-  }
-});
-
-test('a key that is not at the start of the line does not count', () => {
-  const flow = FLOW.replace('Actor: cajero', ' Actor: cajero');
-  assertOneError(lint(doc({ flows: [flow] })), /`Actor:`/);
-});
-
-// ── Implicados ────────────────────────────────────────────────────────────────
-
-for (const [label, value] of [
-  ['lower case', 'payments-f01'],
-  ['a space instead of the dash', 'PAYMENTS F01'],
-  ['a trailing comma', 'PAYMENTS-F01,'],
-  ['a comma without the space', 'PAYMENTS-F01,INVOICE-F01'],
-]) {
-  test(`ERROR: a malformed \`Implicados\` token (${label})`, () => {
-    const text = doc({ flows: [FLOW.replace(/^Implicados: .*$/m, `Implicados: ${value}`)] });
-    assertOneError(lint(text), new RegExp(`^WORKFLOW\\.md:${lineOf(text, 'Implicados:')}: .*Implicados`));
-  });
+/** Runs the module door on one component of the example; the findings as `code|ID` pairs. */
+function check(root, component) {
+  const dir = join(root, component);
+  const manifest = JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8'));
+  return checkWorkflowDoc(dir, manifest);
 }
 
-test('ERROR: `Implicados` naming a flow of its own prefix', () => {
-  const text = doc({ flows: [FLOW.replace(/^Implicados: .*$/m, 'Implicados: CASH_REGISTER-F02, SALES-F05')] });
-  assertOneError(lint(text), /`SALES-F05`.*own prefix/);
-});
+const pairs = (findings, level) =>
+  [...new Set(findings.filter((f) => f.level === level).map((f) => `${f.code}|${f.id}`))].sort();
 
-test('PASSES: `Implicados: ninguno`', () => {
-  assert.deepEqual(lint(doc({ flows: [FLOW.replace(/^Implicados: .*$/m, 'Implicados: ninguno')] })).errors, []);
-});
-
-// ── Implicados: pendiente (every link still a `Pendiente de enlazar:` line) ────
-
-const PENDING = 'Pendiente de enlazar: kitchen — el envío de la comanda a cocina';
-const withImplicados = (value, ...below) =>
-  FLOW.replace(/^Implicados: .*$/m, [`Implicados: ${value}`, ...below].join('\n'));
-
-test('PASSES: `Implicados: pendiente` with its `Pendiente de enlazar:` lines', () => {
-  assert.deepEqual(lint(doc({ flows: [withImplicados('pendiente', PENDING, PENDING.replace('kitchen', 'tables'))] })), {
-    errors: [],
-    warnings: [],
-  });
-});
-
-test('ERROR: `Implicados: pendiente` without any `Pendiente de enlazar:` line', () => {
-  const text = doc({ flows: [withImplicados('pendiente')] });
-  assertOneError(lint(text), new RegExp(`^WORKFLOW\\.md:${lineOf(text, 'Implicados: pendiente')}: .*\`SALES-F03\`.*pendiente.*Pendiente de enlazar:`));
-});
-
-test('ERROR: `Implicados: ninguno` with a `Pendiente de enlazar:` line below', () => {
-  const text = doc({ flows: [withImplicados('ninguno', PENDING)] });
-  assertOneError(lint(text), new RegExp(`^WORKFLOW\\.md:${lineOf(text, 'Pendiente de enlazar:')}: .*\`SALES-F03\`.*ninguno.*pendiente`));
-});
-
-test('PASSES: a list of IDs with `Pendiente de enlazar:` lines below', () => {
-  assert.deepEqual(lint(doc({ flows: [withImplicados('CASH_REGISTER-F02', PENDING)] })).errors, []);
-});
-
-test('ERROR: a `[retirado]` flow with `Implicados: pendiente`', () => {
-  assertOneError(lint(doc({ flows: [FLOW, `${RETIRED.replace('ninguno', 'pendiente')}\n${PENDING}`] })), /`SALES-F07`.*retirado.*ninguno/);
-});
-
-// ── Actor, Pantalla, QA: free text, but never empty ───────────────────────────
-
-for (const key of ['Actor:', 'Pantalla:', 'QA:']) {
-  test(`ERROR: an empty \`${key}\``, () => {
-    const text = doc({ flows: [FLOW.replace(new RegExp(`^${key} .*$`, 'm'), key)] });
-    assertOneError(lint(text), new RegExp(`^WORKFLOW\\.md:${lineOf(text, key)}: .*\`SALES-F03\`.*\`${key}\`.*empty`));
-  });
-}
-
-test('PASSES: free-text values of Actor, Pantalla and QA', () => {
-  const flow = FLOW.replace('Actor: cajero', 'Actor: empleado, asistente')
-    .replace('Pantalla: Vender', 'Pantalla: Caja: Cierre de turno')
-    .replace('QA: R-08, BD-09', 'QA: WR-03 (discrepa), qa-hub-restaurant §05');
-  assert.deepEqual(lint(doc({ flows: [flow] })).errors, []);
-});
-
-test('ERROR: a `[retirado]` flow with references', () => {
-  assertOneError(lint(doc({ flows: [FLOW, RETIRED.replace('ninguno', 'INVOICE-F01')] })), /`SALES-F07`.*retirado.*ninguno/);
-});
-
-test('ERROR: a `[retirado]` flow without `Implicados: ninguno`', () => {
-  assertOneError(lint(doc({ flows: [FLOW, '### SALES-F07 [retirado] Cobrar con vale antiguo'] })), /`SALES-F07`.*`Implicados: ninguno`/);
-});
-
-test('PASSES: `Pendiente de enlazar:` under `Implicados` is not an error', () => {
-  const flow = FLOW.replace(/^(Implicados: .*)$/m, '$1\nPendiente de enlazar: kitchen — el envío de la comanda a cocina');
-  assert.deepEqual(lint(doc({ flows: [flow] })), { errors: [], warnings: [] });
-});
-
-// ── Robustness ────────────────────────────────────────────────────────────────
-
-test('a flow header and keys inside a ``` block are ignored', () => {
-  const example = ['```markdown', '### SALES-F3 ejemplo mal formado', 'Estado: inventado', 'Prefijo: OTRO', '## Pantallas', '```', ''].join('\n');
-  assert.deepEqual(lint(doc({ before: example })), { errors: [], warnings: [] });
-});
-
-test('a flow header and keys inside a ~~~ block are ignored', () => {
-  const example = ['~~~', '### SALES-F03 duplicado dentro de un bloque', 'Implicados: SALES-F01', '~~~', ''].join('\n');
-  assert.deepEqual(lint(doc({ before: example })), { errors: [], warnings: [] });
-});
-
-test('CRLF line endings pass', () => {
-  assert.deepEqual(lint(doc().replaceAll('\n', '\r\n')), { errors: [], warnings: [] });
-});
-
-test('WARNS: a WORKFLOW.md longer than 600 lines (split it into workflow/<slug>.md)', () => {
-  const long = doc({ before: Array.from({ length: 600 }, (_, i) => `Paso de preparación ${i}.`).join('\n') });
-  const out = lint(long);
-  assert.deepEqual(out.errors, []);
-  assert.equal(out.warnings.length, 1);
-  assert.match(out.warnings[0], /600/);
-  assert.match(out.warnings[0], /workflow\/<slug>\.md/);
-});
-
-test('SILENT: 500 lines is under the size limit', () => {
-  const text = doc({ before: Array.from({ length: 450 }, (_, i) => `Paso de preparación ${i}.`).join('\n') });
-  assert.ok(text.split('\n').length > 450 && text.split('\n').length < 600);
-  assert.deepEqual(lint(text), { errors: [], warnings: [] });
-});
-
-test('PASSES: the optional `## Fuentes contrastadas` section, present or not', () => {
-  const text = `${doc()}\n## Fuentes contrastadas\nEl manual dice «Cobrar»; el código, «Pagar».\n`;
-  assert.deepEqual(lint(text), { errors: [], warnings: [] });
-});
-
-// ── Family (hub, saas, gateway, cross-component journeys) ─────────────────────
-
-test('family: the prefix is the family itself or starts with `<FAMILY>_`', () => {
-  const asHub = (p) => doc({ prefix: `Prefijo: ${p}` }).replaceAll('SALES-F', `${p}-F`);
-  assert.deepEqual(lint(asHub('HUB'), { family: 'HUB' }).errors, []);
-  assert.deepEqual(lint(asHub('HUB_SHELL'), { family: 'HUB' }).errors, []);
-  assertOneError(lint(asHub('SAAS_DEMO'), { family: 'HUB' }), /`SAAS_DEMO`.*`HUB`/);
-  assertOneError(lint(asHub('HUBX'), { family: 'HUB' }), /`HUBX`.*`HUB`/);
-});
-
-// ── checkWorkflowDoc: the module folder ───────────────────────────────────────
-
-/** Temporary module with an optional WORKFLOW.md and optional `workflow/*.md` parts. */
-function mod(manifest, { workflow, parts = {} } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'erplora-wfdoc-'));
-  writeFileSync(join(dir, 'module.json'), JSON.stringify(manifest, null, 2));
-  if (workflow !== undefined) writeFileSync(join(dir, 'WORKFLOW.md'), workflow);
-  if (Object.keys(parts).length) {
-    mkdirSync(join(dir, 'workflow'), { recursive: true });
-    for (const [name, text] of Object.entries(parts)) writeFileSync(join(dir, 'workflow', name), text);
-  }
-  return dir;
-}
-
-const base = (extra) => ({ id: 'sales', name: 'Sales', version: '1.0.0', ...extra });
-
-/** A `workflow/<slug>.md` part: same prefix, its own flows. */
-const part = (flows) => ['# WORKFLOW — Ventas · Devoluciones', '', 'Prefijo: SALES', '', '## Flujos — Devoluciones', '', flows, ''].join('\n');
-
-test('WARNS (never errors): a module without WORKFLOW.md', () => {
-  const dir = mod(base());
+/** Both components of the example after `edits`: the error pairs, as a sorted set. */
+function errorPairs(edits) {
+  const root = example(edits);
   try {
-    const out = checkWorkflowDoc(dir, base());
+    return pairs([...check(root, 'appointments').findings, ...check(root, 'whatsapp_inbox').findings], 'error');
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+/** Replaces exactly one occurrence, so a fixture that drifted fails loudly instead of passing. */
+function once(from, to) {
+  return (text) => {
+    assert.equal(text.split(from).length, 2, `expected exactly one «${from}» in the fixture`);
+    return text.replace(from, to);
+  };
+}
+
+// ── §6: the valid example ─────────────────────────────────────────────────────
+
+test('§6: the valid example gives zero findings, errors or warnings', () => {
+  const root = example();
+  try {
+    for (const c of ['appointments', 'whatsapp_inbox']) {
+      const out = check(root, c);
+      assert.deepEqual(out.errors, [], c);
+      assert.deepEqual(out.warnings, [], c);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('§6: the same, saved with CRLF', () => {
+  const crlf = (t) => t.replaceAll('\n', '\r\n');
+  assert.deepEqual(errorPairs({ [APPT]: crlf, [WA]: crlf, [WA_DETAIL]: crlf }), []);
+});
+
+// ── §7: one change each, «Niveles 1 y 2» ──────────────────────────────────────
+
+const F01_BLOCK = (t) => t.slice(t.indexOf('### APPOINTMENTS-F01'), t.indexOf('### APPOINTMENTS-F02'));
+const RETIRED_BLOCK = '### APPOINTMENTS-F02 [retirado] Aceptar solicitudes desde la pestaña Solicitudes\nImplicados: ninguno\n\n';
+const COVERAGE_ROW = '| Cita con clienta, servicio, profesional y hora | hecho | APPOINTMENTS-F01 |\n';
+const PENDING_F01 = 'Pendiente de enlazar: customers — reconocer a la clienta por su teléfono\n';
+const PENDING_F02 = 'Pendiente de enlazar: schedules — el horario de apertura del negocio\n';
+const SOURCES = '## Fuentes contrastadas\nEl manual dice que la cita se puede arrastrar a otro día; el código solo deja moverla dentro del mismo día.\n';
+const SALES_FLOW = [
+  '### SALES-F05 Vender', 'Estado: hecho', 'Actor: empleado', 'Pantalla: Agenda', 'Pasos:', '1. Vende.',
+  'Entra: nada.', 'Sale: nada.', 'Si falla: lo ve.', 'Implicados: ninguno', 'QA: ninguno', '', '',
+].join('\n');
+
+const INVALID = [
+  [1, 'one-digit ID', { [APPT]: once('### APPOINTMENTS-F01 Dar', '### APPOINTMENTS-F1 Dar') }, ['flow_header_malformed|']],
+  [2, 'lower-case prefix', { [APPT]: once('Prefijo: APPOINTMENTS', 'Prefijo: appointments') }, ['prefix_malformed|']],
+  [3, 'trailing comma', { [APPT]: once('Implicados: WHATSAPP_INBOX-F01\n', 'Implicados: WHATSAPP_INBOX-F01,\n') }, ['implicated_malformed|APPOINTMENTS-F01']],
+  ['3b', 'trailing comma and space', { [APPT]: once('Implicados: WHATSAPP_INBOX-F01\n', 'Implicados: WHATSAPP_INBOX-F01, \n') }, ['implicated_malformed|APPOINTMENTS-F01']],
+  [4, 'own prefix', { [APPT]: once('Implicados: WHATSAPP_INBOX-F01\n', 'Implicados: WHATSAPP_INBOX-F01, APPOINTMENTS-F02\n') }, ['implicated_own_prefix|APPOINTMENTS-F01']],
+  [5, 'not reciprocal (level 3 only)', { [WA_DETAIL]: once('Implicados: APPOINTMENTS-F01\n', 'Implicados: pendiente\n') }, []],
+  [6, 'no Implicados', { [APPT]: once('Implicados: WHATSAPP_INBOX-F01\n', '') }, ['key_missing|APPOINTMENTS-F01']],
+  [7, 'Estado twice', { [APPT]: once('Estado: hecho\n', 'Estado: hecho\nEstado: hecho\n') }, ['key_repeated|APPOINTMENTS-F01']],
+  [8, 'retired reference (level 3 only)', { [WA_DETAIL]: once('Implicados: APPOINTMENTS-F01\n', 'Implicados: APPOINTMENTS-F01, APPOINTMENTS-F02\n') }, []],
+  [9, 'retired with references', { [APPT]: once('Implicados: ninguno', 'Implicados: WHATSAPP_INBOX-F01') }, ['retired_malformed|APPOINTMENTS-F02']],
+  [10, 'separator is not `, `', { [WA_DETAIL]: once('Implicados: APPOINTMENTS-F01\n', 'Implicados: APPOINTMENTS-F01; CUSTOMERS-F01\n') }, ['implicated_malformed|WHATSAPP_INBOX-F01']],
+  [11, '`parcial` without what is missing', { [WA_DETAIL]: once('Estado: parcial — falta ofrecer otro hueco cuando el pedido está ocupado', 'Estado: parcial') }, ['state_malformed|WHATSAPP_INBOX-F01']],
+  [12, 'scope with an accent', { [APPT]: once('Alcance MVP: peluqueria', 'Alcance MVP: núcleo') }, ['scope_malformed|']],
+  [13, 'keys out of order', {
+    [APPT]: (t) => once('Entra: el servicio (servicios) y la clienta (clientes).\nSale: la cita guardada; la conversación de WhatsApp de la clienta la muestra.\n',
+      'Sale: la cita guardada; la conversación de WhatsApp de la clienta la muestra.\nEntra: el servicio (servicios) y la clienta (clientes).\n')(t),
+  }, ['key_out_of_order|APPOINTMENTS-F01']],
+  [14, 'flow outside `## Flujos`', { [APPT]: (t) => once(COVERAGE_ROW, COVERAGE_ROW + RETIRED_BLOCK.trimEnd() + '\n')(once(RETIRED_BLOCK, '')(t)) }, ['flow_header_outside_flows|APPOINTMENTS-F02']],
+  [15, 'a section missing', { [APPT]: once('## Dudas abiertas\nNinguna.\n\n', '') }, ['section_missing|']],
+  [16, 'two sections swapped', {
+    [APPT]: (t) => t.replace('## Reglas que no se rompen', '§TMP§').replace('## Lo que NO hace, a propósito', '## Reglas que no se rompen').replace('§TMP§', '## Lo que NO hace, a propósito'),
+  }, ['section_out_of_order|']],
+  [17, 'unclosed code block', { [APPT]: (t) => t.replace(/~~~\n\n## Pantallas/, '\n## Pantallas') }, ['code_block_unclosed|']],
+  [18, 'a flow ID twice', { [APPT]: (t) => t.replace(F01_BLOCK(t), F01_BLOCK(t) + F01_BLOCK(t).replace('Dar una cita desde la agenda', 'Otra cita')) }, ['flow_id_repeated|APPOINTMENTS-F01']],
+  [19, '`ninguno` over a pending line', { [WA_DETAIL]: once('Implicados: pendiente', 'Implicados: ninguno') }, ['pending_under_none|WHATSAPP_INBOX-F02']],
+  [20, 'pending line before Implicados', { [WA_DETAIL]: (t) => once('Implicados: APPOINTMENTS-F01\n', PENDING_F01 + 'Implicados: APPOINTMENTS-F01\n')(once(PENDING_F01, '')(t)) }, ['pending_misplaced|WHATSAPP_INBOX-F01']],
+  [21, 'a flow of another prefix', { [APPT]: once('## Cobertura contra la referencia', SALES_FLOW + '## Cobertura contra la referencia') }, ['flow_prefix_mismatch|SALES-F05']],
+  [22, '`Prefijo` twice', { [APPT]: once('Prefijo: APPOINTMENTS\n', 'Prefijo: APPOINTMENTS\nPrefijo: APPOINTMENTS\n') }, ['prefix_repeated|']],
+  [23, 'a REC_ prefix in a module', { [APPT]: once('Prefijo: APPOINTMENTS', 'Prefijo: REC_CITAS') },
+    ['flow_prefix_mismatch|APPOINTMENTS-F01', 'flow_prefix_mismatch|APPOINTMENTS-F02', 'module_prefix_mismatch|', 'rec_prefix_misplaced|']],
+  [24, '`pendiente` without lines', { [WA_DETAIL]: once(PENDING_F02, '') }, ['pending_without_lines|WHATSAPP_INBOX-F02']],
+  [25, 'detail with another prefix', { [WA_DETAIL]: once('Prefijo: WHATSAPP_INBOX', 'Prefijo: WHATSAPP') },
+    ['flow_prefix_mismatch|WHATSAPP_INBOX-F01', 'flow_prefix_mismatch|WHATSAPP_INBOX-F02', 'subfile_prefix_mismatch|']],
+  [26, 'detail without `Prefijo`', { [WA_DETAIL]: once('Prefijo: WHATSAPP_INBOX\n', '') }, ['prefix_missing|']],
+  [27, 'an ID in the index and in a detail', {
+    [WA]: (t) => {
+      const detail = readFileSync(join(FIXTURES, WA_DETAIL), 'utf8');
+      const block = detail.slice(detail.indexOf('### WHATSAPP_INBOX-F02'));
+      return once('\n## Cobertura contra la referencia', `\n${block}\n## Cobertura contra la referencia`)(t);
+    },
+  }, ['flow_id_repeated|WHATSAPP_INBOX-F02']],
+  [28, '`Fuentes contrastadas` before `Dudas abiertas`', { [APPT]: (t) => once('## Dudas abiertas', SOURCES + '\n## Dudas abiertas')(once(SOURCES, '')(t)) }, ['section_out_of_order|']],
+  [29, 'the index deleted', { [WA]: () => null }, ['orphan_subfile|']],
+  [30, 'Vertical outside its vocabulary', { [WA_DETAIL]: once('Vertical: peluqueria', 'Vertical: salon') }, ['vertical_malformed|WHATSAPP_INBOX-F01']],
+  [31, 'Vertical under Actor', { [WA_DETAIL]: (t) => once('Actor: cliente\n', 'Actor: cliente\nVertical: peluqueria\n')(once('Vertical: peluqueria\n', '')(t)) }, ['vertical_misplaced|WHATSAPP_INBOX-F01']],
+  [32, 'Vertical twice', { [WA_DETAIL]: once('Vertical: peluqueria\n', 'Vertical: peluqueria\nVertical: peluqueria\n') }, ['key_repeated|WHATSAPP_INBOX-F01']],
+];
+
+for (const [n, label, edits, expected] of INVALID) {
+  test(`§7 #${n} (${label}): ${expected.join(', ') || 'nothing at levels 1 and 2'}`, () => {
+    assert.deepEqual(errorPairs(edits), expected);
+  });
+}
+
+const STILL_VALID = [
+  ['`Actor:` with no value', { [APPT]: once('Actor: responsable, empleado', 'Actor:') }],
+  ['`Pantalla:` of another component', { [APPT]: once('Pantalla: Agenda', 'Pantalla: Clientes: Ficha de la clienta') }],
+  ['`QA:` free text', { [APPT]: once('QA: B-02, W-01', 'QA: cualquier cosa') }],
+  ['`Pantalla: asistente`', { [WA_DETAIL]: once('Pantalla: Conversaciones', 'Pantalla: asistente') }],
+  ['no `Vertical:` (optional)', { [WA_DETAIL]: once('Vertical: peluqueria\n', '') }],
+  ['`Vertical: salon` in a retired flow (free text)', { [APPT]: once('Implicados: ninguno\n', 'Implicados: ninguno\nVertical: salon\n') }],
+  ['a coverage matrix instead of the usual table', { [APPT]: once('| Elemento | Estado | Flujo |', '| Elemento | Traer | Crear | Editar | Enviar |') }],
+];
+
+for (const [label, edits] of STILL_VALID) {
+  test(`§7 still valid: ${label}`, () => {
+    assert.deepEqual(errorPairs(edits), []);
+  });
+}
+
+// ── The rest of the codes of §5.4, one each ───────────────────────────────────
+
+const OTHER = [
+  ['flow_title_missing (live)', { [APPT]: once('### APPOINTMENTS-F01 Dar una cita desde la agenda', '### APPOINTMENTS-F01') }, ['flow_title_missing|APPOINTMENTS-F01']],
+  ['flow_title_missing (retired)', { [APPT]: once('[retirado] Aceptar solicitudes desde la pestaña Solicitudes', '[retirado]') }, ['flow_title_missing|APPOINTMENTS-F02']],
+  ['flow_header_malformed (a heading in `## Flujos` that is no flow)', { [APPT]: once('### APPOINTMENTS-F02', '### Notas\n\n### APPOINTMENTS-F02') }, ['flow_header_malformed|']],
+  ['prefix_after_section', { [APPT]: (t) => once('## Referencia adoptada', 'Prefijo: APPOINTMENTS\n\n## Referencia adoptada')(once('Prefijo: APPOINTMENTS\n', '')(t)) }, ['prefix_after_section|']],
+  ['scope_missing', { [APPT]: once('Alcance MVP: peluqueria\n', '') }, ['scope_missing|']],
+  ['scope_repeated', { [APPT]: once('Alcance MVP: peluqueria\n', 'Alcance MVP: peluqueria\nAlcance MVP: peluqueria\n') }, ['scope_repeated|']],
+  ['scope_after_section', { [APPT]: (t) => once('## Referencia adoptada', 'Alcance MVP: peluqueria\n\n## Referencia adoptada')(once('Alcance MVP: peluqueria\n', '')(t)) }, ['scope_after_section|']],
+  ['section_repeated', { [APPT]: once('## Dudas abiertas\nNinguna.\n', '## Dudas abiertas\nNinguna.\n\n## Dudas abiertas\nOtra.\n') }, ['section_repeated|']],
+  ['`## Flujos — <área>` is not `## Flujos`', { [APPT]: once('## Flujos\n', '## Flujos — Agenda\n') }, ['flow_header_outside_flows|APPOINTMENTS-F01', 'flow_header_outside_flows|APPOINTMENTS-F02', 'section_missing|']],
+  ['implicated_repeated', { [APPT]: once('Implicados: WHATSAPP_INBOX-F01\n', 'Implicados: WHATSAPP_INBOX-F01, WHATSAPP_INBOX-F01\n') }, ['implicated_repeated|APPOINTMENTS-F01']],
+  ['pending_malformed (no em dash)', { [WA_DETAIL]: once(PENDING_F02, 'Pendiente de enlazar: schedules - el horario\n') }, ['pending_malformed|WHATSAPP_INBOX-F02']],
+  ['retired_malformed (a pending line)', { [APPT]: once('Implicados: ninguno\n', `Implicados: ninguno\n${PENDING_F01}`) }, ['retired_malformed|APPOINTMENTS-F02']],
+  ['a key indented is not a key', { [APPT]: once('Actor: responsable', ' Actor: responsable') }, ['key_missing|APPOINTMENTS-F01']],
+  ['an indented fence is not a fence', { [APPT]: (t) => t.replace('~~~\n### APPOINTMENTS-F99', '  ~~~\n### APPOINTMENTS-F99') }, ['code_block_unclosed|']],
+];
+
+for (const [label, edits, expected] of OTHER) {
+  test(`§5.4 ${label}`, () => {
+    assert.deepEqual(errorPairs(edits), expected);
+  });
+}
+
+test('`Alcance MVP: congelado`: the short card needs only `## Para qué sirve y para quién`', () => {
+  const card = 'Prefijo: TASKS\nAlcance MVP: congelado\n\n## Para qué sirve y para quién\nNo se cambia.\n';
+  const ok = lintWorkflowText(card, { prefix: 'TASKS' });
+  assert.deepEqual([ok.errors, ok.warnings], [[], []]);
+  const out = lintWorkflowText(card.replace('## Para qué sirve y para quién', '## Otra cosa'), { prefix: 'TASKS' });
+  assert.equal(out.errors.length, 1);
+  assert.match(out.errors[0], /^WORKFLOW\.md:\d+: section_missing: /);
+});
+
+// ── Messages ──────────────────────────────────────────────────────────────────
+
+test('every message is `<file>:<line>: <code>: <text>`, with the real line', () => {
+  const root = example({ [APPT]: once('### APPOINTMENTS-F01 Dar', '### APPOINTMENTS-F1 Dar') });
+  try {
+    const { errors } = check(root, 'appointments');
+    const line = readFileSync(join(root, APPT), 'utf8').split('\n').indexOf('### APPOINTMENTS-F1 Dar una cita desde la agenda') + 1;
+    assert.deepEqual(errors.length, 1);
+    assert.match(errors[0], new RegExp(`^WORKFLOW\\.md:${line}: flow_header_malformed: \\S`));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('a detail file is named by its path in the module', () => {
+  const root = example({ [WA_DETAIL]: once('Prefijo: WHATSAPP_INBOX\n', '') });
+  try {
+    assert.match(check(root, 'whatsapp_inbox').errors[0], /^workflow\/conversaciones\.md:1: prefix_missing: /);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('module_prefix_mismatch: the prefix is not the module id in upper case', () => {
+  const root = example();
+  try {
+    const dir = join(root, 'appointments');
+    const out = checkWorkflowDoc(dir, { id: 'citas', name: 'Citas', version: '1.0.0' });
+    assert.deepEqual(pairs(out.findings, 'error'), ['module_prefix_mismatch|']);
+    assert.match(out.errors[0], /module_prefix_mismatch: .*`APPOINTMENTS`.*`CITAS`/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('WARNS file_too_long above 600 lines, counted the way awk reads them', () => {
+  const pad = (n) => (t) => t + Array.from({ length: n }, (_, i) => `Línea ${i}.`).join('\n') + '\n';
+  const lines = readFileSync(join(FIXTURES, APPT), 'utf8').split('\n').length - 1;
+  for (const [extra, warned] of [[600 - lines, false], [601 - lines, true]]) {
+    const root = example({ [APPT]: pad(extra) });
+    try {
+      const out = check(root, 'appointments');
+      assert.deepEqual(out.errors, []);
+      assert.deepEqual(pairs(out.findings, 'warning'), warned ? ['file_too_long|'] : [], `${lines + extra} lines`);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+});
+
+// ── Missing file: warning, or error with --strict ─────────────────────────────
+
+test('a module without WORKFLOW.md: warning `workflow_missing`, never an error', () => {
+  const root = example({ [APPT]: () => null });
+  try {
+    const out = check(root, 'appointments');
     assert.deepEqual(out.errors, []);
-    assert.equal(out.warnings.length, 1);
-    assert.match(out.warnings[0], /WORKFLOW\.md/);
+    assert.deepEqual(pairs(out.findings, 'warning'), ['workflow_missing|appointments']);
+    assert.match(out.warnings[0], /workflow_missing: /);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('PASSES: a module with a valid WORKFLOW.md', () => {
-  const dir = mod(base(), { workflow: doc() });
+test('--strict: a module without WORKFLOW.md is an error', () => {
+  const root = example({ [APPT]: () => null });
   try {
-    assert.deepEqual(checkWorkflowDoc(dir, base()), { errors: [], warnings: [] });
+    const dir = join(root, 'appointments');
+    const out = checkWorkflowDoc(dir, JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8')), { strict: true });
+    assert.deepEqual(pairs(out.findings, 'error'), ['workflow_missing|appointments']);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('ERROR: the module `Prefijo` is not its id in upper case', () => {
-  const dir = mod(base({ id: 'cash_register' }), { workflow: doc() });
-  try {
-    const out = checkWorkflowDoc(dir, base({ id: 'cash_register' }));
-    assert.equal(out.errors.length, 1, out.errors.join('\n'));
-    assert.match(out.errors[0], /^WORKFLOW\.md:\d+: .*`SALES`.*expected `CASH_REGISTER`/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('PASSES: a WORKFLOW.md split into workflow/*.md parts', () => {
-  const refund = FLOW.replace('SALES-F03 Cobrar un tique', 'SALES-F11 Devolver un tique');
-  const dir = mod(base(), { workflow: doc(), parts: { 'devoluciones.md': part(refund) } });
-  try {
-    assert.deepEqual(checkWorkflowDoc(dir, base()), { errors: [], warnings: [] });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('PASSES: an index with no flow of its own, its `## Flujos` a table pointing at the parts', () => {
-  const table = ['| Flujo | Fichero |', '|---|---|', '| SALES-F03 Cobrar un tique | workflow/cobro.md |'].join('\n');
-  const dir = mod(base(), { workflow: doc({ flows: [table] }), parts: { 'cobro.md': part(FLOW) } });
-  try {
-    assert.deepEqual(checkWorkflowDoc(dir, base()), { errors: [], warnings: [] });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('ERROR: a workflow/x.md part without its `Prefijo:` line', () => {
-  const dir = mod(base(), { workflow: doc(), parts: { 'x.md': part(FLOW.replace('SALES-F03', 'SALES-F11')).replace('Prefijo: SALES\n', '') } });
-  try {
-    const out = checkWorkflowDoc(dir, base());
-    assert.equal(out.errors.length, 1, out.errors.join('\n'));
-    assert.match(out.errors[0], /^workflow\/x\.md:\d+: .*`Prefijo:`/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('ERROR: a workflow/x.md part without `## Flujos`', () => {
-  const noFlows = part(FLOW.replace('SALES-F03', 'SALES-F11')).replace('## Flujos — Devoluciones', '## Devoluciones');
-  const dir = mod(base(), { workflow: doc(), parts: { 'x.md': noFlows } });
-  try {
-    const out = checkWorkflowDoc(dir, base());
-    assert.ok(out.errors.some((e) => /^workflow\/x\.md:\d+: .*`## Flujos`/.test(e)), out.errors.join('\n'));
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('ERROR: a flow ID repeated between WORKFLOW.md and workflow/x.md', () => {
-  const dir = mod(base(), { workflow: doc(), parts: { 'x.md': part(FLOW) } });
-  try {
-    const out = checkWorkflowDoc(dir, base());
-    assert.equal(out.errors.length, 1, out.errors.join('\n'));
-    assert.match(out.errors[0], /^workflow\/x\.md:\d+: .*`SALES-F03`.*WORKFLOW\.md:\d+/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('ERROR: a workflow/x.md part with another prefix', () => {
-  const other = part(FLOW.replaceAll('SALES-F', 'INVOICE-F')).replace('Prefijo: SALES', 'Prefijo: INVOICE');
-  const dir = mod(base(), { workflow: doc(), parts: { 'x.md': other } });
-  try {
-    const out = checkWorkflowDoc(dir, base());
-    assert.ok(out.errors.length >= 1);
-    assert.match(out.errors[0], /^workflow\/x\.md:\d+: .*`INVOICE`.*expected `SALES`/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('SILENT: the 600-line limit applies to WORKFLOW.md, the parts are where the detail goes', () => {
-  const many = Array.from({ length: 50 }, (_, i) =>
-    FLOW.replace('SALES-F03 Cobrar un tique', `SALES-F${String(20 + i).padStart(2, '0')} Variante ${i}`),
-  ).join('\n\n');
-  const dir = mod(base(), { workflow: doc(), parts: { 'variantes.md': part(many) } });
-  try {
-    assert.deepEqual(checkWorkflowDoc(dir, base()), { errors: [], warnings: [] });
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 // ── Wired into `erplora validate` ─────────────────────────────────────────────
 
 test('WIRED: `erplora validate` passes (and warns) on a module without WORKFLOW.md', async () => {
-  const dir = mod(base());
+  const root = example({ [APPT]: () => null });
+  const dir = join(root, 'appointments');
   const warned = [];
   const original = console.warn;
   console.warn = (msg) => warned.push(String(msg));
   try {
-    writeContractsFile(dir, base());
+    writeContractsFile(dir, JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8')));
     await assert.doesNotReject(() => validate(dir));
-    assert.ok(warned.some((w) => /WORKFLOW\.md/.test(w)), `no WORKFLOW.md warning among:\n${warned.join('\n')}`);
+    assert.ok(warned.some((w) => /workflow_missing/.test(w)), `no workflow_missing warning among:\n${warned.join('\n')}`);
+    await assert.rejects(() => validate(dir, { strict: true }), /workflow_missing/);
   } finally {
     console.warn = original;
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('WIRED: `erplora validate` rejects a module whose WORKFLOW.md is malformed, with the lint message', async () => {
-  const dir = mod(base(), { workflow: doc({ flows: [FLOW.replace('SALES-F03', 'SALES-F3')] }) });
+test('WIRED: `erplora validate` rejects a malformed WORKFLOW.md with the lint message', async () => {
+  const root = example({ [APPT]: once('### APPOINTMENTS-F01 Dar', '### APPOINTMENTS-F1 Dar') });
+  const dir = join(root, 'appointments');
   try {
-    writeContractsFile(dir, base());
-    await assert.rejects(() => validate(dir), /WORKFLOW\.md:\d+: .*`SALES-F3`/);
+    writeContractsFile(dir, JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8')));
+    await assert.rejects(() => validate(dir), /WORKFLOW\.md:\d+: flow_header_malformed: /);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('WIRED: the valid example passes `erplora validate` with no workflow-doc warning', async () => {
+  const root = example();
+  const dir = join(root, 'whatsapp_inbox');
+  const warned = [];
+  const original = console.warn;
+  console.warn = (msg) => warned.push(String(msg));
+  try {
+    writeContractsFile(dir, JSON.parse(readFileSync(join(dir, 'module.json'), 'utf8')));
+    await assert.doesNotReject(() => validate(dir));
+    assert.deepEqual(warned.filter((w) => /WORKFLOW|workflow\//.test(w)), []);
+  } finally {
+    console.warn = original;
+    rmSync(root, { recursive: true, force: true });
   }
 });
