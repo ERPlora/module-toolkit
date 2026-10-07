@@ -161,7 +161,7 @@ POST    /api/profile/avatar                            auth:session
 POST    /api/query                                     auth:any-credential
 GET     /api/settings                                  auth:session
 PUT     /api/settings                                  auth:admin
-GET     /api/system                                    auth:session
+GET     /api/system                                    auth:admin
 GET     /api/system/declaration                        auth:session
 GET     /api/system/metrics                            auth:admin
 GET     /api/system/update-history                     auth:session
