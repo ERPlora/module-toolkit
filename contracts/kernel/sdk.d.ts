@@ -24,6 +24,7 @@ export interface Notification {
     type: 'success' | 'error' | 'info' | 'warning';
     message: string;
 }
+export type DeviceMode = 'shared' | 'personal';
 export interface FormatMoneyOptions {
     currency?: string;
     locale?: string;
@@ -503,6 +504,7 @@ export declare class ErploraClient {
         currencyDecimals?: () => number;
         timezone?: () => string;
         installedModules?: () => ReadonlySet<string> | undefined;
+        deviceMode?: () => DeviceMode;
     }, bridge?: BridgeTransport);
     private static ownerModuleOf;
     private isKnownAbsent;
@@ -529,6 +531,7 @@ export declare class ErploraClient {
     get locale(): string;
     get currency(): string;
     get timezone(): string;
+    get deviceMode(): DeviceMode;
     private moneyFmt;
     formatMoney(minor: number, opts?: FormatMoneyOptions): string;
     get currencyDecimals(): number;
