@@ -246,6 +246,7 @@ const MANUAL = [
     [APPT]: (t) => once('## Flujos\n', MAINTAINER_BLOCK + '## Flujos\n')(once(MAINTAINER_BLOCK, '')(t)),
   }, ['maintainer_part_misplaced|']],
   ['a detail file with a maintenance section and no heading', { [WA_DETAIL]: (t) => `${t}\n## Dudas abiertas\nNinguna.\n` }, ['maintainer_part_missing|']],
+  ['a detail file whose only maintenance section is the sources, and no heading', { [WA_DETAIL]: (t) => `${t}\n## Fuentes contrastadas\n- Odoo.\n` }, ['maintainer_part_missing|']],
   ['a `no hecho` flow without «Todavía no:»', { [WA_DETAIL]: once(NOT_YET_F02, '') }, ['not_yet_missing|WHATSAPP_INBOX-F02']],
   ['a `parcial` flow with «Todavía no:» below `Estado:`', {
     [WA_DETAIL]: (t) => once('Vertical: peluqueria\n', 'Vertical: peluqueria\n' + NOT_YET_F01)(once(NOT_YET_F01, '')(t)),
@@ -260,7 +261,10 @@ for (const [label, edits, expected] of MANUAL) {
 }
 
 const MANUAL_STILL_VALID = [
-  ['a kind of the vocabulary other than `módulo` (app, crate, área, recorrido)', { [APPT]: once('(módulo)', '(crate)') }],
+  ['the kind `app`', { [APPT]: once('(módulo)', '(app)') }],
+  ['the kind `crate`', { [APPT]: once('(módulo)', '(crate)') }],
+  ['the kind `área`', { [APPT]: once('(módulo)', '(área)') }],
+  ['the kind `recorrido`', { [APPT]: once('(módulo)', '(recorrido)') }],
   ['a `hecho` flow that starts with a step, not with «Todavía no:» (APPOINTMENTS-F01 as it is)', {}],
   ['a blank line between the flow header and «Todavía no:»', { [WA_DETAIL]: once(NOT_YET_F02, `\n${NOT_YET_F02}`) }],
   ['free `## ` sections after `## Para quien lo mantiene`', { [APPT]: once('## Dudas abiertas', '## Código que gobierna\nsrc/.\n\n## Dudas abiertas') }],
