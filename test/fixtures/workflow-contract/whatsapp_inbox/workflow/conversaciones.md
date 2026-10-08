@@ -1,10 +1,10 @@
-# WORKFLOW — WhatsApp · Conversaciones
-
+# Workflow — WhatsApp · Conversaciones (área)
 Prefijo: WHATSAPP_INBOX
 
 ## Flujos
 
 ### WHATSAPP_INBOX-F01 Pedir una cita por WhatsApp
+Todavía no: si la hora pedida está ocupada, no se le ofrece otra; la conversación queda para el responsable.
 Estado: parcial — falta ofrecer otro hueco cuando el pedido está ocupado
 Vertical: peluqueria
 Actor: cliente
@@ -22,6 +22,7 @@ Pendiente de enlazar: customers — reconocer a la clienta por su teléfono
 QA: WA-01
 
 ### WHATSAPP_INBOX-F02 Responder fuera del horario de atención
+Todavía no: fuera de horario nadie contesta solo; el mensaje espera al responsable.
 Estado: no hecho — falta la respuesta automática fuera de horario
 Vertical: comun
 Actor: sistema

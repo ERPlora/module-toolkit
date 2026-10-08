@@ -1,5 +1,4 @@
-# WORKFLOW — Citas
-
+# Workflow — Citas (módulo)
 Prefijo: APPOINTMENTS
 Alcance MVP: peluqueria
 
@@ -42,6 +41,9 @@ QA: B-02, W-01
 
 ### APPOINTMENTS-F02 [retirado] Aceptar solicitudes desde la pestaña Solicitudes
 Implicados: ninguno
+
+## Para quien lo mantiene
+Lo que sigue es para quien cambia el componente; quien lo usa puede parar aquí.
 
 ## Cobertura contra la referencia
 | Elemento | Estado | Flujo |

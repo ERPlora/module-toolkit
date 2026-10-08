@@ -1,5 +1,4 @@
-# WORKFLOW — WhatsApp
-
+# Workflow — WhatsApp (módulo)
 Prefijo: WHATSAPP_INBOX
 Alcance MVP: transversal
 
@@ -22,6 +21,9 @@ Se llega desde el menú «WhatsApp». Vacía: «Sin conversaciones». Cargando: 
 |---|---|
 | WHATSAPP_INBOX-F01 Pedir una cita por WhatsApp | workflow/conversaciones.md |
 | WHATSAPP_INBOX-F02 Responder fuera del horario de atención | workflow/conversaciones.md |
+
+## Para quien lo mantiene
+Lo que sigue es para quien cambia el componente; quien lo usa puede parar aquí.
 
 ## Cobertura contra la referencia
 | Elemento | Estado | Flujo |

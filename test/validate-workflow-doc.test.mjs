@@ -62,6 +62,17 @@ function errorPairs(edits) {
   }
 }
 
+/** Both components of the example after `edits`: `[error pairs, warning pairs]`. */
+function allPairs(edits) {
+  const root = example(edits);
+  try {
+    const findings = [...check(root, 'appointments').findings, ...check(root, 'whatsapp_inbox').findings];
+    return [pairs(findings, 'error'), pairs(findings, 'warning')];
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
 /** Replaces exactly one occurrence, so a fixture that drifted fails loudly instead of passing. */
 function once(from, to) {
   return (text) => {
@@ -85,9 +96,9 @@ test('§6: the valid example gives zero findings, errors or warnings', () => {
   }
 });
 
-test('§6: the same, saved with CRLF', () => {
+test('§6: the same, saved with CRLF (no warning either: the identity lines are normalised too)', () => {
   const crlf = (t) => t.replaceAll('\n', '\r\n');
-  assert.deepEqual(errorPairs({ [APPT]: crlf, [WA]: crlf, [WA_DETAIL]: crlf }), []);
+  assert.deepEqual(allPairs({ [APPT]: crlf, [WA]: crlf, [WA_DETAIL]: crlf }), [[], []]);
 });
 
 // ── §7: one change each, «Niveles 1 y 2» ──────────────────────────────────────
@@ -97,6 +108,7 @@ const RETIRED_BLOCK = '### APPOINTMENTS-F02 [retirado] Aceptar solicitudes desde
 const COVERAGE_ROW = '| Cita con clienta, servicio, profesional y hora | hecho | APPOINTMENTS-F01 |\n';
 const PENDING_F01 = 'Pendiente de enlazar: customers — reconocer a la clienta por su teléfono\n';
 const PENDING_F02 = 'Pendiente de enlazar: schedules — el horario de apertura del negocio\n';
+const MAINTAINER = '## Para quien lo mantiene';
 const SOURCES = '## Fuentes contrastadas\nEl manual dice que la cita se puede arrastrar a otro día; el código solo deja moverla dentro del mismo día.\n';
 const SALES_FLOW = [
   '### SALES-F05 Vender', 'Estado: hecho', 'Actor: empleado', 'Pantalla: Agenda', 'Pasos:', '1. Vende.',
@@ -130,7 +142,7 @@ const INVALID = [
   [18, 'a flow ID twice', { [APPT]: (t) => t.replace(F01_BLOCK(t), F01_BLOCK(t) + F01_BLOCK(t).replace('Dar una cita desde la agenda', 'Otra cita')) }, ['flow_id_repeated|APPOINTMENTS-F01']],
   [19, '`ninguno` over a pending line', { [WA_DETAIL]: once('Implicados: pendiente', 'Implicados: ninguno') }, ['pending_under_none|WHATSAPP_INBOX-F02']],
   [20, 'pending line before Implicados', { [WA_DETAIL]: (t) => once('Implicados: APPOINTMENTS-F01\n', PENDING_F01 + 'Implicados: APPOINTMENTS-F01\n')(once(PENDING_F01, '')(t)) }, ['pending_misplaced|WHATSAPP_INBOX-F01']],
-  [21, 'a flow of another prefix', { [APPT]: once('## Cobertura contra la referencia', SALES_FLOW + '## Cobertura contra la referencia') }, ['flow_prefix_mismatch|SALES-F05']],
+  [21, 'a flow of another prefix', { [APPT]: once(MAINTAINER, SALES_FLOW + MAINTAINER) }, ['flow_prefix_mismatch|SALES-F05']],
   [22, '`Prefijo` twice', { [APPT]: once('Prefijo: APPOINTMENTS\n', 'Prefijo: APPOINTMENTS\nPrefijo: APPOINTMENTS\n') }, ['prefix_repeated|']],
   [23, 'a REC_ prefix in a module', { [APPT]: once('Prefijo: APPOINTMENTS', 'Prefijo: REC_CITAS') },
     ['flow_prefix_mismatch|APPOINTMENTS-F01', 'flow_prefix_mismatch|APPOINTMENTS-F02', 'module_prefix_mismatch|', 'rec_prefix_misplaced|']],
@@ -142,7 +154,7 @@ const INVALID = [
     [WA]: (t) => {
       const detail = readFileSync(join(FIXTURES, WA_DETAIL), 'utf8');
       const block = detail.slice(detail.indexOf('### WHATSAPP_INBOX-F02'));
-      return once('\n## Cobertura contra la referencia', `\n${block}\n## Cobertura contra la referencia`)(t);
+      return once(`\n${MAINTAINER}`, `\n${block}\n${MAINTAINER}`)(t);
     },
   }, ['flow_id_repeated|WHATSAPP_INBOX-F02']],
   [28, '`Fuentes contrastadas` before `Dudas abiertas`', { [APPT]: (t) => once('## Dudas abiertas', SOURCES + '\n## Dudas abiertas')(once(SOURCES, '')(t)) }, ['section_out_of_order|']],
@@ -200,12 +212,107 @@ for (const [label, edits, expected] of OTHER) {
 }
 
 test('`Alcance MVP: congelado`: the short card needs only `## Para qué sirve y para quién`', () => {
-  const card = 'Prefijo: TASKS\nAlcance MVP: congelado\n\n## Para qué sirve y para quién\nNo se cambia.\n';
+  const card = '# Workflow — Tareas (módulo)\nPrefijo: TASKS\nAlcance MVP: congelado\n\n## Para qué sirve y para quién\nNo se cambia.\n';
   const ok = lintWorkflowText(card, { prefix: 'TASKS' });
   assert.deepEqual([ok.errors, ok.warnings], [[], []]);
   const out = lintWorkflowText(card.replace('## Para qué sirve y para quién', '## Otra cosa'), { prefix: 'TASKS' });
   assert.equal(out.errors.length, 1);
   assert.match(out.errors[0], /^WORKFLOW\.md:\d+: section_missing: /);
+});
+
+// ── It reads as a manual (pm#658): three rules, WARNINGS while the files migrate ──────────
+//
+// The WORKFLOW.md is also the user manual (no separate `hand-book/` derives from it): its first two
+// lines say what it is, the maintenance part sits at the end under `## Para quien lo mantiene`, and
+// a flow that does not exist yet says so before anything else. Each chain brings its file into
+// shape in its first PR, so until the MVP modules comply these are warnings, never errors.
+
+const NOT_YET_F01 = 'Todavía no: si la hora pedida está ocupada, no se le ofrece otra; la conversación queda para el responsable.\n';
+const NOT_YET_F02 = 'Todavía no: fuera de horario nadie contesta solo; el mensaje espera al responsable.\n';
+const MAINTAINER_BLOCK = `${MAINTAINER}\nLo que sigue es para quien cambia el componente; quien lo usa puede parar aquí.\n\n`;
+
+const MANUAL = [
+  ['the old title', { [APPT]: once('# Workflow — Citas (módulo)', '# WORKFLOW — Citas') }, ['identity_missing|']],
+  ['a blank line between the title and `Prefijo:`', { [APPT]: once('# Workflow — Citas (módulo)\n', '# Workflow — Citas (módulo)\n\n') }, ['identity_missing|']],
+  ['a kind outside the vocabulary', { [APPT]: once('(módulo)', '(servicio)') }, ['identity_missing|']],
+  ['the kind without its accent', { [APPT]: once('(módulo)', '(modulo)') }, ['identity_missing|']],
+  ['a title without the kind', { [APPT]: once('# Workflow — Citas (módulo)', '# Workflow — Citas') }, ['identity_missing|']],
+  ['a detail file without the title', { [WA_DETAIL]: once('# Workflow — WhatsApp · Conversaciones (área)\n', '') }, ['identity_missing|']],
+  ['no `## Para quien lo mantiene`', { [APPT]: once(MAINTAINER_BLOCK, '') }, ['maintainer_part_missing|']],
+  ['`## Para quien lo mantiene` after a maintenance section', {
+    [APPT]: (t) => once('## Reglas que no se rompen', MAINTAINER_BLOCK + '## Reglas que no se rompen')(once(MAINTAINER_BLOCK, '')(t)),
+  }, ['maintainer_part_misplaced|']],
+  ['`## Para quien lo mantiene` before `## Flujos`', {
+    [APPT]: (t) => once('## Flujos\n', MAINTAINER_BLOCK + '## Flujos\n')(once(MAINTAINER_BLOCK, '')(t)),
+  }, ['maintainer_part_misplaced|']],
+  ['a detail file with a maintenance section and no heading', { [WA_DETAIL]: (t) => `${t}\n## Dudas abiertas\nNinguna.\n` }, ['maintainer_part_missing|']],
+  ['a `no hecho` flow without «Todavía no:»', { [WA_DETAIL]: once(NOT_YET_F02, '') }, ['not_yet_missing|WHATSAPP_INBOX-F02']],
+  ['a `parcial` flow with «Todavía no:» below `Estado:`', {
+    [WA_DETAIL]: (t) => once('Vertical: peluqueria\n', 'Vertical: peluqueria\n' + NOT_YET_F01)(once(NOT_YET_F01, '')(t)),
+  }, ['not_yet_missing|WHATSAPP_INBOX-F01']],
+  ['«Todavía no:» with nothing after it', { [WA_DETAIL]: once(NOT_YET_F02, 'Todavía no:\n') }, ['not_yet_missing|WHATSAPP_INBOX-F02']],
+];
+
+for (const [label, edits, expected] of MANUAL) {
+  test(`manual (pm#658) ${label}: warns ${expected.join(', ')}, and no error`, () => {
+    assert.deepEqual(allPairs(edits), [[], expected]);
+  });
+}
+
+const MANUAL_STILL_VALID = [
+  ['a kind of the vocabulary other than `módulo` (app, crate, área, recorrido)', { [APPT]: once('(módulo)', '(crate)') }],
+  ['a `hecho` flow that starts with a step, not with «Todavía no:» (APPOINTMENTS-F01 as it is)', {}],
+  ['a blank line between the flow header and «Todavía no:»', { [WA_DETAIL]: once(NOT_YET_F02, `\n${NOT_YET_F02}`) }],
+  ['free `## ` sections after `## Para quien lo mantiene`', { [APPT]: once('## Dudas abiertas', '## Código que gobierna\nsrc/.\n\n## Dudas abiertas') }],
+];
+
+for (const [label, edits] of MANUAL_STILL_VALID) {
+  test(`manual (pm#658) still clean: ${label}`, () => {
+    assert.deepEqual(allPairs(edits), [[], []]);
+  });
+}
+
+test('manual (pm#658): a malformed `Estado:` is the error, and «Todavía no:» is not judged on it', () => {
+  const edits = { [WA_DETAIL]: (t) => once('Estado: no hecho — falta la respuesta automática fuera de horario', 'Estado: no hecho')(once(NOT_YET_F02, '')(t)) };
+  assert.deepEqual(allPairs(edits), [['state_malformed|WHATSAPP_INBOX-F02'], []]);
+});
+
+test('manual (pm#658): `--strict` keeps them warnings (only a missing file turns into an error)', () => {
+  const root = example({ [APPT]: once('# Workflow — Citas (módulo)', '# WORKFLOW — Citas'), [WA_DETAIL]: once(NOT_YET_F02, '') });
+  try {
+    const appt = checkWorkflowDoc(join(root, 'appointments'), { id: 'appointments' }, { strict: true });
+    const wa = checkWorkflowDoc(join(root, 'whatsapp_inbox'), { id: 'whatsapp_inbox' }, { strict: true });
+    assert.deepEqual([pairs([...appt.findings, ...wa.findings], 'error'), pairs([...appt.findings, ...wa.findings], 'warning')],
+      [[], ['identity_missing|', 'not_yet_missing|WHATSAPP_INBOX-F02']]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('manual (pm#658): a retired flow needs no «Todavía no:»', () => {
+  const card = '# Workflow — Tareas (módulo)\nPrefijo: TASKS\nAlcance MVP: congelado\n\n## Para qué sirve y para quién\nNo.\n\n## Flujos\n\n### TASKS-F01 [retirado] Algo\nImplicados: ninguno\n';
+  assert.deepEqual(lintWorkflowText(card, { prefix: 'TASKS' }).warnings, []);
+});
+
+test('manual (pm#658): the warnings point at the line to fix', () => {
+  const root = example({
+    [APPT]: (t) => once('# Workflow — Citas (módulo)', '# WORKFLOW — Citas')(once(MAINTAINER_BLOCK, '')(t)),
+    [WA_DETAIL]: once(NOT_YET_F02, ''),
+  });
+  try {
+    const appt = readFileSync(join(root, APPT), 'utf8');
+    const detail = readFileSync(join(root, WA_DETAIL), 'utf8');
+    const at = (text, needle) => text.split('\n').indexOf(needle) + 1;
+    const [identity, maintainer, ...rest] = check(root, 'appointments').warnings.sort();
+    assert.deepEqual(rest, []);
+    assert.match(identity, /^WORKFLOW\.md:1: identity_missing: \S/);
+    assert.match(maintainer, new RegExp(`^WORKFLOW\\.md:${at(appt, '## Cobertura contra la referencia')}: maintainer_part_missing: \\S`));
+    const notYet = check(root, 'whatsapp_inbox').warnings;
+    assert.deepEqual(notYet.length, 1);
+    assert.match(notYet[0], new RegExp(`^workflow/conversaciones\\.md:${at(detail, '### WHATSAPP_INBOX-F02 Responder fuera del horario de atención')}: not_yet_missing: \\S`));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // ── Messages ──────────────────────────────────────────────────────────────────
