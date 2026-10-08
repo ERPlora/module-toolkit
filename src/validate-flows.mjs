@@ -584,6 +584,7 @@ export const PIN_ROOTS = ['input', 'steps'];
  * Every root the mapping language addresses, mirroring `def::PATH_ROOTS` — which in the hub is its
  * OWN list and knows nothing of `PIN_ROOTS`. `now` joined it with the run clock (hub#1694) and this
  * copy stayed at four, so a pin on `now.iso` published green and the hub refused it (mt#234).
+ * `run` joined it with the call's own key, `run.idempotency_key` (hub#2675).
  * Two things ride on that:
  *
  * - It is the FULL list and not `PIN_ROOTS`: a dotted string whose root is none of these —
@@ -594,7 +595,7 @@ export const PIN_ROOTS = ['input', 'steps'];
  *   all and the door would go quiet on exactly the value the hub still refuses. Measured — with the
  *   derived version, dropping `input` from `PIN_ROOTS` left the whole suite green.
  */
-export const PATH_ROOTS = ['input', 'steps', 'event', 'secret', 'now'];
+export const PATH_ROOTS = ['input', 'steps', 'event', 'secret', 'now', 'run'];
 
 /** Is `text` a reference into the run rather than a literal? Mirrors `def::is_path` in the hub. */
 function isRunPath(text) {
