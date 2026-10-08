@@ -58,6 +58,14 @@ export const SECTIONS = [
   '## Fuentes contrastadas',
 ];
 const FLOWS = '## Flujos';
+// It reads as a manual (ERPlora/pm#658): what the file is in its first two lines, the maintenance
+// part at the end under one fixed heading, and a flow that does not exist yet says so first.
+// Warnings until the MVP modules comply.
+const IDENTITY_TITLE = /^# Workflow — .+ \((módulo|app|crate|área|recorrido)\)$/;
+export const MAINTAINER = '## Para quien lo mantiene';
+/** The sections that belong under MAINTAINER: from the coverage on. */
+const MAINTENANCE_SECTIONS = SECTIONS.slice(5);
+const NOT_YET_VALID = /^Todavía no: ./;
 
 /** `<file>:<line>: <code>: <text>` — the one shape every message has. */
 export function formatFinding(f) {
@@ -89,6 +97,7 @@ export function lintWorkflowFile(text, { file = WORKFLOW_FILE, kind = 'principal
   const findings = [];
   const add = (level, code, id, line, msg) => findings.push({ level, code, id, file, line, text: msg });
   const error = (code, id, line, msg) => add('error', code, id, line, msg);
+  const warn = (code, id, line, msg) => add('warning', code, id, line, msg);
 
   // §5.2: normalisation, then code blocks. `awkLines` is what awk reads: a final newline closes the
   // last record instead of opening an empty one.
@@ -117,6 +126,13 @@ export function lintWorkflowFile(text, { file = WORKFLOW_FILE, kind = 'principal
   }
 
   const firstSection = lines.find((l) => l.line.startsWith('## '))?.n ?? Infinity;
+
+  // Identity: the first two lines say what the file is.
+  const head = (i) => (i < awkLines ? raw[i].replace(/[ \t\r]+$/, '') : '');
+  if (!IDENTITY_TITLE.test(head(0)) || !head(1).startsWith('Prefijo:')) {
+    warn('identity_missing', '', 1,
+      'the first two lines say what this is: `# Workflow — <Nombre> (<módulo | app | crate | área | recorrido>)` and `Prefijo: <PREFIJO>`');
+  }
 
   // Prefijo.
   let prefix = null;
@@ -175,12 +191,25 @@ export function lintWorkflowFile(text, { file = WORKFLOW_FILE, kind = 'principal
     error('section_out_of_order', '', n, `\`${section}\` is out of the canonical order of the sections`);
   }
 
+  // The maintenance part, at the end under its heading.
+  const maintainer = lines.find((l) => l.line === MAINTAINER)?.n;
+  const firstMaintenance = Math.min(...MAINTENANCE_SECTIONS.filter((x) => seen.has(x)).map((x) => seen.get(x)));
+  if (maintainer === undefined) {
+    if (firstMaintenance !== Infinity) {
+      warn('maintainer_part_missing', '', firstMaintenance,
+        `no \`${MAINTAINER}\` heading: the maintenance part (coverage, data, rules, doubts, sources) goes under it, after the flows`);
+    }
+  } else if (maintainer > firstMaintenance || (seen.has(FLOWS) && maintainer < seen.get(FLOWS))) {
+    warn('maintainer_part_misplaced', '', maintainer,
+      `\`${MAINTAINER}\` goes after \`${FLOWS}\` and before the first maintenance section (coverage, data, rules, doubts, sources)`);
+  }
+
   // Flows.
   const flows = [];
   let inFlows = false;
   let flow = null;
   const close = () => {
-    if (flow) lintFlow(flow, prefix, error);
+    if (flow) lintFlow(flow, prefix, error, warn);
     flow = null;
   };
   for (const { n, line } of lines) {
@@ -216,8 +245,8 @@ export function lintWorkflowFile(text, { file = WORKFLOW_FILE, kind = 'principal
   return { findings, prefix, prefixLine, flows };
 }
 
-/** The rules of one flow block (§5.4), reported through `error(code, id, line, text)`. */
-function lintFlow(flow, prefix, error) {
+/** The rules of one flow block (§5.4), reported through `error`/`warn(code, id, line, text)`. */
+function lintFlow(flow, prefix, error, warn) {
   const { id } = flow;
   const keyLines = (key) => flow.lines.filter((l) => KEY_LINE.test(l.line) && l.line.slice(0, l.line.indexOf(':')) === key);
   const pending = flow.lines.filter((l) => l.line.startsWith(PENDING_LINE));
@@ -247,6 +276,12 @@ function lintFlow(flow, prefix, error) {
   const state = byKey.Estado.length === 1 ? byKey.Estado[0] : null;
   if (state && !STATE_VALID.test(state.line)) {
     error('state_malformed', id, state.n, `\`${state.line}\` is not a state: \`hecho\`, \`parcial — <qué falta>\` or \`no hecho — <qué falta>\` (em dash)`);
+  } else if (state && state.line !== 'Estado: hecho') {
+    const first = flow.lines.find((l) => l.line !== '');
+    if (!NOT_YET_VALID.test(first?.line ?? '')) {
+      warn('not_yet_missing', id, flow.n,
+        `flow \`${id}\` is not done: its first line says so to the reader, \`Todavía no: <what is missing, in user words>\``);
+    }
   }
 
   const vertical = flow.lines.filter((l) => l.line.startsWith(VERTICAL_LINE));
