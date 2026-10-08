@@ -69,6 +69,7 @@ commands.*.expect_rows.op = min
 commands.*.emit[] = string
 commands.*.emit[].event
 commands.*.emit[].dedup_key
+commands.*.emit[].when_rows
 
 [flow_pin_kinds]
 command

@@ -30,6 +30,22 @@ test('a well-formed object emit says nothing', () => {
   assert.deepEqual(checkEmitDedupKey(m), []);
 });
 
+test('an object that refines with `when_rows` alone says nothing — the schema admits either refinement (hub#2612)', () => {
+  const m = gate({
+    permission: 'm.w',
+    sql: ['commands/holds_expire.sql'],
+    emit: [{ event: 'm.hold.released', when_rows: 'commands/holds_expire.sql' }],
+  });
+  assert.deepEqual(checkEmitDedupKey(m), []);
+});
+
+test('an object with NEITHER dedup_key nor when_rows is still a misspelt string: refused', () => {
+  const m = gate({ permission: 'm.w', emit: [{ event: 'm.hold.released' }] });
+  const errs = checkEmitDedupKey(m);
+  assert.equal(errs.length, 1, JSON.stringify(errs));
+  assert.match(errs[0], /emit\[0\]/);
+});
+
 test('an empty dedup_key is refused: it cannot name any field of the payload', () => {
   const m = gate({ permission: 'm.w', emit: [{ event: 'm.thing.done', dedup_key: '' }] });
   const errs = checkEmitDedupKey(m);

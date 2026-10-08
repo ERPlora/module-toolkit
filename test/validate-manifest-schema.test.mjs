@@ -203,3 +203,32 @@ test('a defect NEXT TO the row gate is still reported — the silence is the rul
   assert.equal(errors.length, 1, `expected exactly the \`transaction\` defect: ${JSON.stringify(errors)}`);
   assert.match(errors[0], /transaction/);
 });
+
+// ── `emit[].when_rows` (hub#2612, module-toolkit#464): the copy admits what the hub reads ──────
+test('an emit object anchored with when_rows passes the vendored schema (hub#2612)', () => {
+  const { errors, warnings } = checkManifestSchema({
+    ...base(),
+    commands: {
+      'demo.holds.expire': {
+        sql: ['commands/holds_expire.sql'],
+        permission: 'demo.write',
+        emit: [
+          { event: 'demo.hold.released', when_rows: 'commands/holds_expire.sql' },
+          { event: 'demo.hold.stamped', when_rows: 'commands/holds_expire.sql', dedup_key: 'hold_id' },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(errors, []);
+  assert.deepEqual(warnings, []);
+});
+
+test('an emit object that refines nothing, or an empty when_rows, is refused by the vendored schema (hub#2612)', () => {
+  for (const emit of [[{ event: 'demo.hold.released' }], [{ event: 'demo.hold.released', when_rows: '' }]]) {
+    const { errors, warnings } = checkManifestSchema({
+      ...base(),
+      commands: { 'demo.holds.expire': { sql: ['commands/holds_expire.sql'], permission: 'demo.write', emit } },
+    });
+    assert.ok(errors.length + warnings.length >= 1, `must be reported: ${JSON.stringify(emit)}`);
+  }
+});

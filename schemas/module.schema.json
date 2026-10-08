@@ -477,19 +477,28 @@
           },
           "emit": {
             "type": "array",
-            "description": "Events this command emits. Each entry is either the plain event name (historical behaviour: emits once per EXECUTION) or an object that also declares `dedup_key` (hub#1076): the name of a field of the command's payload whose value derives the outbox row id, so a REPEATED emission with the SAME key (webhook redelivery, outbox relay retry) is absorbed instead of queuing a second event — the mechanism `insert_core_event_once` already uses for a core event. Opt-in: absent = historical behaviour.",
+            "description": "Events this command emits. Each entry is either the plain event name (historical behaviour: emits once per EXECUTION) or an object naming the event plus at least one opt-in refinement: `dedup_key` (hub#1076) — the name of a field of the command's payload whose value derives the outbox row id, so a REPEATED emission with the SAME key (webhook redelivery, outbox relay retry) is absorbed instead of queuing a second event; and/or `when_rows` (hub#2612) — one of the command's own `sql` paths, so the event is written only when THAT statement affected at least one row (a periodic sweep that found nothing to do answers `ok` and announces nothing). Opt-in: absent = historical behaviour.",
             "items": {
               "oneOf": [
                 { "type": "string" },
                 {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": ["event", "dedup_key"],
+                  "required": ["event"],
+                  "anyOf": [
+                    { "required": ["dedup_key"] },
+                    { "required": ["when_rows"] }
+                  ],
                   "properties": {
                     "event": { "type": "string" },
                     "dedup_key": {
                       "type": "string",
                       "description": "Name of a field of the command's payload (the same namespace as a `:field` bind in its SQL) whose value uniquely identifies the emission, scoped to the hub. Two executions with the SAME value absorb the second one in the outbox; different values are different events. A field that is absent or not a scalar emits WITHOUT deduplication and is reported."
+                    },
+                    "when_rows": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Path of one of this command's `sql` entries (hub#2612). The event is written to the outbox, inside the same transaction, only when THAT statement affected at least one row; zero rows is not an error — the command answers `ok`, its other statements commit and nothing is announced (neither queued nor pushed live). Unlike `min_affected_rows`/`expect_rows`, nothing rolls back: it is the shape a scheduled sweep needs (most passes find nothing to do). The installer refuses an anchor that is not one of the command's `sql` entries, and `when_rows` on a command with a `handler`."
                     }
                   }
                 }
