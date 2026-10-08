@@ -1,7 +1,8 @@
 // Publish guard for `commands.*.emit[].dedup_key` (ERPlora/hub#1076, ERPlora/module-toolkit#133).
 //
 // The vendored schema types `dedup_key` as a string and requires it on the object form of an
-// `emit` entry, and it stays that way on purpose: it is a byte-for-byte copy of the hub's own
+// `emit` entry unless the entry anchors with `when_rows` instead (hub#2612), and it stays that way
+// on purpose: it is a byte-for-byte copy of the hub's own
 // schema (`canonical-mirrors.test.mjs`), so it cannot carry a `minLength` or a `pattern` the hub
 // does not declare. `type: string` alone lets an empty string, or a value with no field could ever
 // have (spaces, `:`, punctuation), straight through.
@@ -37,6 +38,10 @@ export function checkEmitDedupKey(manifest) {
 
     emit.forEach((entry, i) => {
       if (typeof entry !== 'object' || entry === null) return; // the plain string shape: nothing to check
+      // hub#2612: the object form refines with `dedup_key` OR `when_rows` (`anyOf` in the schema). An
+      // entry that anchors with `when_rows` and declares no `dedup_key` is whole; `checkEmitWhenRows`
+      // judges the anchor. One that declares neither is still a misspelt string, below.
+      if (entry.dedup_key === undefined && typeof entry.when_rows === 'string') return;
       const where = `commands.${name}.emit[${i}].dedup_key`;
       const key = entry.dedup_key;
 

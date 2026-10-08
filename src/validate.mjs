@@ -42,6 +42,7 @@ import { checkRowGates } from './validate-row-gates.mjs';
 import { checkGateConstraints } from './validate-gate-constraints.mjs';
 import { checkHubScope } from './validate-hub-scope.mjs';
 import { checkEmitDedupKey } from './validate-emit-dedup-key.mjs';
+import { checkEmitWhenRows } from './validate-emit-when-rows.mjs';
 import { checkFilterOps } from './validate-filter-ops.mjs';
 import { checkDeadFilters } from './validate-dead-filters.mjs';
 import { checkBatteryMigrations } from './validate-battery-migrations.mjs';
@@ -197,6 +198,11 @@ export async function validate(moduleDir, { pg = false, publishing = false, stri
   // del schema del hub (`canonical-mirrors.test.mjs`), así que un valor vacío o que nunca podría
   // nombrar un campo pasa `checkManifestKeys` en silencio.
   errs.push(...checkEmitDedupKey(manifest));
+
+  // ERPlora/hub#2612 / module-toolkit#464: `when_rows` de la forma objeto de `emit`. El schema solo
+  // puede decir «cadena no vacía»; que el ancla nombre una sentencia `sql` de SU orden y que la
+  // orden no tenga `handler` lo comprueba el instalador del hub, y aquí la misma puerta antes.
+  errs.push(...checkEmitWhenRows(manifest));
 
   if (errs.length) throw new Error('manifest inválido:\n  - ' + errs.join('\n  - '));
 
