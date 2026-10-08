@@ -16,12 +16,28 @@
 // of them at once. So a component WITHOUT the file is a warning (`workflow_missing`; the migration
 // is open) unless `strict`, and a file that is there and malformed is an error.
 //
+// Name (ERPlora/pm#658). The file is being renamed `HANDBOOK.md` (its detail folder `handbook/`),
+// one component per chain: both names are read, and where both are, HANDBOOK.md governs and the
+// leftover WORKFLOW.md and `workflow/*.md` are a `legacy_workflow_file` warning, not linted.
+//
 // Naming. «flows» in this repository already means automations (`validate-flows.mjs`,
 // `flows/*.flow.json`). This is the `workflow-doc`, everywhere.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const WORKFLOW_FILE = 'WORKFLOW.md';
+/** The new name of the same file (ERPlora/pm#658), with `handbook/` as its detail folder. */
+export const HANDBOOK_FILE = 'HANDBOOK.md';
+/**
+ * The names of the main file, newest first, each with its own detail folder. Every component
+ * renames its own in the first PR of its chain, so until the last one goes both are read; in a
+ * folder with both, the newest governs and the older one is a `legacy_workflow_file` warning.
+ */
+const NAMES = [
+  { file: HANDBOOK_FILE, detail: 'handbook' },
+  { file: WORKFLOW_FILE, detail: 'workflow' },
+];
+const DETAIL_DIRS = new Set(NAMES.map((n) => n.detail));
 /** Above this many lines (as awk counts them) the file should become an index + `workflow/*.md`. */
 export const MAX_LINES = 600;
 
@@ -314,28 +330,35 @@ function markdownFiles(dir, except = []) {
     .sort();
 }
 
-/** `workflow/*.md` of a folder, sorted. */
-function secondaryFiles(dir) {
-  return markdownFiles(join(dir, 'workflow'));
+/** `<detail>/*.md` of a folder (`workflow/` by default), sorted. */
+function secondaryFiles(dir, detail = 'workflow') {
+  return markdownFiles(join(dir, detail));
+}
+
+/** The name that governs `dir`: the newest of `NAMES` that is a file there, or undefined. */
+function governingName(dir) {
+  return NAMES.find((n) => isFileIn(dir, n.file));
 }
 
 /**
- * Level 2: the component in `dir` — its WORKFLOW.md and the `workflow/*.md` beside it. `modulePrefix`
+ * Level 2: the component in `dir` — its HANDBOOK.md (or WORKFLOW.md) and the `handbook/*.md` (or
+ * `workflow/*.md`) beside it. With both names, HANDBOOK.md governs: the old WORKFLOW.md and its
+ * `workflow/*.md` are not linted, each is a `legacy_workflow_file` warning (pm#658). `modulePrefix`
  * (a module's id in upper case) adds `module_prefix_mismatch`; `family` adds `family_mismatch`
  * (`erplora workflow-lint --family`, not part of the contract); `label` prefixes the paths.
- * Returns `{ findings, found, prefix, files, flows }`.
+ * Returns `{ findings, found, file, prefix, files, flows }` (`file` = the governing name).
  */
 export function lintWorkflowComponent(dir, { modulePrefix, family, label = '' } = {}) {
   const findings = [];
   const files = [];
   const flows = [];
-  const main = join(dir, WORKFLOW_FILE);
-  const found = isFileIn(dir, WORKFLOW_FILE);
+  const governing = governingName(dir);
+  const found = Boolean(governing);
   let prefix = null;
   let prefixLine = 1;
   if (found) {
-    const file = `${label}${WORKFLOW_FILE}`;
-    const text = readFileSync(main, 'utf8');
+    const file = `${label}${governing.file}`;
+    const text = readFileSync(join(dir, governing.file), 'utf8');
     const r = lintWorkflowFile(text, { file });
     findings.push(...r.findings);
     flows.push(...r.flows);
@@ -348,29 +371,47 @@ export function lintWorkflowComponent(dir, { modulePrefix, family, label = '' } 
     }
     if (prefix && family && !inFamily(prefix, family)) findings.push(familyMismatch(prefix, family, file, prefixLine));
   }
-  for (const name of secondaryFiles(dir)) {
-    const file = `${label}workflow/${name}`;
-    const text = readFileSync(join(dir, 'workflow', name), 'utf8');
-    const r = lintWorkflowFile(text, { file, kind: 'secondary' });
-    findings.push(...r.findings);
-    files.push(file);
-    if (!found) {
-      findings.push({ level: 'error', code: 'orphan_subfile', id: '', file, line: 1,
-        text: `no \`${WORKFLOW_FILE}\` next to its \`workflow/\` folder: a detail file belongs to an index` });
-    } else if (prefix && r.prefix && r.prefix !== prefix) {
-      findings.push({ level: 'error', code: 'subfile_prefix_mismatch', id: '', file, line: r.prefixLine,
-        text: `prefix \`${r.prefix}\` is not the one of its index \`${prefix}\` (a detail file repeats it)` });
+  for (const [rank, n] of NAMES.entries()) {
+    // An older name beside the governing one: the leftover of the rename, warned and not read.
+    if (found && rank > NAMES.indexOf(governing)) {
+      const leftovers = [
+        ...(isFileIn(dir, n.file) ? [n.file] : []),
+        ...secondaryFiles(dir, n.detail).map((name) => `${n.detail}/${name}`),
+      ];
+      for (const rel of leftovers) findings.push(legacy(`${label}${rel}`, `${label}${governing.file}`));
+      continue;
     }
-    for (const f of r.flows) {
-      const first = flows.find((x) => x.id === f.id && x.file !== f.file);
-      if (first) {
-        findings.push({ level: 'error', code: 'flow_id_repeated', id: f.id, file, line: f.line,
-          text: `flow \`${f.id}\` is already declared at ${first.file}:${first.line} (a number is never reused)` });
+    for (const name of secondaryFiles(dir, n.detail)) {
+      const file = `${label}${n.detail}/${name}`;
+      const text = readFileSync(join(dir, n.detail, name), 'utf8');
+      const r = lintWorkflowFile(text, { file, kind: 'secondary' });
+      findings.push(...r.findings);
+      files.push(file);
+      if (n !== governing) {
+        findings.push({ level: 'error', code: 'orphan_subfile', id: '', file, line: 1,
+          text: `no \`${n.file}\` next to its \`${n.detail}/\` folder: a detail file belongs to an index` });
+      } else if (prefix && r.prefix && r.prefix !== prefix) {
+        findings.push({ level: 'error', code: 'subfile_prefix_mismatch', id: '', file, line: r.prefixLine,
+          text: `prefix \`${r.prefix}\` is not the one of its index \`${prefix}\` (a detail file repeats it)` });
       }
+      for (const f of r.flows) {
+        const first = flows.find((x) => x.id === f.id && x.file !== f.file);
+        if (first) {
+          findings.push({ level: 'error', code: 'flow_id_repeated', id: f.id, file, line: f.line,
+            text: `flow \`${f.id}\` is already declared at ${first.file}:${first.line} (a number is never reused)` });
+        }
+      }
+      flows.push(...r.flows);
     }
-    flows.push(...r.flows);
   }
-  return { findings, found, prefix, prefixLine, files, flows };
+  return { findings, found, file: governing?.file, prefix, prefixLine, files, flows };
+}
+
+/** The old name left beside the new one (pm#658): not read, a warning until the rename deletes it. */
+function legacy(file, governing) {
+  return { level: 'warning', code: 'legacy_workflow_file', id: '', file, line: 1,
+    text: `not read: ${governing} is in its folder and governs; this is the leftover of the rename to ` +
+      `${HANDBOOK_FILE} (ERPlora/pm#658) and is deleted` };
 }
 
 /** `--family` of `erplora workflow-lint`: a toolkit option, not a rule of the contract. */
@@ -387,7 +428,7 @@ function missing(id, file, strict) {
     file,
     line: 1,
     text:
-      `no ${WORKFLOW_FILE} yet — the component's functional spec (screens, flows, \`Implicados\`) that workers, ` +
+      `no ${HANDBOOK_FILE} (nor ${WORKFLOW_FILE}, its old name) yet — the component's functional spec (screens, flows, \`Implicados\`) that workers, ` +
       'reviewers and QA read before touching it (ERPlora/pm#621, architecture/contracts/workflow-contract.md)',
   };
 }
@@ -414,7 +455,7 @@ export function checkWorkflowDoc(dir, manifest, { strict = false } = {}) {
   const id = String(manifest?.id ?? '');
   const r = lintWorkflowComponent(dir, { modulePrefix: id ? id.toUpperCase() : undefined });
   const findings = [...r.findings];
-  if (!r.found) findings.unshift(missing(id, WORKFLOW_FILE, strict));
+  if (!r.found) findings.unshift(missing(id, HANDBOOK_FILE, strict));
   return split(findings);
 }
 
@@ -446,15 +487,15 @@ export function lintWorkflowTree(root, { family, strict = false, name = '.' } = 
   const flows = [];
   const mains = [];
   for (const rel of walkDirs(root)) {
-    if (rel.split('/').pop() === 'workflow') continue;
+    if (DETAIL_DIRS.has(rel.split('/').pop())) continue;
     const dir = join(root, rel);
-    if (!isFileIn(dir, WORKFLOW_FILE) && !secondaryFiles(dir).length) continue;
+    if (!governingName(dir) && !NAMES.some((n) => secondaryFiles(dir, n.detail).length)) continue;
     const label = rel ? `${rel}/` : '';
     const r = lintWorkflowComponent(dir, { family, label });
     findings.push(...r.findings);
     files.push(...r.files);
     flows.push(...r.flows);
-    if (r.found && r.prefix) mains.push({ prefix: r.prefix, file: `${label}${WORKFLOW_FILE}`, line: r.prefixLine });
+    if (r.found && r.prefix) mains.push({ prefix: r.prefix, file: `${label}${r.file}`, line: r.prefixLine });
   }
   if (family === 'REC') {
     const journeys = join(root, 'workflows');
@@ -472,8 +513,8 @@ export function lintWorkflowTree(root, { family, strict = false, name = '.' } = 
       }
     }
     if (!docs.length) findings.push(missing(name, 'workflows/', strict));
-  } else if (!isFileIn(root, WORKFLOW_FILE)) {
-    findings.push(missing(name, WORKFLOW_FILE, strict));
+  } else if (!governingName(root)) {
+    findings.push(missing(name, HANDBOOK_FILE, strict));
   }
   for (const [i, m] of mains.entries()) {
     const first = mains.slice(0, i).find((x) => x.prefix === m.prefix);

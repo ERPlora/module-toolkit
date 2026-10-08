@@ -410,3 +410,133 @@ test('WIRED: the valid example passes `erplora validate` with no workflow-doc wa
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// ── pm#658 (K1): WORKFLOW.md is renamed HANDBOOK.md (and workflow/ handbook/) ──
+// One component at a time, in the first PR of its chain, so until the last one goes both names
+// are read. HANDBOOK.md governs where both are: the old WORKFLOW.md and its workflow/*.md are NOT
+// linted (their IDs would be duplicates) and each is a `legacy_workflow_file` warning — the same
+// pairs `workflow-index.sh` gives. Each name keeps its own detail folder.
+
+/** Renames a component of the example to the new names, in place. */
+function toHandbook(root, component) {
+  const dir = join(root, component);
+  renameSync(join(dir, 'WORKFLOW.md'), join(dir, 'HANDBOOK.md'));
+  try {
+    renameSync(join(dir, 'workflow'), join(dir, 'handbook'));
+  } catch {
+    // no detail folder in this component
+  }
+}
+
+test('pm#658: a component renamed to HANDBOOK.md + handbook/ gives zero findings, like before', () => {
+  const root = example();
+  try {
+    toHandbook(root, 'appointments');
+    toHandbook(root, 'whatsapp_inbox');
+    for (const c of ['appointments', 'whatsapp_inbox']) assert.deepEqual(check(root, c).findings, [], c);
+    const tree = lintWorkflowTree(join(root, 'whatsapp_inbox'), { name: 'whatsapp_inbox' });
+    assert.deepEqual(tree.findings, []);
+    assert.deepEqual(tree.files, ['HANDBOOK.md', 'handbook/conversaciones.md']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pm#658: the renamed files are linted — a defect in HANDBOOK.md or handbook/ is the same error', () => {
+  const root = example({
+    [APPT]: once('### APPOINTMENTS-F01 Dar', '### APPOINTMENTS-F1 Dar'),
+    [WA_DETAIL]: once('Vertical: peluqueria', 'Vertical: salon'),
+  });
+  try {
+    toHandbook(root, 'appointments');
+    toHandbook(root, 'whatsapp_inbox');
+    assert.deepEqual(pairs(check(root, 'appointments').findings, 'error'), ['flow_header_malformed|']);
+    assert.match(check(root, 'appointments').errors[0], /^HANDBOOK\.md:\d+: flow_header_malformed: /);
+    const wa = check(root, 'whatsapp_inbox');
+    assert.deepEqual(pairs(wa.findings, 'error'), ['vertical_malformed|WHATSAPP_INBOX-F01']);
+    assert.match(wa.errors[0], /^handbook\/conversaciones\.md:/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pm#658: with both names HANDBOOK.md governs; the old WORKFLOW.md and workflow/ are legacy_workflow_file warnings, not linted', () => {
+  const root = example();
+  try {
+    const wa = join(root, 'whatsapp_inbox');
+    cpSync(join(wa, 'WORKFLOW.md'), join(wa, 'HANDBOOK.md'));
+    cpSync(join(wa, 'workflow'), join(wa, 'handbook'), { recursive: true });
+    // The leftovers are broken: were they read, they would give errors (and duplicated IDs).
+    writeFileSync(join(wa, 'WORKFLOW.md'), 'Prefijo: otro\n### X-F1 roto\n');
+    writeFileSync(join(wa, 'workflow', 'conversaciones.md'), 'Vertical: salon\n');
+    const out = check(root, 'whatsapp_inbox');
+    assert.deepEqual(out.errors, []);
+    assert.deepEqual(pairs(out.findings, 'warning'), ['legacy_workflow_file|']);
+    assert.deepEqual(out.findings.filter((f) => f.code === 'legacy_workflow_file').map((f) => `${f.file}:${f.line}`),
+      ['WORKFLOW.md:1', 'workflow/conversaciones.md:1']);
+    assert.match(out.warnings.join('\n'), /WORKFLOW\.md:1: legacy_workflow_file: .*HANDBOOK\.md/);
+    const tree = lintWorkflowTree(wa, { name: 'whatsapp_inbox' });
+    assert.deepEqual(tree.errors, []);
+    assert.deepEqual(tree.files, ['HANDBOOK.md', 'handbook/conversaciones.md']);
+    assert.deepEqual(pairs(tree.findings, 'warning'), ['legacy_workflow_file|']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pm#658: each name keeps its own detail folder — handbook/ under a WORKFLOW.md is an orphan', () => {
+  const root = example();
+  try {
+    const wa = join(root, 'whatsapp_inbox');
+    renameSync(join(wa, 'workflow'), join(wa, 'handbook'));
+    const out = check(root, 'whatsapp_inbox');
+    assert.deepEqual(pairs(out.findings, 'error'), ['orphan_subfile|']);
+    assert.match(out.errors[0], /^handbook\/conversaciones\.md:1: orphan_subfile: .*HANDBOOK\.md/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pm#658: no file under either name is workflow_missing, and the message names HANDBOOK.md', () => {
+  const root = example({ [APPT]: () => null });
+  try {
+    const out = check(root, 'appointments');
+    assert.deepEqual(pairs(out.findings, 'warning'), ['workflow_missing|appointments']);
+    assert.match(out.warnings[0], /HANDBOOK\.md/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pm#658: the tree walks HANDBOOK.md components, never handbook/ as a component, and keeps prefix_duplicated', () => {
+  const root = example();
+  try {
+    toHandbook(root, 'whatsapp_inbox');
+    // Make appointments claim the same prefix as the renamed whatsapp_inbox.
+    const appt = join(root, APPT);
+    writeFileSync(appt, readFileSync(appt, 'utf8').replace('Prefijo: APPOINTMENTS', 'Prefijo: WHATSAPP_INBOX')
+      .replaceAll('APPOINTMENTS-F', 'WHATSAPP_INBOX-F'));
+    const tree = lintWorkflowTree(root, { name: 'example' });
+    assert.ok(tree.files.includes('whatsapp_inbox/HANDBOOK.md'), tree.files.join(', '));
+    assert.ok(tree.files.includes('whatsapp_inbox/handbook/conversaciones.md'), tree.files.join(', '));
+    assert.ok(!tree.findings.some((f) => f.code === 'orphan_subfile'), tree.errors.join('\n'));
+    // appointments is walked first, so the duplicate is reported AT the renamed file, by its name.
+    const dup = tree.findings.filter((f) => f.code === 'prefix_duplicated');
+    assert.deepEqual(dup.map((f) => f.file), ['whatsapp_inbox/HANDBOOK.md']);
+    assert.match(dup[0].text, /appointments\/WORKFLOW\.md/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pm#658: a root with HANDBOOK.md is not «missing» in the tree', () => {
+  const root = example();
+  try {
+    const wa = join(root, 'whatsapp_inbox');
+    toHandbook(root, 'whatsapp_inbox');
+    const tree = lintWorkflowTree(wa, { name: 'whatsapp_inbox', strict: true });
+    assert.deepEqual(pairs(tree.findings, 'error'), []);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
