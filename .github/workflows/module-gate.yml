@@ -69,9 +69,13 @@ jobs:
     # with the base repository's secrets. Making any of these repositories public, or adding a
     # `pull_request_target` trigger, would have to be revisited BEFORE it happens.
     runs-on: ${{ vars.CI_RUNNER_LABEL || 'ubuntu-latest' }}
-    # Generous but finite: the whole job measures under two minutes. A hung docker pull must not
-    # burn the org's Actions budget (private repos are billed by the minute).
-    timeout-minutes: 10
+    # Finite, so a hung docker pull cannot run for ever, but sized for the slowest module: in
+    # `sales` the `erplora test` step alone measures 462–499 s on the org's own runners
+    # (`vars.CI_RUNNER_LABEL`, not billed by the minute), plus about a minute of setup, and a PR
+    # that adds a battery was cut at 10 min as «cancelled» with no step in red and no output
+    # (module-toolkit#461, sales#556 twice). `erplora test` prints nothing until it ends, so a
+    # job cut by time leaves no clue: the budget has to leave room above the slowest module.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
