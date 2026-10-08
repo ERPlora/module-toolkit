@@ -39,6 +39,11 @@
       "type": "string",
       "description": "Ruta del lenguaje de mapeo: `input.<campo>`, `steps.<step_id>.<campo>`, `event.<campo>` (solo dentro de un trigger) o `secret.<NOMBRE>` (SOLO dentro de un step `http`, hub#662: es el único sitio donde una credencial tiene que salir; en cualquier otro step se rechaza al guardar). Los secretos viven en `_flow_secrets`, cifrados y write-only: se referencian por nombre, se sustituyen al construir la petición y NUNCA se persisten en `_flow_run_steps`. Y `run.idempotency_key` (SOLO dentro de un step `http`, hub#2675): la clave de no repetición de esa llamada, la misma que el hub manda en `Idempotency-Key` (una por ejecución y paso), para el servicio que la pide en el cuerpo (Square: `idempotency_key`) o en otra cabecera (PayPal: `PayPal-Request-Id`). Cualquier otro campo de `run`, o `run.…` fuera de un step `http`, se rechaza al guardar."
     },
+    "path_root": {
+      "type": "string",
+      "enum": ["input", "steps", "event", "secret", "now", "run"],
+      "description": "Las raíces del lenguaje de mapeo que ESTE hub resuelve: lo primero de una ruta (`input.x`) o de una plantilla (`{{now.iso}}`). Es la lista que el runtime acepta al guardar (`flows::def::PATH_ROOTS`, la misma que publica el contrato del kernel en `[flow_path_roots]`); el editor la lee para ofrecer `{{run.idempotency_key}}` solo si este hub sabe resolverla (hub#2675): un hub sin la raíz `run` rechaza al guardar el flujo que la usa (`flow.invalid_definition`)."
+    },
     "mapping": {
       "type": "object",
       "description": "Mapa `{nombre: valor}`. Un valor es un literal, una RUTA (`input.x` — conserva el tipo), o un string con plantillas `{{ruta}}` (siempre devuelve string). Las raíces son `input`, `steps`, `event` (dentro de un trigger), `secret` (solo en un step `http`), `now` — el reloj del run, con `now.iso` como instante RFC-3339 en UTC — y `run` (solo en un step `http`, con su único campo `run.idempotency_key`, hub#2675). Los objetos y arrays se recorren recursivamente. Mismo estilo que `ReadDef::resolve_params_from_map` de los `reads`.",
