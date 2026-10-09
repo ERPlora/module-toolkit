@@ -116,7 +116,7 @@ que ni su **procedencia** ni su **frescura** estaban miradas — y las dos falla
   En el barrido del 2026-08-28 sobre los 27 módulos publicados, `flows` estaba así: la clave
   `ui.tplNeedsModules` que añadió flows#38 el 23/08 **no está** en su `dist`.
 
-- Un merge que solo toca `locales/**` publica **las cadenas viejas**. Los 27 módulos escriben
+- Un merge que solo toca `locales/**` publica **las cadenas viejas**. Los 25 módulos escriben
   `import esLocale from '../../../locales/es.json'` en su componente, así que esbuild **inlinea** el
   catálogo en el bundle; y `locales/**` es ruta disparadora de `release.yml`, así que ese merge
   **sube versión y republica** con el catálogo anterior dentro. Medido sobre `origin/main` el
@@ -163,7 +163,7 @@ commit, lo trae con `fetch`); `ERPLORA_HUB_DEVELOP_SHA` lo fija a mano (tests, C
   `tests/`, `__tests__/`, `__mocks__/`) quedan fuera de las tres capas: un commit que solo toca un
   test no desfasa nada, y decir lo contrario es como un gate se gana que nadie lo lea.
 
-  El trinquete: **con sello es ERROR, sin sello es AVISO**; poner 27 repos en rojo por un cambio
+  El trinquete: **con sello es ERROR, sin sello es AVISO**; poner 25 repos en rojo por un cambio
   nuestro es como se acaba desactivando un guardarraíl, así que en cuanto un módulo se construye una
   vez gana el sello y a partir de ahí falla. El mismo trinquete se aplica **campo a campo**: un
   sello escrito antes de module-toolkit#158 no lleva `locales_sha256`, así que no responde por el
@@ -895,7 +895,7 @@ Cuatro alternativas medidas y descartadas, para que no se reabran como idea:
 
 **Coste, medido.** El `target/` del perfil de test de un handler pesa **82 MB** (sobre `kitchen`);
 va a `RUNNER_TEMP`, que se recupera con el job, en una máquina cuyo techo es el disco. El paso se
-salta entero para un módulo sin tests Rust (`invoice_series` es el único hoy). La toolchain se
+salta entero para un módulo sin tests Rust. La toolchain se
 instala con rustup (perfil `minimal`) en el `$HOME/.cargo` del runner, que **persiste entre jobs**,
 así que se paga una vez; si la descarga muere, sale por `ci-infra.sh` como
 `ERPLORA_INFRA_FAILURE` — un disco lleno no puede parecer un módulo roto.
@@ -1016,7 +1016,7 @@ propio JSON Schema lo rechaza el runtime, no el test; y `ERPLORA_HUB_PSQL` abre 
 runtime acaba de escribir.
 
 **Todavía NO está enganchado al gate compartido**, y se dice en voz alta: `module-gate.yml` corre en
-los 27 repos de módulo, que son **privados**, y en el plan Free los secretos de organización no
+los 25 repos de módulo, que son **privados**, y en el plan Free los secretos de organización no
 llegan ahí — no hay credencial con la que hacer `docker pull` de un paquete privado. Engancharlo es
 [module-toolkit#112](https://github.com/ERPlora/module-toolkit/issues/112), **abierta**.
 
@@ -1051,7 +1051,7 @@ que hace que el SaaS republique— **no ocurre si el gate está rojo**.
 módulo no puede hacer checkout de otro repo privado. Una composite action es la única forma que
 GitHub resuelve **sin credencial**, con el ajuste *Settings → Actions → Access → accessible from
 repositories in the organization* puesto en este repo. Así no hay un PAT del hub/toolkit repartido
-por 27 repos, y el gate corre siempre el validador de `main`, no el del día que se escribió el stub.
+por 25 repos, y el gate corre siempre el validador de `main`, no el del día que se escribió el stub.
 
 ### El gate recompila el bundle con el SDK de `develop` (module-toolkit#389)
 
@@ -1117,7 +1117,7 @@ un runner no hay checkout de `ERPlora/hub`». Lo segundo dejó de ser cierto: pa
 composite action del `module-sdk`, el runner se trae el **hub entero** a disco (ERPlora/hub#1097), y
 eso es exactamente lo que usa module-toolkit#146 para correr los tests Rust. Lo que sigue en pie es
 que **un repo de módulo no puede clonar `ERPlora/hub` por su cuenta** —su `GITHUB_TOKEN` no alcanza
-otro repo privado— y que repartir un PAT del core por los 27 repos se ha rechazado tres veces.
+otro repo privado— y que repartir un PAT del core por los 25 repos se ha rechazado tres veces.
 
 Lo que queda cubierto sin producir el wasm: que `dist/handler.wasm` **no esté desfasado** respecto al
 source Rust del commit (hash de `handler/src` + `Cargo.lock`) y que exporte las funciones que el
@@ -1139,7 +1139,7 @@ bump de versión —el que hace que el SaaS republique— estaba **copiado en lo
 |---|---|
 | `.github/workflows/module-release.yml` | sube el patch de `module.json`/`package.json`, lo empuja a `main` (eso publica) y **avisa a `ERPlora/hub`** con `repository_dispatch: module-published` |
 
-**Por qué el aviso.** `test-hub-modules.yml` del hub clona los ~27 módulos por su estado
+**Por qué el aviso.** `test-hub-modules.yml` del hub clona los ~25 módulos por su estado
 **publicado** y los corre contra el runtime. Sin aviso eso solo pasa en la pasada nocturna: el rojo
 de hub#1215 lo causó una **release de módulo** (`invoice` v1.2.27, ADR-0405), ningún disparador del
 hub podía cazarlo, y aguantó un día entero en rojo con Actions en verde. Con el aviso el rojo sale
