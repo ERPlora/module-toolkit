@@ -15,6 +15,9 @@
 //   - FULL history: a release is found as the first commit whose manifest declares it; a shallow
 //     clone has no past and would turn every floor back into a skip.
 //   - A stale directory from an earlier job on the same runner is replaced, never reused.
+//   - A neighbour whose repository no longer exists («Repository not found») is left out with a
+//     warning when no recipe floors it: a retired module whose key is still in the bundle must not
+//     turn every gate red (module-toolkit#470). A floor on it, or any other clone failure, is RED.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -25,6 +28,8 @@ const DEFAULT_REMOTE = 'git@github.com:ERPlora/%s.git';
 const BRANCH = 'main';
 /** What was cloned, so `cleanup` removes exactly that and nothing else. */
 const RECORD = '.erplora-neighbours.json';
+/** What GitHub answers over SSH for a repository that does not exist (or no longer does). */
+const GONE_REPO_RE = /Repository not found/i;
 
 function moduleIdOf(moduleDir) {
   const manifest = JSON.parse(readFileSync(join(moduleDir, 'module.json'), 'utf8'));
@@ -143,6 +148,7 @@ export function main(argv, io = {}) {
   const parent = dirname(args.moduleDir);
   const failed = [];
   const cloned = [];
+  const gone = [];
   for (const id of plan.clone) {
     const dest = join(parent, id);
     if (resolve(dest) === args.moduleDir) continue;
@@ -153,16 +159,23 @@ export function main(argv, io = {}) {
       keyFile: join(resolve(args.keys), id),
       attempts: args.attempts,
     });
-    if (why) failed.push({ id, why });
-    else cloned.push(id);
+    if (!why) cloned.push(id);
+    else if (GONE_REPO_RE.test(why) && !floors.includes(id)) gone.push(id);
+    else failed.push({ id, why });
   }
   writeFileSync(join(parent, RECORD), JSON.stringify({ module: basename(args.moduleDir), cloned }));
+  if (gone.length > 0) {
+    log(
+      `⚠️ ${gone.join(', ')}: el repo ya no existe y ninguna receta de ${self} pone suelo sobre `
+        + `${gone.length === 1 ? 'él' : 'ellos'}; se deja fuera. Quita su clave de MODULES_DEPLOY_KEYS — module-toolkit#470.`,
+    );
+  }
   if (failed.length > 0) {
     error(`❌ no se ha podido traer ${failed.length} vecino(s):\n${failed.map((f) => `   ${f.why}`).join('\n')}`);
     return { code: 'clone_failed', exit: 1, failed: failed.map((f) => f.id) };
   }
   log(`📦 ${cloned.length} vecino(s) junto a ${self}, con historia: ${cloned.map((id) => `${id}@${versionOf(join(parent, id))}`).join(', ')}`);
-  return { code: 'ok', exit: 0 };
+  return { code: 'ok', exit: 0, gone };
 }
 
 /** Removes the neighbours `main` recorded next to `moduleDir`, and the record. Never the module. */

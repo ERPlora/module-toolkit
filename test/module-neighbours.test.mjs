@@ -194,6 +194,74 @@ test('a clone that fails is RED and named', () => {
   assert.equal(verdict.exit, 1);
 });
 
+/**
+ * Runs `fn` with a fake `ssh` first on PATH that answers like GitHub: it serves the repos under
+ * `remotes` and, for a repo that is not there, prints GitHub's «ERROR: Repository not found.» and
+ * fails. The clone goes through the real SSH path of the step (GIT_SSH_COMMAND with the key).
+ */
+function withFakeGithubSsh(root, remotes, fn) {
+  const bin = join(root, 'bin');
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(
+    join(bin, 'ssh'),
+    [
+      '#!/bin/sh',
+      'for last; do :; done',
+      'repo=$(printf %s "$last" | sed "s/^[^ ]* //; s/\'//g")',
+      `cd '${remotes}' || exit 255`,
+      'if [ ! -d "$repo" ]; then echo "ERROR: Repository not found." >&2; exit 1; fi',
+      'exec sh -c "$last"',
+      '',
+    ].join('\n'),
+    { mode: 0o755 },
+  );
+  const saved = process.env.PATH;
+  process.env.PATH = `${bin}:${saved}`;
+  try {
+    return fn();
+  } finally {
+    process.env.PATH = saved;
+  }
+}
+
+test('a neighbour whose repository is gone and that no recipe floors is left out, not RED — module-toolkit#470', () => {
+  // invoice_series, tickets and payment_gateways were retired and their repos deleted, while the
+  // MODULES_DEPLOY_KEYS bundle still carried their keys: every module with floors went red on a
+  // neighbour none of its recipes needs.
+  const root = mkdtempSync(join(tmpdir(), 'nb-main-gone-'));
+  makeRemotes(join(root, 'remotes'), ['customers', 'sales']);
+  const dir = makeModule(join(root, 'work'), 'whatsapp_inbox', { fam: { customers: '1.0.0' } });
+  const keys = makeKeys(join(root, 'keys'), ['customers', 'sales', 'tickets']);
+  const { out, io } = quietIo();
+  const verdict = withFakeGithubSsh(root, join(root, 'remotes'), () => main(
+    ['--module-dir', dir, '--keys', keys, '--remote-template', 'git@github.test:%s', '--attempts', '1'],
+    io,
+  ));
+  assert.equal(verdict.code, 'ok', out.join('\n'));
+  assert.equal(verdict.exit, 0);
+  assert.deepEqual(verdict.gone, ['tickets']);
+  assert.ok(out.some((m) => m.includes('tickets')), 'the left-out neighbour is named in the log');
+  for (const id of ['customers', 'sales']) assert.equal(existsSync(join(root, 'work', id, 'module.json')), true);
+  assert.equal(existsSync(join(root, 'work', 'tickets')), false);
+  const record = JSON.parse(readFileSync(join(root, 'work', '.erplora-neighbours.json'), 'utf8'));
+  assert.deepEqual(record.cloned, ['customers', 'sales']);
+});
+
+test('a FLOOR neighbour whose repository is gone stays RED — the floor cannot be checked', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nb-main-gone-floor-'));
+  makeRemotes(join(root, 'remotes'), ['customers']);
+  const dir = makeModule(join(root, 'work'), 'whatsapp_inbox', { fam: { customers: '1.0.0', tickets: '1.0.0' } });
+  const keys = makeKeys(join(root, 'keys'), ['customers', 'tickets']);
+  const { out, io } = quietIo();
+  const verdict = withFakeGithubSsh(root, join(root, 'remotes'), () => main(
+    ['--module-dir', dir, '--keys', keys, '--remote-template', 'git@github.test:%s', '--attempts', '1'],
+    io,
+  ));
+  assert.equal(verdict.code, 'clone_failed', out.join('\n'));
+  assert.deepEqual(verdict.failed, ['tickets']);
+  assert.equal(verdict.exit, 1);
+});
+
 test('cleanup removes exactly the neighbours it cloned, and never the module', () => {
   const root = mkdtempSync(join(tmpdir(), 'nb-cleanup-'));
   makeRemotes(join(root, 'remotes'), ['customers', 'sales']);
