@@ -104,7 +104,8 @@ const NOT_SOURCE = new Set(['dist', 'node_modules', '.git', 'coverage']);
  * `priority`, `attempts`) — which no operator can answer well, so those want `filterType: 'range'` —
  * and 1 is a free-text column no screen paints (`inventory.products.low_stock → sku`). With them
  * excused the whole published catalogue is GREEN: 27 modules, 0 errors, 34 warnings. Their fixes
- * are ERPlora/pm#244.
+ * are ERPlora/pm#244. On 2026-10-09 the 6 lines of `invoice_series`, `payment_gateways` and
+ * `tickets` left with those modules, deleted (never published, nothing depended on them).
  *
  * The ceiling that keeps this list from GROWING is `test/validate-filter-ops.test.mjs` («may only
  * SHRINK»): a line added here has to raise that number, which is what makes the addition visible.
@@ -120,24 +121,15 @@ export const FILTER_OPS_GRANDFATHERED = [
   ['inventory', 'inventory.products.low_stock', 'sku'],
   // invoice — 1
   ['invoice', 'invoice.list', 'number'],
-  // invoice_series — 3
-  ['invoice_series', 'invoice_series.series.list', 'code'],
-  ['invoice_series', 'invoice_series.series.list', 'fiscal_year'],
-  ['invoice_series', 'invoice_series.series.list', 'current_sequence'],
   // online_booking — 2
   ['online_booking', 'online_booking.bookings.list', 'booking_reference'],
   ['online_booking', 'online_booking.bookings.list', 'booking_time'],
-  // payment_gateways — 2
-  ['payment_gateways', 'payment_gateways.gateways.list', 'code'],
-  ['payment_gateways', 'payment_gateways.transactions.list', 'reference'],
   // services — 1
   ['services', 'services.services.list', 'duration_minutes'],
   // tasks — 3
   ['tasks', 'tasks.tasks.list', 'task_number'],
   ['tasks', 'tasks.projects.list', 'code'],
   ['tasks', 'tasks.projects.list', 'color'],
-  // tickets — 1
-  ['tickets', 'tickets.tickets.list', 'ticket_number'],
   // verifactu — 10 (`event_type` became a select of named types in ERPlora/verifactu#134)
   ['verifactu', 'verifactu.records.list', 'sequence_number'],
   ['verifactu', 'verifactu.records.list', 'invoice_number'],
